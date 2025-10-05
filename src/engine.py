@@ -2714,7 +2714,8 @@ class Engine:
         """Expose Prometheus metrics."""
         try:
             data = generate_latest()
-            return web.Response(body=data, content_type=CONTENT_TYPE_LATEST)
+            # aiohttp forbids 'charset=' inside content_type arg; pass full header via headers.
+            return web.Response(body=data, headers={"Content-Type": CONTENT_TYPE_LATEST})
         except Exception as exc:
             return web.Response(text=str(exc), status=500)
 

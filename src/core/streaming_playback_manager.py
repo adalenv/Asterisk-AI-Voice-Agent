@@ -59,6 +59,11 @@ _STREAMING_KEEPALIVE_TIMEOUTS_TOTAL = Counter(
     "Count of keepalive-detected streaming timeouts",
     labelnames=("call_id",),
 )
+_STREAM_TX_BYTES = Counter(
+    "ai_agent_stream_tx_bytes_total",
+    "Outbound audio bytes sent to caller (per call)",
+    labelnames=("call_id",),
+)
 
 
 class StreamingPlaybackManager:
@@ -431,6 +436,11 @@ class StreamingPlaybackManager:
                 success = await self.rtp_server.send_audio(call_id, chunk, ssrc=ssrc)
                 if not success:
                     logger.warning("RTP streaming send failed", call_id=call_id, stream_id=stream_id)
+                else:
+                    try:
+                        _STREAM_TX_BYTES.labels(call_id).inc(len(chunk))
+                    except Exception:
+                        pass
                 return success
 
             if self.audio_transport == "audiosocket":
@@ -473,6 +483,11 @@ class StreamingPlaybackManager:
                 success = await self.audiosocket_server.send_audio(conn_id, chunk)
                 if not success:
                     logger.warning("AudioSocket streaming send failed", call_id=call_id, stream_id=stream_id)
+                else:
+                    try:
+                        _STREAM_TX_BYTES.labels(call_id).inc(len(chunk))
+                    except Exception:
+                        pass
                 return success
 
             logger.warning("Streaming transport not implemented for audio_transport",

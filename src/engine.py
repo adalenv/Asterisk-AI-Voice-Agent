@@ -22,7 +22,7 @@ except ImportError:
     WEBRTC_VAD_AVAILABLE = False
     webrtcvad = None
 
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, Histogram
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, Histogram, Counter
 
 from .ari_client import ARIClient
 from aiohttp import web
@@ -63,6 +63,13 @@ _TURN_RESPONSE_SECONDS = Histogram(
     "Approx time from STT final transcript to ARI playback start",
     buckets=(0.2, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0),
     labelnames=("pipeline", "provider"),
+)
+
+# Per-call audio byte counters (ingress)
+_STREAM_RX_BYTES = Counter(
+    "ai_agent_stream_rx_bytes_total",
+    "Inbound audio bytes from caller (per call)",
+    labelnames=("call_id",),
 )
 
 class AudioFrameProcessor:
@@ -1452,6 +1459,11 @@ class Engine:
             session = await self.session_store.get_by_call_id(caller_channel_id)
             if session:
                 session.audiosocket_uuid = uuid_str
+                # Record current AudioSocket connection for streaming playback
+                try:
+                    session.audiosocket_conn_id = conn_id
+                except Exception:
+                    pass
                 session.status = "audiosocket_bound"
                 await self._save_session(session)
 
@@ -1489,6 +1501,12 @@ class Engine:
             if not session:
                 logger.debug("No session for caller; dropping AudioSocket audio", conn_id=conn_id, caller_channel_id=caller_channel_id)
                 return
+
+            # Per-call RX bytes
+            try:
+                _STREAM_RX_BYTES.labels(caller_channel_id).inc(len(audio_bytes))
+            except Exception:
+                pass
 
             # Post-TTS end protection: drop inbound briefly after gating clears to avoid agent echo re-capture
             try:
@@ -1628,6 +1646,14 @@ class Engine:
                     self.audiosocket_primary_conn.pop(caller_channel_id, None)
                     if conns:
                         self.audiosocket_primary_conn[caller_channel_id] = next(iter(conns))
+                # Clear audiosocket_conn_id on session if it matched
+                try:
+                    sess = await self.session_store.get_by_call_id(caller_channel_id)
+                    if sess and getattr(sess, 'audiosocket_conn_id', None) == conn_id:
+                        sess.audiosocket_conn_id = None
+                        await self._save_session(sess)
+                except Exception:
+                    pass
             logger.info("AudioSocket connection disconnected", conn_id=conn_id, caller_channel_id=caller_channel_id)
         except Exception as exc:
             logger.error("Error during AudioSocket disconnect cleanup", conn_id=conn_id, error=str(exc), exc_info=True)

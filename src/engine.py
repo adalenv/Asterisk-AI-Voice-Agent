@@ -1360,6 +1360,14 @@ class Engine:
 
             if self.conversation_coordinator:
                 await self.conversation_coordinator.unregister_call(call_id)
+            
+            # Clean up VAD manager state for this call
+            if self.vad_manager:
+                try:
+                    await self.vad_manager.reset_call(call_id)
+                    self.vad_manager.context_analyzer.cleanup_call(call_id)
+                except Exception:
+                    logger.debug("VAD cleanup failed during call cleanup", call_id=call_id, exc_info=True)
 
             try:
                 # If the session still exists in store (rare race), mark completed; otherwise ignore
@@ -1736,6 +1744,15 @@ class Engine:
                         except Exception:
                             pass
                         await self._save_session(session)
+                        
+                        # Notify VAD manager of barge-in event for adaptive learning
+                        if self.vad_manager and vad_result:
+                            self.vad_manager.notify_call_event(
+                                caller_channel_id, 
+                                "barge_in", 
+                                {"confidence": confidence, "energy": energy, "criteria_met": criteria_met}
+                            )
+                        
                         logger.info(
                             "🎧 BARGE-IN triggered",
                             call_id=caller_channel_id,
@@ -1777,13 +1794,55 @@ class Engine:
                         logger.debug("Pipeline queue full; dropping AudioSocket frame", call_id=caller_channel_id)
                         return
 
+            # Enhanced VAD Audio Filtering with continuous delivery
+            forward_original_audio = True
+            payload_bytes = audio_bytes
+
+            if vad_result:
+                now = time.time()
+                state = session.vad_state
+
+                # Initialize VAD state if needed
+                if 'vad_start_time' not in state:
+                    state['vad_start_time'] = now
+                    state['last_speech_time'] = now
+                    state['frames_since_speech'] = 0
+
+                frames_since_speech = int(state.get('frames_since_speech', 0))
+                call_duration = now - float(state.get('vad_start_time', now))
+
+                if call_duration >= 2.0:
+                    forward_original_audio = (
+                        vad_result.is_speech
+                        or vad_result.confidence > 0.3
+                        or frames_since_speech < 25
+                        or self._should_use_vad_fallback(session)
+                    )
+
+                if vad_result.is_speech:
+                    state['last_speech_time'] = now
+                    state['frames_since_speech'] = 0
+                else:
+                    state['frames_since_speech'] = frames_since_speech + 1
+
+                if not forward_original_audio:
+                    payload_bytes = self._ulaw_silence(len(audio_bytes))
+                    logger.debug(
+                        "🎤 VAD - Replacing frame with silence",
+                        call_id=caller_channel_id,
+                        confidence=f"{vad_result.confidence:.2f}",
+                        energy=vad_result.energy_level,
+                        is_speech=vad_result.is_speech,
+                        frames_since_speech=state.get('frames_since_speech', 0),
+                    )
+
             provider_name = session.provider_name or self.config.default_provider
             provider = self.providers.get(provider_name)
             if not provider or not hasattr(provider, 'send_audio'):
                 logger.debug("Provider unavailable for audio", provider=provider_name)
                 return
 
-            await provider.send_audio(audio_bytes)
+            await provider.send_audio(payload_bytes)
         except Exception as exc:
             logger.error("Error handling AudioSocket audio", conn_id=conn_id, error=str(exc), exc_info=True)
 
@@ -1835,6 +1894,53 @@ class Engine:
                 pass
 
         return result
+
+    def _should_use_vad_fallback(self, session: CallSession) -> bool:
+        """Determine if we should use fallback audio forwarding when VAD doesn't detect speech."""
+        try:
+            vad_config = getattr(self.config, 'vad', None)
+            if not vad_config or not getattr(vad_config, 'fallback_enabled', True):
+                return False
+            
+            now = time.time()
+            last_speech_time = session.vad_state.get('last_speech_time')
+            if not last_speech_time:
+                session.vad_state['last_speech_time'] = now
+                return False
+
+            silence_duration = (now - float(last_speech_time)) * 1000
+            fallback_interval = getattr(vad_config, 'fallback_interval_ms', 1500)
+            if silence_duration < fallback_interval:
+                return False
+
+            fallback_state = session.vad_state.setdefault('fallback_state', {
+                'last_fallback_ts': 0.0,
+            })
+
+            last_fallback_ts = float(fallback_state.get('last_fallback_ts', 0.0) or 0.0)
+            fallback_period_ms = 200  # Forward real audio every 200 ms during extended silence
+
+            if (now - last_fallback_ts) * 1000 >= fallback_period_ms:
+                fallback_state['last_fallback_ts'] = now
+                logger.debug(
+                    "🎤 VAD - Periodic fallback forwarding original audio",
+                    call_id=session.call_id,
+                    silence_duration_ms=int(silence_duration),
+                    fallback_interval_ms=fallback_interval,
+                )
+                return True
+
+            return False
+            
+        except Exception as e:
+            logger.debug("VAD fallback logic error", call_id=session.call_id, error=str(e))
+            return True  # Default to allowing audio through on error
+
+    @staticmethod
+    def _ulaw_silence(length: int) -> bytes:
+        if length <= 0:
+            return b""
+        return bytes([0xFF]) * length
 
     async def _export_config_metrics(self, call_id: str) -> None:
         """Expose configured knobs as Prometheus gauges for this call."""

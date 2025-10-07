@@ -333,30 +333,29 @@ verify-config:
 ## monitor-externalmedia: Monitor ExternalMedia + RTP status
 monitor-externalmedia:
 	@echo "--> Starting ExternalMedia + RTP monitoring..."
-	@echo "$(PY_INFO)"; \
 	$(PY) scripts/monitor_externalmedia.py
 
 ## monitor-externalmedia-once: Check ExternalMedia + RTP status once
 monitor-externalmedia-once:
-\t@echo "--> Checking ExternalMedia + RTP status..."
-\t@echo "$(PY_INFO)"; \
-\t$(PY) scripts/monitor_externalmedia.py --once
+	@echo "--> Checking ExternalMedia + RTP status..."
+	@echo "$(PY_INFO)"; \
+	$(PY) scripts/monitor_externalmedia.py --once
 
-## monitor-up: Start Prometheus + Grafana monitoring stack (host network)
+## monitor-up: Start Prometheus +Grafana monitoring stack (host network)
 monitor-up:
-\t@echo "--> Starting monitoring stack (Prometheus + Grafana) on host network..."
-\tdocker-compose -f docker-compose.yml -f docker-compose.monitor.yml up -d prometheus grafana
-
+	@echo "--> Starting monitoring stack (Prometheus +Grafana) on host network..."
+	$(DOCKER_COMPOSE) -f docker-compose.yml -f docker-compose.monitor.yml up -d prometheus grafana
+{{ ... }}
 ## monitor-down: Stop monitoring stack
 monitor-down:
-\t@echo "--> Stopping monitoring stack..."
-\tdocker-compose -f docker-compose.yml -f docker-compose.monitor.yml down
+	@echo "--> Stopping monitoring stack..."
+	$(DOCKER_COMPOSE) -f docker-compose.yml -f docker-compose.monitor.yml down
 
 ## monitor-logs: Tail monitoring stack logs
 monitor-logs:
-\t@echo "--> Tailing Prometheus + Grafana logs... (Ctrl+C to exit)"
-\tdocker-compose -f docker-compose.yml -f docker-compose.monitor.yml logs -f prometheus grafana
-
+	@echo "--> Tailing Prometheus +Grafana logs... (Ctrl+C to exit)"
+	$(DOCKER_COMPOSE) -f docker-compose.yml -f docker-compose.monitor.yml logs -f prometheus grafana
+{{ ... }}
 ## capture-logs: Capture structured logs during test call (default: 40 seconds)
 capture-logs:
 	@echo "--> Starting structured log capture for test call..."

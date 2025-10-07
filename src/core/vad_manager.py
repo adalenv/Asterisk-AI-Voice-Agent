@@ -7,10 +7,12 @@ from __future__ import annotations
 import asyncio
 import audioop
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
+import time
 
 import structlog
 from prometheus_client import Counter, Gauge, Histogram
+from .call_context_analyzer import CallContextAnalyzer
 
 try:
     import webrtcvad  # pyright: ignore[reportMissingImports]
@@ -116,20 +118,31 @@ class EnhancedVADManager:
         else:
             logger.warning("Enhanced VAD - WebRTC module not available")
 
-        self.adaptive_threshold = AdaptiveThreshold(
-            base_threshold=self.energy_threshold,
-            adaptation_rate=noise_adaptation_rate,
-        )
-        self._speech_frames = 0
-        self._silence_frames = 0
-        self._is_speaking = False
-
+        # Base configuration - don't mutate these
+        self.base_energy_threshold = energy_threshold
+        self.noise_adaptation_rate = noise_adaptation_rate
+        
+        # Per-call state tracking - no global state!
+        self._call_states: Dict[str, Dict[str, Any]] = {}  # call_id -> state
         self._call_stats: Dict[str, Dict[str, float]] = {}
         self._lock = asyncio.Lock()
+        
+        # Call context analyzer for adaptive behavior
+        self.context_analyzer = CallContextAnalyzer()
+        self._adaptation_interval = 100  # Adapt every 100 frames (2 seconds)
 
     async def process_frame(self, call_id: str, audio_frame_pcm16: bytes) -> VADResult:
         if len(audio_frame_pcm16) < 320:
             audio_frame_pcm16 = audio_frame_pcm16.ljust(320, b"\x00")
+            
+        # Get or create per-call state
+        call_state = self._get_call_state(call_id)
+        
+        # Periodic adaptive parameter adjustment (per-call)
+        call_state['frame_count'] += 1
+        if self.adaptive_threshold_enabled and call_state['frame_count'] % self._adaptation_interval == 0:
+            await self._adapt_vad_parameters(call_id)
+            
         energy = audioop.rms(audio_frame_pcm16, 2)
         webrtc_result = False
         if self.webrtc_vad:
@@ -138,13 +151,14 @@ class EnhancedVADManager:
             except Exception:
                 logger.debug("Enhanced VAD - WebRTC processing error", exc_info=True)
 
-        threshold = self.adaptive_threshold.get_threshold() if self.adaptive_threshold_enabled else self.energy_threshold
+        # Use per-call adaptive threshold
+        threshold = call_state['adaptive_threshold'].get_threshold() if self.adaptive_threshold_enabled else self.base_energy_threshold
         energy_result = energy >= threshold
 
         if self.adaptive_threshold_enabled:
-            self.adaptive_threshold.update(energy, webrtc_result or energy_result)
+            call_state['adaptive_threshold'].update(energy, webrtc_result or energy_result)
 
-        final_speech = self._smooth_frames(webrtc_result or energy_result)
+        final_speech = self._smooth_frames_per_call(call_id, webrtc_result or energy_result)
         confidence = self._calc_confidence(webrtc_result, energy_result, energy, threshold)
 
         result = VADResult(
@@ -155,22 +169,43 @@ class EnhancedVADManager:
         )
 
         self._update_metrics(call_id, result, threshold)
+        self._update_call_stats(call_id, result)
         return result
 
-    def _smooth_frames(self, raw_speech: bool) -> bool:
+    def _get_call_state(self, call_id: str) -> Dict[str, Any]:
+        """Get or create per-call state to avoid global mutations."""
+        if call_id not in self._call_states:
+            self._call_states[call_id] = {
+                'adaptive_threshold': AdaptiveThreshold(
+                    base_threshold=self.base_energy_threshold,
+                    adaptation_rate=self.noise_adaptation_rate,
+                ),
+                'speech_frames': 0,
+                'silence_frames': 0,
+                'is_speaking': False,
+                'frame_count': 0,
+                'last_adaptation_time': time.time(),
+            }
+        return self._call_states[call_id]
+
+    def _smooth_frames_per_call(self, call_id: str, raw_speech: bool) -> bool:
+        """Per-call frame smoothing to avoid global state mutations."""
+        call_state = self._get_call_state(call_id)
+        
         if raw_speech:
-            self._speech_frames += 1
-            self._silence_frames = 0
-            if not self._is_speaking and self._speech_frames >= self.min_speech_frames:
-                self._is_speaking = True
-                logger.debug("Enhanced VAD - Speech started", frames=self._speech_frames)
+            call_state['speech_frames'] += 1
+            call_state['silence_frames'] = 0
+            if not call_state['is_speaking'] and call_state['speech_frames'] >= self.min_speech_frames:
+                call_state['is_speaking'] = True
+                logger.debug("Enhanced VAD - Speech started", call_id=call_id, frames=call_state['speech_frames'])
         else:
-            self._silence_frames += 1
-            self._speech_frames = 0
-            if self._is_speaking and self._silence_frames >= self.max_silence_frames:
-                self._is_speaking = False
-                logger.debug("Enhanced VAD - Speech ended", silence_frames=self._silence_frames)
-        return self._is_speaking
+            call_state['silence_frames'] += 1
+            call_state['speech_frames'] = 0
+            if call_state['is_speaking'] and call_state['silence_frames'] >= self.max_silence_frames:
+                call_state['is_speaking'] = False
+                logger.debug("Enhanced VAD - Speech ended", call_id=call_id, silence_frames=call_state['silence_frames'])
+        
+        return call_state['is_speaking']
 
     def _calc_confidence(self, webrtc_result: bool, energy_result: bool, energy: int, threshold: int) -> float:
         confidence = 0.0
@@ -193,12 +228,91 @@ class EnhancedVADManager:
             logger.debug("Enhanced VAD - metrics update failed", exc_info=True)
 
     async def reset_call(self, call_id: str) -> None:
+        """Properly clean up per-call state to prevent leaks."""
         async with self._lock:
-            self._speech_frames = 0
-            self._silence_frames = 0
-            self._is_speaking = False
-            self.adaptive_threshold.reset()
+            # Remove per-call state completely
+            self._call_states.pop(call_id, None)
             self._call_stats.pop(call_id, None)
+            logger.debug("VAD call state cleaned up", call_id=call_id)
+
+    async def _adapt_vad_parameters(self, call_id: str) -> None:
+        """Adapt VAD parameters based on call conditions - PER CALL, not global."""
+        try:
+            call_state = self._get_call_state(call_id)
+            
+            # Cooldown: only adapt every 5 seconds per call
+            now = time.time()
+            if now - call_state['last_adaptation_time'] < 5.0:
+                return
+            
+            call_state['last_adaptation_time'] = now
+            
+            # Get current call statistics
+            call_stats = self._call_stats.get(call_id, {})
+            
+            # Analyze call conditions
+            conditions = self.context_analyzer.analyze_call_conditions(call_id, call_stats)
+            
+            adaptive = call_state['adaptive_threshold']
+            current_base = int(adaptive.base_threshold)
+            target_multiplier = 1.0
+
+            if conditions.noise_level > 0.7:
+                target_multiplier = 1.3
+            elif conditions.noise_level < 0.3:
+                target_multiplier = 0.8
+
+            desired_base = int(self.base_energy_threshold * target_multiplier)
+
+            # Smooth transitions to avoid oscillation between extremes
+            smoothed_base = int(current_base * 0.8 + desired_base * 0.2)
+
+            if abs(smoothed_base - current_base) >= 10:
+                adaptive.base_threshold = max(1, smoothed_base)
+                adaptive.current_threshold = int(adaptive.current_threshold * 0.8 + adaptive.base_threshold * 0.2)
+                logger.debug(
+                    "🧠 VAD adaptive threshold updated",
+                    call_id=call_id,
+                    noise_level=conditions.noise_level,
+                    previous_base=current_base,
+                    new_base=adaptive.base_threshold,
+                )
+
+            # Note: WebRTC VAD is shared, so we don't adapt it per-call to avoid conflicts
+                    
+        except Exception as e:
+            logger.debug("VAD parameter adaptation error", call_id=call_id, error=str(e))
+
+    def _update_call_stats(self, call_id: str, result: VADResult) -> None:
+        """Update call statistics for adaptive behavior."""
+        if call_id not in self._call_stats:
+            self._call_stats[call_id] = {
+                'total_frames': 0,
+                'speech_frames': 0,
+                'avg_energy': 0.0,
+                'noise_level': 0.5,
+                'speech_ratio': 0.0
+            }
+        
+        stats = self._call_stats[call_id]
+        stats['total_frames'] += 1
+        
+        if result.is_speech:
+            stats['speech_frames'] += 1
+            
+        # Update running averages
+        total = stats['total_frames']
+        stats['avg_energy'] = (stats['avg_energy'] * (total - 1) + result.energy_level) / total
+        stats['speech_ratio'] = stats['speech_frames'] / total
+        
+        # Estimate noise level based on energy during non-speech
+        if not result.is_speech and result.energy_level > 0:
+            stats['noise_level'] = (stats['noise_level'] * 0.9 + 
+                                   min(result.energy_level / self.energy_threshold, 1.0) * 0.1)
+
+    def notify_call_event(self, call_id: str, event_type: str, data: Dict[str, Any]) -> None:
+        """Notify context analyzer of call events for adaptive behavior."""
+        self.context_analyzer.update_call_event(call_id, event_type, data)
 
     @staticmethod
     def mu_law_to_pcm16(frame_ulaw: bytes) -> bytes:

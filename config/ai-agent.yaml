@@ -167,21 +167,21 @@ llm:
 # VAD Configuration - Optimized for 4+ second utterances
 vad:
   enhanced_enabled: true      # Enable enhanced VAD + multi-criteria barge-in (feature flag)
-  # WebRTC VAD settings
+  # WebRTC VAD settings - optimized for real-time conversation
   webrtc_aggressiveness: 1   # Slightly more aggressive (0-3) for telephony audio
   webrtc_start_frames: 2     # Consecutive frames to start recording (40ms)
-  webrtc_end_silence_frames: 18  # Consecutive silence frames to end (360ms)
-  energy_threshold: 1600     # Base RMS energy threshold for speech
+  webrtc_end_silence_frames: 15  # Consecutive silence frames to end (300ms) - telephony standard
+  energy_threshold: 1500     # Base RMS energy threshold for speech (lowered for sensitivity)
   confidence_threshold: 0.6  # Minimum enhanced VAD confidence to count as speech
-  adaptive_threshold_enabled: false  # Keep static thresholds for first rollout
+  adaptive_threshold_enabled: true   # Enable adaptive thresholds for better noise handling
   noise_adaptation_rate: 0.1
-  # Utterance settings - optimized for 4+ second duration
-  min_utterance_duration_ms: 4000  # Minimum 4 seconds for accurate STT
-  max_utterance_duration_ms: 10000 # Maximum 10 seconds
-  utterance_padding_ms: 200        # Padding before/after speech
-  # Fallback settings
-  fallback_enabled: true           # Enable fallback when VAD fails
-  fallback_interval_ms: 4000       # Send audio every 4 seconds as fallback
+  # Utterance settings - optimized for real-time conversation
+  min_utterance_duration_ms: 800   # Minimum 800ms for real-time (reduced from 4000ms)
+  max_utterance_duration_ms: 8000  # Maximum 8 seconds (reduced from 10000ms)
+  utterance_padding_ms: 100        # Padding before/after speech (reduced for responsiveness)
+  # Fallback settings - ensure audio flows when VAD fails
+  fallback_enabled: true           # Enable fallback when VAD fails to detect speech
+  fallback_interval_ms: 1500       # Periodic fallback after 1.5s silence (prevents starvation)
   fallback_buffer_size: 128000     # 4 seconds of 16kHz audio (128,000 bytes)
 
 # Provider-specific configurations

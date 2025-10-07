@@ -147,24 +147,24 @@ class LLMConfig(BaseModel):
 
 class VADConfig(BaseModel):
     enhanced_enabled: bool = Field(default=False)
-    # WebRTC VAD settings
-    webrtc_aggressiveness: int = 0
-    webrtc_start_frames: int = 3
-    webrtc_end_silence_frames: int = 50
+    # WebRTC VAD settings - optimized for real-time conversation
+    webrtc_aggressiveness: int = 1
+    webrtc_start_frames: int = 2
+    webrtc_end_silence_frames: int = 15
     # Enhanced VAD thresholds
     energy_threshold: int = 1500
     confidence_threshold: float = 0.6
-    adaptive_threshold_enabled: bool = False
+    adaptive_threshold_enabled: bool = True
     noise_adaptation_rate: float = 0.1
     
-    # Utterance settings - optimized for 4+ second duration
-    min_utterance_duration_ms: int = 4000
-    max_utterance_duration_ms: int = 10000
-    utterance_padding_ms: int = 200
+    # Utterance settings - optimized for real-time conversation
+    min_utterance_duration_ms: int = 800
+    max_utterance_duration_ms: int = 8000
+    utterance_padding_ms: int = 100
     
     # Fallback settings
     fallback_enabled: bool = True
-    fallback_interval_ms: int = 4000
+    fallback_interval_ms: int = 1500
     fallback_buffer_size: int = 128000
 
 

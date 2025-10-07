@@ -16,11 +16,24 @@ from typing import Optional
 
 import websockets
 import pytest
+import socket
 
 WS_URL = os.getenv("LOCAL_WS_URL", "ws://127.0.0.1:8765")
 
+
+def _server_available(url: str) -> bool:
+    try:
+        host, port = url.replace("ws://", "").replace("wss://", "").split(":")
+        with socket.create_connection((host, int(port)), timeout=1.0):
+            return True
+    except Exception:
+        return False
+
 # Mark as integration: requires a running local-ai-server WebSocket
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.skipif(
+    not _server_available(WS_URL),
+    reason="Requires local AI server at 127.0.0.1:8765. Start local_ai_server to enable.",
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

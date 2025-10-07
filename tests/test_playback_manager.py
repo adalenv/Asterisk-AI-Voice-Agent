@@ -25,6 +25,7 @@ class TestPlaybackManager:
         """Create a mock ARI client."""
         mock_client = MagicMock()
         mock_client.play_audio_via_bridge = AsyncMock(return_value=True)
+        mock_client.play_media_on_bridge_with_id = AsyncMock(return_value=True)
         return mock_client
     
     @pytest.fixture
@@ -92,7 +93,8 @@ class TestPlaybackManager:
     async def test_play_audio_ari_failure(self, playback_manager, sample_session, mock_ari_client):
         """Test audio playback when ARI call fails."""
         audio_bytes = b"fake_audio_data"
-        mock_ari_client.play_audio_via_bridge.return_value = False
+        mock_ari_client.play_audio_via_bridge = AsyncMock(return_value=False)
+        mock_ari_client.play_media_on_bridge_with_id = AsyncMock(return_value=False)
         
         with patch('builtins.open', MagicMock()), \
              patch('os.path.basename', return_value="audio-test_call_123-1234567890.ulaw"), \

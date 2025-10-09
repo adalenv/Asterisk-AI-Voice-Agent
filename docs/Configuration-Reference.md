@@ -97,7 +97,7 @@ Common pitfalls:
 - providers.openai_realtime.instructions: Persona override. Leave empty to inherit `llm.prompt`.
 - providers.openai_realtime.greeting: Explicit greeting. Leave empty to inherit `llm.initial_greeting`.
 - providers.openai_realtime.response_modalities: `audio`, `text`.
-- providers.openai_realtime.input_encoding/input_sample_rate_hz: Inbound format; use `slin16` at 8 kHz for AudioSocket.
+- providers.openai_realtime.input_encoding/input_sample_rate_hz: Inbound format; use `ulaw` at 8 kHz when AudioSocket() is invoked with `,ulaw` (engine converts to PCM before sending to OpenAI).
 - providers.openai_realtime.output_encoding/output_sample_rate_hz: Provider output; engine resamples to target.
 - providers.openai_realtime.target_encoding/target_sample_rate_hz: Downstream transport expectations (e.g., μ‑law at 8 kHz).
 - providers.openai_realtime.turn_detection: Server‑side VAD (type, silence_duration_ms, threshold, prefix_padding_ms); improves turn handling.
@@ -106,7 +106,7 @@ Common pitfalls:
 - providers.deepgram.api_key, model, tts_model.
 - providers.deepgram.greeting: Agent greeting. Leave empty to inherit `llm.initial_greeting`.
 - providers.deepgram.instructions: Persona override for the “think” stage; leave empty to inherit `llm.prompt`.
-- providers.deepgram.input_encoding/input_sample_rate_hz: Inbound format.
+- providers.deepgram.input_encoding/input_sample_rate_hz: Inbound format; set `input_encoding=ulaw` for μ-law AudioSocket trunks.
 - providers.deepgram.continuous_input: true to stream audio continuously.
 
 ### Google (pipelines)

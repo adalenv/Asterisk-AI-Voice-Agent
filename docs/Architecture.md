@@ -47,6 +47,8 @@ This staged architecture provides:
 
 Defaults align with Deepgram’s recommended 100–120 ms buffering window and can be overridden per deployment. Refer to `docs/milestones/milestone-5-streaming-transport.md` for implementation details and tuning guidance.
 
+- **OpenAI Realtime codec alignment** – inbound AudioSocket PCM16 (8 kHz) is upsampled to 24 kHz before publishing via `input_audio_buffer`, and OpenAI’s 24 kHz PCM16 output is resampled back to the configured target (8 kHz PCM16 for AudioSocket playback by default). Keep `openai_realtime.provider_input_sample_rate_hz` and `openai_realtime.output_sample_rate_hz` at 24000 so the session advertises the correct formats while the engine handles the final downsampling.
+
 #### Post‑TTS End Protection (Echo‑Loop Mitigation)
 
 To prevent the agent from hearing itself immediately after a turn ends, the engine enforces a short, configurable guard window right after TTS playback completes:
@@ -120,6 +122,7 @@ active_pipeline: hybrid_support
 
 - `providers.*` blocks define credentials and provider-wide defaults; adapters retrieve them through provider-specific config dataclasses. The local provider now accepts `ws_url`, `connect_timeout_sec`, `response_timeout_sec`, and `chunk_ms` so deployments can tune the WebSocket handshake and batching cadence without code changes.
 - `pipelines.*.options` is merged with provider defaults and handed to adapters via `AdapterContext`. Nested maps (e.g., `options.tts.voice`) are preserved.
+- `examples/pipelines/cloud_only_openai.yaml` provides a turnkey OpenAI-only configuration that advertises 24 kHz provider audio while the engine resamples back to 8 kHz for AudioSocket playback.
 
 ##### Adapter Mapping
 
@@ -473,6 +476,7 @@ When `audio_transport=audiosocket` and `downstream_mode=stream` are enabled, the
   - `slin16` (aka `slinear`): engine converts provider μ-law to PCM16 and sends 320-byte frames per 20 ms.
 - Outbound pacing: the engine segments audio into exact 20 ms frames and sends them at real-time cadence to prevent Asterisk buffer overruns (`translate.c: Out of buffer space`).
 - Inbound decode: if the dialplan sends μ-law (typical), the engine decodes μ-law → PCM16 at 8 kHz before resampling to 16 kHz for VAD.
+- Codec guardrail: startup audits now warn if provider `input_encoding` disagrees with `audiosocket.format`; keep both set to `ulaw` when the dialplan calls `AudioSocket(...,ulaw)`.
 - Provider streaming events: providers emit `AgentAudio` bytes with `streaming_chunk=true` and a final `AgentAudioDone` with `streaming_done=true` to control the streaming window.
 
 #### AudioSocket Duplicate Legs and Outbound Selection

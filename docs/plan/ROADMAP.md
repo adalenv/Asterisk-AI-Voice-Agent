@@ -42,11 +42,13 @@ This roadmap tracks the open-source enablement work for the Asterisk AI Voice Ag
   - Configurable streaming defaults in `config/ai-agent.yaml` (`min_start_ms`, `low_watermark_ms`, `fallback_timeout_ms`, `provider_grace_ms`, `jitter_buffer_ms`).
   - Post‑TTS end protection window (`barge_in.post_tts_end_protection_ms`) to prevent agent self‑echo when capture resumes.
   - Deepgram input alignment to 8 kHz (`providers.deepgram.input_sample_rate_hz: 8000`) to match AudioSocket frames.
+  - AudioSocket default format set to μ-law with provider guardrails (`audiosocket.format=ulaw`, Deepgram/OpenAI `input_encoding=ulaw`) so inbound frames are decoded correctly.
   - Expanded YAML comments with tuning guidance for operators.
   - Regression docs updated with findings and resolutions.
 - **Verification (2025‑09‑24 13:17 PDT)**:
   - Two-way telephonic conversation acceptable end‑to‑end; no echo‑loop in follow‑on turns.
   - Gating toggles around playback as expected; post‑TTS guard drops residual frames.
+  - Deepgram regression replay shows no “low RMS” warnings once μ-law alignment is in place.
   - Operators can fine‑tune behaviour via YAML without code changes.
 
 ## Milestone 6 — OpenAI Realtime Voice Agent (✅ Completed)
@@ -67,10 +69,12 @@ This roadmap tracks the open-source enablement work for the Asterisk AI Voice Ag
 - **What We Shipped**:
   - Implemented `src/providers/openai_realtime.py` with robust event handling and transcript parsing.
   - Fixed keepalive to use native WebSocket `ping()` frames (no invalid `{"type":"ping"}` payloads).
+  - Resampled AudioSocket PCM16 (8 kHz) to 24 kHz before commit and advertised 24 kHz PCM16 input/output in `session.update` so OpenAI Realtime codecs stay in sync.
   - μ-law alignment: requested `g711_ulaw` from OpenAI and passed μ-law bytes directly to Asterisk (file playback path), eliminating conversion artifacts.
   - Greeting on connect using `response.create` with explicit instructions.
   - Hardened error logging to avoid structlog conflicts; added correlation and visibility of `input_audio_buffer.*` acks.
   - Added YAML streaming tuning knobs (`min_start_ms`, `low_watermark_ms`, `jitter_buffer_ms`, `provider_grace_ms`) and wired them into `StreamingPlaybackManager`.
+  - Refreshed `examples/pipelines/cloud_only_openai.yaml` so the monolithic OpenAI pipeline defaults to the 24 kHz settings and works out-of-the-box.
 
 - **Verification (2025‑09‑25 08:59 PDT)**:
   - Successful regression call with initial greeting; two-way conversation sustained.

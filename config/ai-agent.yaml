@@ -114,8 +114,8 @@ downstream_mode: "stream"
 audiosocket:
   host: "0.0.0.0"          # Bind address (use 127.0.0.1 when engine and Asterisk share a host)
   port: 8090               # TCP port for AudioSocket connections
-  format: "slin16"         # Wire format from Asterisk: `ulaw` (160B/20ms) or `slin16` (320B/20ms) at 8 kHz
-                           # TIP: Keep provider input sample rate aligned to 8 kHz when using telephony trunks.
+  format: "ulaw"           # Wire format from Asterisk: `ulaw` (160B/20ms) or `slin16` (320B/20ms) at 8 kHz
+                           # TIP: Match this to the dialplan's AudioSocket() media argument (`ulaw` for μ-law trunks).
 
 # Barge-in configuration
 barge_in:
@@ -205,7 +205,7 @@ providers:
     tts_model: "aura-asteria-en"
     greeting: "${DEEPGRAM_GREETING:-Hello, how can I help you today?}"
     instructions: "${DEEPGRAM_INSTRUCTIONS:-You are a concise voice assistant. Respond in under 20 words and answer immediately.}"
-    input_encoding: "linear16"   # Provider audio encoding for inbound caller audio
+    input_encoding: "ulaw"       # Provider audio encoding for inbound caller audio (matches AudioSocket μ-law frames)
     input_sample_rate_hz: 8000    # Align to trunk sample rate (8 kHz for telephony)
     continuous_input: true        # Stream audio continuously for best responsiveness
                                   # TIP: Keep this true for real-time conversations
@@ -237,11 +237,13 @@ providers:
     base_url: "wss://api.openai.com/v1/realtime"
     instructions: "You are a concise voice assistant. Respond clearly and keep answers under 20 words unless more detail is requested."
     organization: ""
-    input_encoding: "slin16"
+    input_encoding: "ulaw"
     input_sample_rate_hz: 8000
-    output_encoding: "slin16"
-    output_sample_rate_hz: 8000
-    target_encoding: "slin16"
+    provider_input_encoding: "linear16"
+    provider_input_sample_rate_hz: 24000
+    output_encoding: "linear16"
+    output_sample_rate_hz: 24000
+    target_encoding: "ulaw"
     target_sample_rate_hz: 8000
     response_modalities:
       - "audio"

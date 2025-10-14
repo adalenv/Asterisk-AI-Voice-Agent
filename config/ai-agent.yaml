@@ -146,8 +146,8 @@ streaming:
   egress_force_mulaw: true
   # Diagnostics (feature-flagged): capture short PCM taps pre/post compand for next call
   diag_enable_taps: true
-  diag_pre_secs: 2
-  diag_post_secs: 2
+  diag_pre_secs: 1
+  diag_post_secs: 1
   diag_out_dir: "/tmp/ai-engine-taps"
 
 # Asterisk connection settings (will be overridden by environment variables)

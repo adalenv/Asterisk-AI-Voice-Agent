@@ -169,7 +169,7 @@ class DeepgramProvider(AIProviderInterface):
         def _canon_fmt(v: str) -> str:
             t = (v or '').strip().lower()
             if t in ('mulaw', 'mu-law', 'g711_ulaw', 'g711ulaw', 'g711-ula', 'ulaw'):
-                return 'ulaw'
+                return 'mulaw'
             if t in ('slin16', 'linear16', 'pcm16'):
                 return 'linear16'
             return 'ulaw'
@@ -563,6 +563,15 @@ class DeepgramProvider(AIProviderInterface):
                                 call_id=self.call_id,
                                 event_type=et,
                             )
+                            if et in ("Error", "Warning"):
+                                try:
+                                    logger.warning(
+                                        "Deepgram control detail",
+                                        call_id=self.call_id,
+                                        payload=event_data,
+                                    )
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
                         # Post-ACK injection when readiness events arrive and audio hasn't started

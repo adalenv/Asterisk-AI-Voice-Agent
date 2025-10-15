@@ -379,6 +379,9 @@ class Engine:
         self._provider_segment_start_ts: Dict[str, float] = {}
         # Track provider AgentAudio chunk sequence per call for duration logging
         self._provider_chunk_seq: Dict[str, int] = {}
+        # Track per-segment provider bytes vs. bytes enqueued to streaming
+        self._provider_bytes: Dict[str, int] = {}
+        self._enqueued_bytes: Dict[str, int] = {}
         # Experimental coalescing: per-call buffer for provider TTS chunks
         self._provider_coalesce_buf: Dict[str, bytearray] = {}
         # Active playbacks are now managed by SessionStore
@@ -1998,15 +2001,9 @@ class Engine:
                         exc_info=True,
                     )
 
-            # Self-echo mitigation and barge-in detection
-            # If TTS is playing (capture disabled), decide whether to drop or trigger barge-in
+            # Self-echo mitigation and barge-in/continuous-input handling during TTS playback
             if hasattr(session, 'audio_capture_enabled') and not session.audio_capture_enabled:
                 cfg = getattr(self.config, 'barge_in', None)
-                if not cfg or not getattr(cfg, 'enabled', True):
-                    logger.debug("Dropping inbound AudioSocket audio during TTS playback (barge-in disabled)",
-                                 conn_id=conn_id, caller_channel_id=caller_channel_id, bytes=len(audio_bytes))
-                    return
-
                 # Protection window from TTS start to avoid initial self-echo
                 now = time.time()
                 tts_elapsed_ms = 0
@@ -2015,11 +2012,10 @@ class Engine:
                         tts_elapsed_ms = int((now - session.tts_started_ts) * 1000)
                 except Exception:
                     tts_elapsed_ms = 0
-
-                initial_protect = int(getattr(cfg, 'initial_protection_ms', 200))
-                # Greeting-specific extra protection to avoid self-echo barge-in
+                initial_protect = int(getattr(cfg, 'initial_protection_ms', 200)) if cfg else 200
+                # Greeting-specific extra protection
                 try:
-                    if getattr(session, 'conversation_state', None) == 'greeting':
+                    if getattr(session, 'conversation_state', None) == 'greeting' and cfg:
                         greet_ms = int(getattr(cfg, 'greeting_protection_ms', 0))
                         if greet_ms > initial_protect:
                             initial_protect = greet_ms
@@ -2030,8 +2026,7 @@ class Engine:
                                  conn_id=conn_id, caller_channel_id=caller_channel_id,
                                  tts_elapsed_ms=tts_elapsed_ms, protect_ms=initial_protect)
                     return
-
-                # Continuous-input providers: forward raw frames during TTS after initial guard
+                # Determine provider and continuous-input capability
                 try:
                     provider_name = getattr(session, 'provider_name', None) or self.config.default_provider
                     provider = self.providers.get(provider_name)
@@ -2049,13 +2044,18 @@ class Engine:
                             continuous_input = bool(getattr(pcfg, 'continuous_input', False))
                 except Exception:
                     continuous_input = False
+                # If provider supports continuous input, forward during TTS even when barge-in is disabled
                 if continuous_input and provider and hasattr(provider, 'send_audio'):
                     try:
                         await provider.send_audio(audio_bytes)
                     except Exception:
                         logger.debug("Provider continuous-input forward error", call_id=caller_channel_id, exc_info=True)
                     return
-
+                # If barge-in disabled and no continuous-input path, drop
+                if not cfg or not getattr(cfg, 'enabled', True):
+                    logger.debug("Dropping inbound AudioSocket audio during TTS playback (barge-in disabled)",
+                                 conn_id=conn_id, caller_channel_id=caller_channel_id, bytes=len(audio_bytes))
+                    return
                 # Barge-in detection: accumulate candidate window based on multi-criteria (VAD + energy)
                 threshold = int(getattr(cfg, 'energy_threshold', 1000))
                 frame_ms = 20
@@ -3048,17 +3048,7 @@ class Engine:
                         )
                     except Exception:
                         logger.debug("Provider chunk resample failed; passing original", call_id=call_id, exc_info=True)
-                elif transport_encoding == "mulaw":
-                    # Slice μ-law payload into 20 ms frames to match AudioSocket pacing.
-                    try:
-                        frame_bytes = max(1, int((wire_rate or 8000) / 50))  # 20ms frame size
-                    except Exception:
-                        frame_bytes = 160
-                    if frame_bytes and len(out_chunk) > frame_bytes:
-                        sliced = []
-                        for i in range(0, len(out_chunk), frame_bytes):
-                            sliced.append(out_chunk[i : i + frame_bytes])
-                        out_chunk = sliced
+                # Do not slice μ-law in engine; StreamingPlaybackManager handles segmentation/pacing
 
                 # Coalescing settings
                 coalesce_enabled = bool(getattr(getattr(self.config, 'streaming', {}), 'coalesce_enabled', False))
@@ -3076,7 +3066,10 @@ class Engine:
                     buf = self._provider_coalesce_buf.setdefault(call_id, bytearray())
                     buf.extend(out_chunk)
                     try:
-                        buf_ms = round((len(buf) / float(2 * max(1, wire_rate))) * 1000.0, 3)
+                        # Respect μ-law 1 byte/sample vs PCM16 2 bytes/sample
+                        fmt = self._canonicalize_encoding(session.transport_profile.format)
+                        bps = 1 if fmt == "mulaw" or fmt == "ulaw" else 2
+                        buf_ms = round((len(buf) / float(max(1, bps * max(1, wire_rate)))) * 1000.0, 3)
                     except Exception:
                         buf_ms = 0.0
                     logger.info("PROVIDER COALESCE BUFFER", call_id=call_id, buf_ms=buf_ms, bytes=len(buf))
@@ -3165,11 +3158,15 @@ class Engine:
                                 logger.error("Fallback file playback exception", call_id=call_id, exc_info=True)
                                 return
                 try:
+                    # Track provider bytes
+                    self._provider_bytes[call_id] = int(self._provider_bytes.get(call_id, 0)) + (len(chunk) if isinstance(chunk, (bytes, bytearray)) else sum(len(f) for f in (out_chunk if isinstance(out_chunk, list) else [out_chunk])))
                     if isinstance(out_chunk, list):
                         for frame in out_chunk:
                             q.put_nowait(frame)
+                            self._enqueued_bytes[call_id] = int(self._enqueued_bytes.get(call_id, 0)) + len(frame)
                     else:
                         q.put_nowait(out_chunk)
+                        self._enqueued_bytes[call_id] = int(self._enqueued_bytes.get(call_id, 0)) + len(out_chunk)
                 except asyncio.QueueFull:
                     logger.debug("Provider streaming queue full; dropping chunk", call_id=call_id)
             elif etype == "AgentAudioDone":
@@ -3196,6 +3193,18 @@ class Engine:
                             call_id=call_id,
                             segment_wall_seconds=round(wall, 3),
                         )
+                    # Segment byte accounting summary
+                    prov = int(self._provider_bytes.pop(call_id, 0))
+                    enq = int(self._enqueued_bytes.pop(call_id, 0))
+                    try:
+                        ratio = 0.0 if prov <= 0 else (enq / float(prov))
+                    except Exception:
+                        ratio = 0.0
+                    logger.info("PROVIDER SEGMENT BYTES",
+                                call_id=call_id,
+                                provider_bytes=prov,
+                                enqueued_bytes=enq,
+                                enqueued_ratio=round(ratio, 3))
                     # Reset chunk sequence at segment end
                     self._provider_chunk_seq.pop(call_id, None)
                 except Exception:

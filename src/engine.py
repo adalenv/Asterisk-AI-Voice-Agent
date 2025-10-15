@@ -3154,82 +3154,82 @@ class Engine:
                 except asyncio.QueueFull:
                     logger.debug("Provider streaming queue full; dropping chunk", call_id=call_id)
             elif etype == "AgentAudioDone":
-            q = self._provider_stream_queues.get(call_id)
-            if q is not None:
-                # Signal end of stream
-                try:
-                    q.put_nowait(None)  # sentinel for StreamingPlaybackManager
-                except asyncio.QueueFull:
-                    # Even if full, attempt graceful end later
-                    asyncio.create_task(q.put(None))
-                # Clear saved queue reference
-                self._provider_stream_queues.pop(call_id, None)
-            else:
-                logger.debug("AgentAudioDone with no active stream queue", call_id=call_id)
-            self._provider_stream_formats.pop(call_id, None)
-            # Log provider segment wall duration
-            try:
-                start_ts = self._provider_segment_start_ts.pop(call_id, None)
-                if start_ts is not None:
-                    wall = max(0.0, time.time() - float(start_ts))
-                    logger.info(
-                        "PROVIDER SEGMENT END",
-                        call_id=call_id,
-                        segment_wall_seconds=round(wall, 3),
-                    )
-                # Reset chunk sequence at segment end
-                self._provider_chunk_seq.pop(call_id, None)
-            except Exception:
-                pass
-            # Experimental: if coalescing buffer exists but stream never started, play or stream it now
-            try:
-                coalesce_enabled = bool(getattr(getattr(self.config, 'streaming', {}), 'coalesce_enabled', False))
-            except Exception:
-                coalesce_enabled = False
-            if coalesce_enabled and call_id in self._provider_coalesce_buf:
-                buf = self._provider_coalesce_buf.pop(call_id, bytearray())
-                try:
-                    wire_rate = int(getattr(self.config.streaming, 'sample_rate', 16000))
-                except Exception:
-                    wire_rate = 16000
-                try:
-                    buf_ms = round((len(buf) / float(2 * max(1, wire_rate))) * 1000.0, 3)
-                except Exception:
-                    buf_ms = 0.0
-                micro_fallback_ms = int(getattr(self.config.streaming, 'micro_fallback_ms', 300)) if hasattr(self.config, 'streaming') else 300
-                if buf and buf_ms < micro_fallback_ms:
+                q = self._provider_stream_queues.get(call_id)
+                if q is not None:
+                    # Signal end of stream
                     try:
-                        playback_id = await self.playback_manager.play_audio(call_id, bytes(buf), "streaming-response")
-                        logger.info("MICRO SEGMENT FILE FALLBACK (end)", call_id=call_id, buf_ms=buf_ms, playback_id=playback_id)
-                    except Exception:
-                        logger.error("File fallback failed at segment end", call_id=call_id, exc_info=True)
-                elif buf:
-                    # Stream coalesced buffer now as a short segment
-                    try:
-                        q2 = asyncio.Queue(maxsize=256)
-                        self._provider_stream_queues[call_id] = q2
-                        playback_type = "streaming-response"
-                        fmt_info = self._provider_stream_formats.get(call_id, {})
-                        target_encoding, target_sample_rate, remediation = self._resolve_stream_targets(session, session.provider_name)
-                        if target_sample_rate <= 0:
-                            target_sample_rate = session.transport_profile.sample_rate
-                        await self.streaming_playback_manager.start_streaming_playback(
-                            call_id,
-                            q2,
-                            playback_type=playback_type,
-                            source_encoding=fmt_info.get("encoding"),
-                            source_sample_rate=fmt_info.get("sample_rate"),
-                            target_encoding=target_encoding,
-                            target_sample_rate=target_sample_rate,
+                        q.put_nowait(None)  # sentinel for StreamingPlaybackManager
+                    except asyncio.QueueFull:
+                        # Even if full, attempt graceful end later
+                        asyncio.create_task(q.put(None))
+                    # Clear saved queue reference
+                    self._provider_stream_queues.pop(call_id, None)
+                else:
+                    logger.debug("AgentAudioDone with no active stream queue", call_id=call_id)
+                self._provider_stream_formats.pop(call_id, None)
+                # Log provider segment wall duration
+                try:
+                    start_ts = self._provider_segment_start_ts.pop(call_id, None)
+                    if start_ts is not None:
+                        wall = max(0.0, time.time() - float(start_ts))
+                        logger.info(
+                            "PROVIDER SEGMENT END",
+                            call_id=call_id,
+                            segment_wall_seconds=round(wall, 3),
                         )
-                        logger.info("COALESCE START (end)", call_id=call_id, coalesced_ms=buf_ms, coalesced_bytes=len(buf))
-                        try:
-                            q2.put_nowait(bytes(buf))
-                            q2.put_nowait(None)
-                        except asyncio.QueueFull:
-                            logger.debug("Coalesced enqueue dropped at end (queue full)", call_id=call_id)
+                    # Reset chunk sequence at segment end
+                    self._provider_chunk_seq.pop(call_id, None)
+                except Exception:
+                    pass
+                # Experimental: if coalescing buffer exists but stream never started, play or stream it now
+                try:
+                    coalesce_enabled = bool(getattr(getattr(self.config, 'streaming', {}), 'coalesce_enabled', False))
+                except Exception:
+                    coalesce_enabled = False
+                if coalesce_enabled and call_id in self._provider_coalesce_buf:
+                    buf = self._provider_coalesce_buf.pop(call_id, bytearray())
+                    try:
+                        wire_rate = int(getattr(self.config.streaming, 'sample_rate', 16000))
                     except Exception:
-                        logger.error("Coalesced streaming failed at segment end", call_id=call_id, exc_info=True)
+                        wire_rate = 16000
+                    try:
+                        buf_ms = round((len(buf) / float(2 * max(1, wire_rate))) * 1000.0, 3)
+                    except Exception:
+                        buf_ms = 0.0
+                    micro_fallback_ms = int(getattr(self.config.streaming, 'micro_fallback_ms', 300)) if hasattr(self.config, 'streaming') else 300
+                    if buf and buf_ms < micro_fallback_ms:
+                        try:
+                            playback_id = await self.playback_manager.play_audio(call_id, bytes(buf), "streaming-response")
+                            logger.info("MICRO SEGMENT FILE FALLBACK (end)", call_id=call_id, buf_ms=buf_ms, playback_id=playback_id)
+                        except Exception:
+                            logger.error("File fallback failed at segment end", call_id=call_id, exc_info=True)
+                    elif buf:
+                        # Stream coalesced buffer now as a short segment
+                        try:
+                            q2 = asyncio.Queue(maxsize=256)
+                            self._provider_stream_queues[call_id] = q2
+                            playback_type = "streaming-response"
+                            fmt_info = self._provider_stream_formats.get(call_id, {})
+                            target_encoding, target_sample_rate, remediation = self._resolve_stream_targets(session, session.provider_name)
+                            if target_sample_rate <= 0:
+                                target_sample_rate = session.transport_profile.sample_rate
+                            await self.streaming_playback_manager.start_streaming_playback(
+                                call_id,
+                                q2,
+                                playback_type=playback_type,
+                                source_encoding=fmt_info.get("encoding"),
+                                source_sample_rate=fmt_info.get("sample_rate"),
+                                target_encoding=target_encoding,
+                                target_sample_rate=target_sample_rate,
+                            )
+                            logger.info("COALESCE START (end)", call_id=call_id, coalesced_ms=buf_ms, coalesced_bytes=len(buf))
+                            try:
+                                q2.put_nowait(bytes(buf))
+                                q2.put_nowait(None)
+                            except asyncio.QueueFull:
+                                logger.debug("Coalesced enqueue dropped at end (queue full)", call_id=call_id)
+                        except Exception:
+                            logger.error("Coalesced streaming failed at segment end", call_id=call_id, exc_info=True)
             else:
                 # Log control/JSON events at debug for now
                 logger.debug("Provider control event", provider_event=event)

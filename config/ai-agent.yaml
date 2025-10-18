@@ -114,7 +114,7 @@ downstream_mode: "stream"
 audiosocket:
   host: "0.0.0.0"          # Bind address (use 127.0.0.1 when engine and Asterisk share a host)
   port: 8090               # TCP port for AudioSocket connections
-  format: "ulaw"           # Wire format: μ-law @ 8kHz for AudioSocket; must match dialplan's AudioSocket() media argument.
+  format: "slin16"           # Wire format: 16-bit PCM LE @ 8kHz for AudioSocket; must match dialplan's AudioSocket() media argument.
 
 # Barge-in configuration
 barge_in:
@@ -141,8 +141,8 @@ streaming:
   low_watermark_ms: 200      # Pause when depth < ~2/3 of min_start; 200ms keeps shallow buffer without starving.
   provider_grace_ms: 60      # Short tail grace so cleanup finishes quickly without dragging cadence.
   logging_level: "debug"      # Optional override for streaming logger verbosity
-  egress_swap_mode: "auto"   # Auto-detect PCM16 byte order (auto|force_true|force_false)
-  egress_force_mulaw: true
+  egress_swap_mode: "force_false"   # Force PCM16 little-endian for AudioSocket
+  egress_force_mulaw: false
   # Diagnostics (feature-flagged): capture short PCM taps pre/post compand for next call
   diag_enable_taps: true
   diag_pre_secs: 1

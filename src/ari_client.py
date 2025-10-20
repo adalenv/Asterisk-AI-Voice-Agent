@@ -330,7 +330,7 @@ class ARIClient:
             response = await self.send_command(
                 "POST",
                 f"channels/{channel_id}/record",
-                data=payload,
+                params=payload,
             )
             status = response.get("status") if isinstance(response, dict) else None
             if status is not None and not (200 <= int(status) < 300):

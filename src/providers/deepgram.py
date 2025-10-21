@@ -2,6 +2,7 @@ import asyncio
 import json
 import audioop
 import websockets
+import time
 from typing import Callable, Optional, List, Dict, Any
 import websockets.exceptions
 
@@ -107,6 +108,13 @@ class DeepgramProvider(AIProviderInterface):
         # Greeting injection guard
         self._greeting_injected: bool = False
         self._greeting_injections: int = 0
+        # Upstream RMS tracking
+        self._rms_ma: float = 0.0
+        self._low_rms_streak: int = 0
+        self._rms_log_started: bool = False
+        # User transcript counters
+        self._user_txn_count: int = 0
+        self._user_last_ts: float = 0.0
         # Cache declared Deepgram input settings
         try:
             self._dg_input_rate = int(self._get_config_value('input_sample_rate_hz', 8000) or 8000)
@@ -438,13 +446,51 @@ class DeepgramProvider(AIProviderInterface):
                 if pcm_for_rms is not None:
                     try:
                         rms = audioop.rms(pcm_for_rms, 2)
-                        if rms < 100:
-                            logger.warning(
-                                "Deepgram provider low RMS detected; possible codec mismatch",
-                                rms=rms,
-                                input_encoding=input_encoding,
-                                bytes=chunk_len,
-                            )
+                        alpha = 0.2
+                        self._rms_ma = (alpha * float(rms)) + (1.0 - alpha) * float(self._rms_ma or 0.0)
+                        protect_elapsed = 0.0
+                        try:
+                            if getattr(self, "_settings_ts", 0.0):
+                                protect_elapsed = max(0.0, time.monotonic() - float(self._settings_ts or 0.0))
+                        except Exception:
+                            protect_elapsed = 0.0
+                        gate = (protect_elapsed >= 0.3) and bool(self._ready_to_stream)
+                        threshold = 250
+                        if gate and rms < threshold:
+                            self._low_rms_streak += 1
+                            if self._low_rms_streak % 10 == 0:
+                                logger.warning(
+                                    "Deepgram upstream low RMS sustained",
+                                    rms=rms,
+                                    rms_ma=int(self._rms_ma),
+                                    streak=self._low_rms_streak,
+                                    bytes=chunk_len,
+                                    target_rate=target_rate,
+                                )
+                        else:
+                            if gate and not self._rms_log_started and rms >= threshold:
+                                logger.info(
+                                    "Deepgram upstream RMS flow",
+                                    rms=rms,
+                                    rms_ma=int(self._rms_ma),
+                                    bytes=chunk_len,
+                                    target_rate=target_rate,
+                                )
+                                self._rms_log_started = True
+                            self._low_rms_streak = 0
+                        # Quick integrity check on PCM (zeros ratio)
+                        try:
+                            if pcm_for_rms:
+                                zc = pcm_for_rms.count(b"\x00")
+                                zr = float(zc) / float(len(pcm_for_rms))
+                                if gate and zr > 0.5:
+                                    logger.warning(
+                                        "Deepgram upstream PCM integrity suspect",
+                                        zero_ratio=round(zr, 3),
+                                        bytes=len(pcm_for_rms),
+                                    )
+                        except Exception:
+                            pass
                     except Exception:
                         logger.debug("Deepgram RMS check failed", exc_info=True)
 

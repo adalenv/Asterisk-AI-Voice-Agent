@@ -136,6 +136,7 @@ class DeepgramProvider(AIProviderInterface):
         # Voice catalog cache (TTL)
         self._model_caps_cache: Optional[Dict[str, Any]] = None
         self._caps_expires_at: float = 0.0
+        self._caps_last_success: bool = False
 
     @property
     def supported_codecs(self) -> List[str]:
@@ -298,6 +299,9 @@ class DeepgramProvider(AIProviderInterface):
         think_model = getattr(self.llm_config, 'model', None) or "gpt-4o"
         think_prompt = getattr(self.llm_config, 'prompt', None) or "You are a helpful assistant."
 
+        # Only include speak-level override if capabilities were fetched and include this voice
+        include_speak_override = bool(self._caps_last_success and isinstance(locals().get('caps', {}), dict) and speak_model in (caps or {}))
+
         settings = {
             "type": "Settings",
             "audio": {
@@ -310,16 +314,20 @@ class DeepgramProvider(AIProviderInterface):
             "listen": { "provider": { "type": "deepgram", "model": listen_model } },
             "think": { "provider": { "type": "open_ai", "model": think_model }, "prompt": think_prompt },
             "speak": {
-                "provider": { "type": "deepgram", "model": speak_model },
-                "audio": {
-                    "format": {
-                        "encoding": self._dg_output_encoding,
-                        "sample_rate": int(self._dg_output_rate)
-                    }
-                }
+                "provider": { "type": "deepgram", "model": speak_model }
             }
             }
         }
+        if include_speak_override:
+            try:
+                settings["agent"]["speak"]["audio"] = {
+                    "format": {
+                        "encoding": self._dg_output_encoding,
+                        "sample_rate": int(self._dg_output_rate),
+                    }
+                }
+            except Exception:
+                pass
         await self.websocket.send(json.dumps(settings))
         # Mark settings sent; readiness only upon server response (ACK) or timeout
         self._settings_sent = True
@@ -497,10 +505,12 @@ class DeepgramProvider(AIProviderInterface):
             # Cache with TTL
             self._model_caps_cache = caps
             self._caps_expires_at = time.time() + 600.0
+            self._caps_last_success = True
             logger.info("Deepgram voice catalog cached", count=len(caps))
             return caps
         except Exception:
             logger.debug("Deepgram voice catalog retrieval failed", exc_info=True)
+            self._caps_last_success = False
             return self._model_caps_cache or {}
 
     def _select_audio_profile(self, voice_model: str, caps_map: Dict[str, Any]) -> tuple:
@@ -893,6 +903,15 @@ class DeepgramProvider(AIProviderInterface):
                                 call_id=self.call_id,
                                 event_type=et,
                             )
+                            # Short-circuit on Settings Error per spec
+                            if et == "Error":
+                                try:
+                                    # Stop session to avoid sending to closed socket
+                                    asyncio.create_task(self.stop_session())
+                                except Exception:
+                                    pass
+                                # Skip further processing of this message
+                                continue
                             if isinstance(event_data, dict) and et == "ConversationText":
                                 try:
                                     logger.info(

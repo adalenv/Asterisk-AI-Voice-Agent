@@ -11,19 +11,27 @@ SERVER_USER="${SERVER_USER:-root}"
 SERVER_HOST="${SERVER_HOST:-voiprnd.nemtclouddispatch.com}"
 PROJECT_PATH="${PROJECT_PATH:-/root/Asterisk-AI-Voice-Agent}"
 SINCE_MIN="${SINCE_MIN:-60}"
+FRAME_MS="${FRAME_MS:-20}"
+ANALYZE_WINDOW_S="${ANALYZE_WINDOW_S:-0}"
 TS=$(date -u +%Y%m%d-%H%M%S)
 BASE="logs/remote/rca-$TS"
-mkdir -p "$BASE"/{taps,recordings,logs,transcripts}
+mkdir -p "$BASE"/{taps,recordings,logs,transcripts,metrics,timeline}
 mkdir -p "$BASE"/config
 echo "$BASE" > logs/remote/rca-latest.path
+echo "[RCA] Collecting ai_engine logs (since ${SINCE_MIN} minutes)"
 ssh "$SERVER_USER@$SERVER_HOST" "docker logs --since ${SINCE_MIN}m ai_engine > /tmp/ai-engine.latest.log" || true
-scp "$SERVER_USER@$SERVER_HOST:/tmp/ai-engine.latest.log" "$BASE/logs/ai-engine.log"
+scp "$SERVER_USER@$SERVER_HOST:/tmp/ai-engine.latest.log" "$BASE/logs/ai-engine.log" 2>/dev/null || echo "[WARN] ai_engine log not retrieved"
 # Clean up remote tmp log
 ssh "$SERVER_USER@$SERVER_HOST" "rm -f /tmp/ai-engine.latest.log" || true
 CID=$(grep -o '"call_id": "[^"]*"' "$BASE/logs/ai-engine.log" | awk -F '"' '{print $4}' | tail -n 1 || true)
 echo -n "$CID" > "$BASE/call_id.txt"
-ssh "$SERVER_USER@$SERVER_HOST" "docker exec ai_engine sh -lc 'cd /tmp/ai-engine-taps 2>/dev/null || exit 0; tar czf /tmp/ai_taps_${CID}.tgz *${CID}*.wav 2>/dev/null || true'; docker cp ai_engine:/tmp/ai_taps_${CID}.tgz /tmp/ai_taps_${CID}.tgz 2>/dev/null || true" || true
-scp "$SERVER_USER@$SERVER_HOST:/tmp/ai_taps_${CID}.tgz" "$BASE/" 2>/dev/null || true
+echo "[RCA] Active Call ID: ${CID:-unknown}"
+if [ -n "$CID" ]; then
+  ssh "$SERVER_USER@$SERVER_HOST" "docker exec ai_engine sh -lc 'cd /tmp/ai-engine-taps 2>/dev/null || exit 0; tar czf /tmp/ai_taps_${CID}.tgz *${CID}*.wav 2>/dev/null || true'; docker cp ai_engine:/tmp/ai_taps_${CID}.tgz /tmp/ai_taps_${CID}.tgz 2>/dev/null || true" || true
+  scp "$SERVER_USER@$SERVER_HOST:/tmp/ai_taps_${CID}.tgz" "$BASE/" 2>/dev/null || echo "[WARN] No tap bundle fetched"
+else
+  echo "[WARN] No call ID. Skipping tap bundle retrieval"
+fi
 # Clean up remote tmp tap bundle
 ssh "$SERVER_USER@$SERVER_HOST" "rm -f /tmp/ai_taps_${CID}.tgz" 2>/dev/null || true
 if [ -f "$BASE/ai_taps_${CID}.tgz" ]; then tar xzf "$BASE/ai_taps_${CID}.tgz" -C "$BASE/taps"; fi
@@ -31,10 +39,11 @@ REC_LIST=$(ssh "$SERVER_USER@$SERVER_HOST" "find /var/spool/asterisk/monitor -ty
 if [ -n "$REC_LIST" ]; then
   while IFS= read -r f; do
     [ -z "$f" ] && continue
-    scp "$SERVER_USER@$SERVER_HOST:$f" "$BASE/recordings/" || true
+    scp "$SERVER_USER@$SERVER_HOST:$f" "$BASE/recordings/" || echo "[WARN] Failed to fetch recording $f"
   done <<< "$REC_LIST"
+else
+  echo "[WARN] No recordings detected for CID $CID"
 fi
-
 # Fetch ARI channel recordings by parsing rec name from engine logs (name field)
 REC_NAME=$(grep -o '"name": "out-[^"]*"' "$BASE/logs/ai-engine.log" | awk -F '"' '{print $4}' | tail -n 1 || true)
 if [ -n "$REC_NAME" ]; then
@@ -45,26 +54,30 @@ if [ -n "$REC_NAME" ]; then
 fi
 TAPS=$(ls "$BASE"/taps/*.wav 2>/dev/null || true)
 RECS=$(ls "$BASE"/recordings/*.wav 2>/dev/null || true)
-if [ -n "$TAPS" ]; then python3 scripts/wav_quality_analyzer.py "$BASE"/taps/*.wav --json "$BASE/wav_report_taps.json" --frame-ms 20 || true; fi
-if [ -n "$RECS" ]; then python3 scripts/wav_quality_analyzer.py "$BASE"/recordings/*.wav --json "$BASE/wav_report_rec.json" --frame-ms 20 || true; fi
+if [ -n "$TAPS" ]; then
+  python3 scripts/wav_quality_analyzer.py "$BASE"/taps/*.wav --json "$BASE/metrics/wav_report_taps.json" --frame-ms "$FRAME_MS" || echo "[WARN] Tap analysis failed"
+fi
+if [ -n "$RECS" ]; then
+  python3 scripts/wav_quality_analyzer.py "$BASE"/recordings/*.wav --json "$BASE/metrics/wav_report_rec.json" --frame-ms "$FRAME_MS" || echo "[WARN] Recording analysis failed"
+fi
 # Build call timeline with key events for the captured call
 if [ -n "$CID" ]; then
-  egrep -n "ADAPTIVE WARM-UP|Wrote .*200ms|call-level summary|STREAMING TUNING SUMMARY" "$BASE/logs/ai-engine.log" | grep "$CID" > "$BASE/logs/call_timeline.log" || true
+  egrep -n "ADAPTIVE WARM-UP|Wrote .*200ms|call-level summary|STREAMING TUNING SUMMARY" "$BASE/logs/ai-engine.log" | grep "$CID" > "$BASE/timeline/call_timeline.log" || true
 fi
 
 # Offline transcription of outbound audio when available
 OUT_WAVS=$(ls "$BASE"/recordings/out-*.wav 2>/dev/null | head -n 1 || true)
 if [ -n "$OUT_WAVS" ]; then
-  python3 scripts/transcribe_call.py "$BASE"/recordings/out-*.wav --json "$BASE/transcripts/out.json" || true
+  python3 scripts/transcribe_call.py "$BASE"/recordings/out-*.wav --json "$BASE/transcripts/out.json" || echo "[WARN] Outbound transcription failed"
 fi
 
 IN_WAVS=$(ls "$BASE"/recordings/in-*.wav 2>/dev/null | head -n 1 || true)
 if [ -n "$IN_WAVS" ]; then
-  python3 scripts/transcribe_call.py "$BASE"/recordings/in-*.wav --json "$BASE/transcripts/in.json" || true
+  python3 scripts/transcribe_call.py "$BASE"/recordings/in-*.wav --json "$BASE/transcripts/in.json" || echo "[WARN] Inbound transcription failed"
 fi
 
 if [ -n "$CID" ]; then
-  ssh "$SERVER_USER@$SERVER_HOST" "CID=$CID; SRC=/tmp/ai-engine-captures/\$CID; TMP=/tmp/ai-capture-\$CID; TAR=/tmp/ai-capture-\$CID.tgz; if docker exec ai_engine test -d \"\$SRC\"; then docker cp ai_engine:\"\$SRC\" \"\$TMP\" 2>/dev/null && tar czf \"\$TAR\" -C /tmp ai-capture-\$CID && rm -rf \"\$TMP\"; fi" || true
+  ssh "$SERVER_USER@$SERVER_HOST" "CID=$CID; SRC=/tmp/ai-engine-captures/$CID; TMP=/tmp/ai-capture-$CID; TAR=/tmp/ai-capture-$CID.tgz; if docker exec ai_engine test -d \"\$SRC\"; then docker cp ai_engine:\"\$SRC\" \"\$TMP\" 2>/dev/null && tar czf \"\$TAR\" -C /tmp ai-capture-$CID && rm -rf \"\$TMP\"; fi" || true
   if scp "$SERVER_USER@$SERVER_HOST:/tmp/ai-capture-$CID.tgz" "$BASE/" 2>/dev/null; then
     ssh "$SERVER_USER@$SERVER_HOST" "rm -f /tmp/ai-capture-$CID.tgz" || true
     mkdir -p "$BASE/captures"
@@ -72,12 +85,252 @@ if [ -n "$CID" ]; then
   fi
 fi
 
+# Analyze capture legs (inbound caller, caller→provider, provider→agent, agent→caller)
+CAPTURE_FILES=()
+if [ -d "$BASE/captures" ]; then
+  while IFS= read -r f; do
+    [ -n "$f" ] && CAPTURE_FILES+=("$f")
+  done < <(find "$BASE/captures" -type f -name '*.wav' -print 2>/dev/null)
+fi
+
+if [ ${#CAPTURE_FILES[@]} -gt 0 ]; then
+  python3 scripts/wav_quality_analyzer.py "${CAPTURE_FILES[@]}" --json "$BASE/metrics/wav_report_captures.json" --frame-ms "$FRAME_MS" || echo "[WARN] Capture analysis failed"
+  python3 scripts/transcribe_call.py "${CAPTURE_FILES[@]}" --json "$BASE/transcripts/captures.json" || echo "[WARN] Capture transcription failed"
+fi
+
 # Fetch server-side ai-agent.yaml for transport/provider troubleshooting
-scp "$SERVER_USER@$SERVER_HOST:$PROJECT_PATH/config/ai-agent.yaml" "$BASE/config/" 2>/dev/null || true
+scp "$SERVER_USER@$SERVER_HOST:$PROJECT_PATH/config/ai-agent.yaml" "$BASE/config/" 2>/dev/null || echo "[WARN] Failed to fetch ai-agent.yaml"
 
 # Fetch Asterisk dialplan custom file and full log for context
-scp "$SERVER_USER@$SERVER_HOST:/etc/asterisk/extensions_custom.conf" "$BASE/config/" 2>/dev/null || true
-scp "$SERVER_USER@$SERVER_HOST:/var/log/asterisk/full" "$BASE/logs/asterisk-full.log" 2>/dev/null || true
+scp "$SERVER_USER@$SERVER_HOST:/etc/asterisk/extensions_custom.conf" "$BASE/config/" 2>/dev/null || echo "[WARN] Failed to fetch extensions_custom.conf"
+scp "$SERVER_USER@$SERVER_HOST:/var/log/asterisk/full" "$BASE/logs/asterisk-full.log" 2>/dev/null || echo "[WARN] Failed to fetch asterisk full log"
+
+# Aggregate audio quality metrics and produce unified summary + narrative
+BASE_DIR="$BASE" python3 - <<'PY'
+import json, os
+from pathlib import Path
+
+base = Path(os.environ.get("BASE_DIR", ""))
+if not base.exists():
+    raise SystemExit(0)
+
+metrics_dir = base / "metrics"
+summary_json = metrics_dir / "audio_quality_summary.json"
+summary_txt = metrics_dir / "audio_quality_summary.txt"
+timeline_dir = base / "timeline"
+logs_dir = base / "logs"
+transcripts_dir = base / "transcripts"
+
+channels = []
+overall_severity = "unknown"
+severity_rank = {"good": 0, "fair": 1, "poor": 2, "unknown": 3}
+
+cid_path = base / "call_id.txt"
+if cid_path.exists():
+    call_id = cid_path.read_text(errors="ignore").strip()
+else:
+    call_id = ""
+
+def infer_leg(path):
+    if not path:
+        return None
+    name = Path(path).name
+    if "caller_inbound" in name:
+        return "caller_inbound"
+    if "caller_to_provider" in name:
+        return "caller_to_provider"
+    if "agent_from_provider" in name:
+        return "agent_from_provider"
+    if "agent_out_to_caller" in name:
+        return "agent_out_to_caller"
+    if "post_compand" in name and "first200ms" in name:
+        return "post_compand_first200ms"
+    if "post_compand" in name and "first.wav" in name:
+        return "post_compand_first"
+    if "post_compand" in name:
+        return "post_compand"
+    if "pre_compand" in name:
+        return "pre_compand"
+    if "in-" in name and name.endswith(".wav"):
+        return "caller_recording"
+    return None
+
+def classify(entry):
+    metrics = entry.get("metrics", {})
+    base_stats = entry.get("base", {})
+    snr = metrics.get("snr_db")
+    clip_ratio = base_stats.get("clip_ratio", 0)
+    impairments = set(metrics.get("impairments") or [])
+    severity = "good"
+    notes = []
+    if snr is not None:
+        if snr < 10:
+            severity = "poor"
+            notes.append("very low snr")
+        elif snr < 15 and severity != "poor":
+            severity = "fair"
+            notes.append("low snr")
+    if clip_ratio and clip_ratio > 0.005:
+        severity = "poor"
+        notes.append("clipping")
+    if "high_silence_ratio" in impairments:
+        notes.append("high silence")
+        severity = max([severity, "fair"], key=lambda x: severity_rank[x])
+    leg = infer_leg(entry.get("file"))
+    detail = {
+        "file": entry.get("file"),
+        "duration_s": entry.get("header", {}).get("duration_s"),
+        "sample_rate_hz": entry.get("header", {}).get("rate"),
+        "snr_db": snr,
+        "clip_ratio": clip_ratio,
+        "spectral_centroid_hz": metrics.get("spectral_centroid_hz"),
+        "dynamic_range": metrics.get("dynamic_range"),
+        "impairments": sorted(list(impairments)),
+        "assessment": severity,
+        "notes": notes,
+        "leg": leg,
+    }
+    return severity, detail
+
+results = []
+for name in ("wav_report_taps.json", "wav_report_rec.json", "wav_report_captures.json"):
+    path = metrics_dir / name
+    if not path.exists():
+        continue
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        continue
+    results.extend(data.get("results", []))
+
+if results:
+    worst = "good"
+    for res in results:
+        severity, detail = classify(res)
+        channels.append(detail)
+        if severity_rank[severity] > severity_rank[worst]:
+            worst = severity
+    overall_severity = worst
+
+# Parse network metrics from ai-engine log (call-level summary entries)
+network_metrics = {}
+log_path = logs_dir / "ai-engine.log"
+if log_path.exists():
+    network_metrics.setdefault("call_level", [])
+    for line in log_path.read_text().splitlines():
+        if "call-level summary" in line:
+            try:
+                event = json.loads(line)
+            except Exception:
+                continue
+            if call_id and event.get("call_id") and event.get("call_id") != call_id:
+                continue
+            network_metrics["call_level"].append(event)
+
+# Transcript metadata
+transcripts = {}
+for name in ("in.json", "out.json", "captures.json"):
+    path = transcripts_dir / name
+    if path.exists():
+        try:
+            transcripts[name[:-5]] = json.loads(path.read_text())
+        except Exception:
+            pass
+
+# Build simple timeline summary (events + transcript confidence)
+timeline = []
+timeline_path = timeline_dir / "call_timeline.log"
+if timeline_path.exists():
+    for line in timeline_path.read_text().splitlines():
+        timeline.append({"source": "engine", "line": line})
+for direction, data in transcripts.items():
+    for item in data:
+        summary = item.get("summary", {})
+        leg = infer_leg(item.get("file"))
+        if direction == "in":
+            participant = "caller"
+        elif direction == "out":
+            participant = "agent"
+        else:
+            if leg in ("caller_inbound", "caller_to_provider"):
+                participant = "caller"
+            elif leg in ("agent_from_provider", "agent_out_to_caller"):
+                participant = "agent"
+            else:
+                participant = "unknown"
+        timeline.append(
+            {
+                "source": f"transcript_{direction}",
+                "participant": participant,
+                "leg": leg,
+                "file": item.get("file"),
+                "confidence_avg": summary.get("confidence_avg"),
+                "word_count": summary.get("word_count"),
+                "non_speech_token_count": summary.get("non_speech_token_count"),
+            }
+        )
+
+summary_payload = {
+    "call_id": call_id,
+    "overall_quality": overall_severity,
+    "channels": channels,
+    "network_metrics": network_metrics,
+    "timeline": timeline,
+}
+metrics_dir.mkdir(parents=True, exist_ok=True)
+summary_json.write_text(json.dumps(summary_payload, indent=2))
+
+# Natural-language summary
+lines = []
+cid = summary_payload.get("call_id") or "unknown"
+lines.append(f"Call {cid} quality assessment: {overall_severity.upper()}.")
+if channels:
+    for ch in channels:
+        leg = ch.get("leg")
+        desc = ch.get("file") or "unknown file"
+        parts = []
+        if ch.get("snr_db") is not None:
+            parts.append(f"SNR {ch['snr_db']:.1f} dB")
+        if ch.get("clip_ratio"):
+            parts.append(f"clipping {ch['clip_ratio']*100:.2f}%")
+        if ch.get("notes"):
+            parts.append("notes: " + ", ".join(ch["notes"]))
+        leg_label = f" ({leg})" if leg else ""
+        lines.append(f"- {desc}{leg_label}: {', '.join(parts) if parts else 'no major issues'}")
+if network_metrics.get("call_level"):
+    events = network_metrics["call_level"]
+    for evt in events:
+        underflows = evt.get("underflow_events")
+        if underflows is not None:
+            lines.append(f"Network: underflow events reported = {underflows}.")
+if transcripts:
+    for direction, data in transcripts.items():
+        for item in data:
+            summary = item.get("summary", {})
+            leg = infer_leg(item.get("file"))
+            if direction == "in":
+                participant = "caller"
+            elif direction == "out":
+                participant = "agent"
+            else:
+                if leg in ("caller_inbound", "caller_to_provider"):
+                    participant = "caller"
+                elif leg in ("agent_from_provider", "agent_out_to_caller"):
+                    participant = "agent"
+                else:
+                    participant = "unknown"
+            if summary.get("confidence_avg") is not None:
+                label = leg or direction
+                lines.append(
+                    f"Transcript {label} ({participant}): avg confidence {summary['confidence_avg']:.2f}, words {summary.get('word_count')}"
+                )
+            transcript_text = (item.get("transcript") or "").strip()
+            if transcript_text:
+                label = leg or direction
+                lines.append(f"Transcript {label} ({participant}) text: {transcript_text}")
+
+summary_txt.write_text("\n".join(lines))
+PY
 
 # Fetch Deepgram usage for this call when credentials are available (robust Python fallback).
 DG_PROJECT_ID="${DG_PROJECT_ID:-}"

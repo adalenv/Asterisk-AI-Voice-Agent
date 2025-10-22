@@ -94,10 +94,23 @@ def transcribe_file(model: Model, wav_path: Path) -> Dict[str, object]:
     for seg in text_segments:
         if "result" in seg:
             words.extend(seg["result"])
+
+    confidences = [w.get("conf") for w in words if isinstance(w.get("conf"), (int, float))]
+    non_speech_tokens = [w for w in words if isinstance(w.get("word"), str) and w["word"].startswith('[')]
+
+    summary = {
+        "word_count": len(words),
+        "confidence_avg": float(sum(confidences) / len(confidences)) if confidences else None,
+        "confidence_min": float(min(confidences)) if confidences else None,
+        "confidence_max": float(max(confidences)) if confidences else None,
+        "non_speech_token_count": len(non_speech_tokens),
+    }
+
     return {
         "file": str(wav_path),
         "transcript": transcript,
         "words": words,
+        "summary": summary,
     }
 
 

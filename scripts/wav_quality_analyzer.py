@@ -33,6 +33,7 @@ import statistics
 import sys
 import wave
 from dataclasses import dataclass, asdict
+from array import array
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -77,6 +78,7 @@ class AnalysisResult:
     header: FileHeader
     base: BaseStats
     frames: FrameStats
+    metrics: Dict[str, object]
     recommendation: str
 
 
@@ -203,6 +205,80 @@ def _analyze_frames(pcm16: bytes, rate: int, frame_ms: int = 20, silence_rms: in
     )
 
 
+def _estimate_snr(frame_stats: FrameStats, base_stats: BaseStats) -> Tuple[Optional[float], Optional[int]]:
+    """Estimate SNR (dB) using frame-level RMS statistics.
+
+    Uses the lower decile of RMS values as noise estimate and overall RMS as signal.
+    Returns (snr_db, noise_rms).
+    """
+
+    if frame_stats.frame_count == 0 or base_stats.rms <= 0:
+        return None, None
+
+    try:
+        # Approximate noise as rms_min or lower percentile using silence ratio.
+        # Since we do not store full distribution, fall back to rms_min.
+        noise_rms = max(1, frame_stats.rms_min)
+        snr = 20 * math.log10(base_stats.rms / max(1.0, noise_rms))
+        return snr, noise_rms
+    except Exception:
+        return None, None
+
+
+def _spectral_centroid(pcm16: bytes, rate: int) -> Optional[float]:
+    """Compute spectral centroid (Hz) using a simple DFT on the first window."""
+
+    if not pcm16 or rate <= 0:
+        return None
+
+    samples = array('h')
+    samples.frombytes(pcm16)
+    if not samples:
+        return None
+
+    window_size = min(len(samples), 2048)
+    if window_size < 64:
+        return None
+
+    segment = samples[:window_size]
+    mags: List[float] = []
+    for k in range(window_size // 2):
+        real = 0.0
+        imag = 0.0
+        for n, sample in enumerate(segment):
+            angle = -2.0 * math.pi * k * n / window_size
+            real += sample * math.cos(angle)
+            imag += sample * math.sin(angle)
+        magnitude = math.hypot(real, imag)
+        mags.append(magnitude)
+
+    total_mag = sum(mags)
+    if total_mag <= 0.0:
+        return None
+
+    centroid = 0.0
+    for idx, magnitude in enumerate(mags):
+        freq = idx * rate / window_size
+        centroid += freq * magnitude
+    centroid /= total_mag
+    return centroid
+
+
+def _detect_impairments(base: BaseStats, frames: FrameStats, snr_db: Optional[float]) -> List[str]:
+    impairments: List[str] = []
+
+    if snr_db is not None and snr_db < 15.0:
+        impairments.append("low_snr")
+    if base.clip_ratio > 0.005:
+        impairments.append("clipping")
+    if frames.silence_ratio > 0.8:
+        impairments.append("high_silence_ratio")
+    if abs(base.mean) > 500:
+        impairments.append("dc_offset")
+
+    return impairments
+
+
 def _recommendation(header: FileHeader, base: BaseStats) -> str:
     rate = header.rate
     fmt = header.format_guess
@@ -227,8 +303,20 @@ def analyze_file(path: str, frame_ms: int = 20, clip_threshold: int = 32760) -> 
     pcm, mode = _to_pcm16(header, raw)
     base = _analyze_base(pcm, header.rate, clip_threshold=clip_threshold)
     frames = _analyze_frames(pcm, header.rate, frame_ms=frame_ms, silence_rms=100)
+    snr_db, noise_rms = _estimate_snr(frames, base)
+    spectral_centroid = _spectral_centroid(pcm, header.rate)
+    dynamic_range = frames.rms_max - frames.rms_min if frames.frame_count else 0
+    impairments = _detect_impairments(base, frames, snr_db)
     rec = _recommendation(header, base)
-    return AnalysisResult(header=header, base=base, frames=frames, recommendation=rec)
+    metrics = {
+        "snr_db": snr_db,
+        "noise_rms": noise_rms,
+        "spectral_centroid_hz": spectral_centroid,
+        "dynamic_range": dynamic_range,
+        "impairments": impairments,
+        "analysis_mode": mode,
+    }
+    return AnalysisResult(header=header, base=base, frames=frames, metrics=metrics, recommendation=rec)
 
 
 def main() -> int:
@@ -270,6 +358,7 @@ def main() -> int:
                 "header": asdict(r.header),
                 "base": asdict(r.base),
                 "frames": asdict(r.frames),
+                "metrics": r.metrics,
                 "recommendation": r.recommendation,
             }
         )
@@ -277,10 +366,15 @@ def main() -> int:
         h = r.header
         b = r.base
         fr = r.frames
+        m = r.metrics
+        snr_txt = f"SNR {m['snr_db']:.1f}dB" if m.get("snr_db") is not None else "SNR n/a"
+        sc_txt = f"SC {m['spectral_centroid_hz']:.0f}Hz" if m.get("spectral_centroid_hz") else "SC n/a"
+        flags = ",".join(m.get("impairments") or []) or "none"
         print(
             f"- {Path(fpath).name}: {h.rate} Hz, {h.sampwidth*8}-bit, {h.channels} ch, dur {h.duration_s:.2f}s | "
             f"RMS {b.rms}, mean {b.mean}, peak {b.peak}, clips {b.clip_count} ({b.clip_ratio:.5f}), ZCR {b.zero_cross_rate:.5f} | "
-            f"frames {fr.frame_count} @ {fr.frame_ms}ms, RMSμ {fr.rms_mean:.1f}±{fr.rms_stdev:.1f}, silence {fr.silence_ratio*100:.1f}%"
+            f"frames {fr.frame_count} @ {fr.frame_ms}ms, RMSμ {fr.rms_mean:.1f}±{fr.rms_stdev:.1f}, silence {fr.silence_ratio*100:.1f}% | "
+            f"{snr_txt}, {sc_txt}, flags: {flags}"
         )
 
     if args.json_out:

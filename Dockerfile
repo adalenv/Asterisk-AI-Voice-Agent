@@ -36,6 +36,9 @@ COPY --chown=appuser:appuser src/ ./src
 COPY --chown=appuser:appuser config/ ./config
 COPY --chown=appuser:appuser main.py ./
 
+# Prepare log directory for file logging
+RUN mkdir -p /app/logs && chown appuser:appuser /app/logs
+
 # Set PATH for virtual environment
 ENV PATH="/opt/venv/bin:$PATH"
 

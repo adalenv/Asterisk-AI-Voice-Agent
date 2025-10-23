@@ -3354,12 +3354,33 @@ class Engine:
                             target_sample_rate = session.transport_profile.sample_rate
                         if remediation:
                             session.audio_diagnostics["codec_remediation"] = remediation
+                        
+                        # Get source sample rate with fallback to provider's configured output rate
+                        source_sample_rate = fmt_info.get("sample_rate")
+                        if not source_sample_rate:
+                            # Fallback: use provider's configured output rate (prevents 8kHz default)
+                            try:
+                                provider = session.provider
+                                if hasattr(provider, '_dg_output_rate'):
+                                    source_sample_rate = provider._dg_output_rate
+                                    logger.debug(
+                                        "Using provider configured output rate as source_sample_rate fallback",
+                                        call_id=call_id,
+                                        rate=source_sample_rate,
+                                        reason="fmt_info empty"
+                                    )
+                            except Exception:
+                                pass
+                        # Final fallback to streaming config
+                        if not source_sample_rate:
+                            source_sample_rate = self.config.streaming.sample_rate
+                        
                         await self.streaming_playback_manager.start_streaming_playback(
                             call_id,
                             q,
                             playback_type=playback_type,
                             source_encoding=fmt_info.get("encoding"),
-                            source_sample_rate=fmt_info.get("sample_rate"),
+                            source_sample_rate=source_sample_rate,
                             target_encoding=target_encoding,
                             target_sample_rate=target_sample_rate,
                         )

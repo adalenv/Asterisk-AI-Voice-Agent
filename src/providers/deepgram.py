@@ -1250,12 +1250,7 @@ class DeepgramProvider(AIProviderInterface):
                                 pass
                         except Exception:
                             pass
-                        if rate != 8000:
-                            try:
-                                pcm, _ = resample_audio(pcm, rate, 8000, state=None)
-                                rate = 8000
-                            except Exception:
-                                logger.warning("Deepgram provider-side resample to 8k failed; emitting raw PCM16", exc_info=True)
+                        # No forced resampling - honor configured output rate
                         # DC-block the PCM payload before handing downstream
                         try:
                             pcm = self._apply_dc_block(pcm)
@@ -1267,7 +1262,7 @@ class DeepgramProvider(AIProviderInterface):
                             'streaming_chunk': True,
                             'call_id': self.call_id,
                             'encoding': 'linear16',
-                            'sample_rate': 8000,
+                            'sample_rate': rate,  # Use actual rate from config, not hardcoded
                         }
                         if not self._first_output_chunk_logged:
                             logger.info(
@@ -1307,7 +1302,7 @@ class DeepgramProvider(AIProviderInterface):
                         'streaming_chunk': True,
                         'call_id': self.call_id,
                         'encoding': 'mulaw',
-                        'sample_rate': 8000,
+                        'sample_rate': rate,  # Use config rate, not hardcoded
                     }
                     if not self._first_output_chunk_logged:
                         logger.info(

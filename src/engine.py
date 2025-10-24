@@ -2858,19 +2858,23 @@ class Engine:
                     audiosocket_format = (self.config.audiosocket.format or "ulaw").lower()
             except Exception:
                 audiosocket_format = "ulaw"
+            audiosocket_canon = self._canonicalize_encoding(audiosocket_format)
 
             if name == "deepgram":
                 enc = (provider_cfg.get("input_encoding") or "linear16").lower()
-                if enc in ("slin16", "linear16", "pcm16") and audiosocket_format != "slin16":
+                enc_canon = self._canonicalize_encoding(enc)
+                if enc_canon in {"slin16", "linear16", "pcm16"} and audiosocket_canon not in {"slin", "slin16"}:
                     issues.append(
                         f"Deepgram expects PCM input but audiosocket.format={audiosocket_format}; "
                         "set audiosocket.format=slin16 or change deepgram.input_encoding to ulaw."
                     )
-                if enc in ("ulaw", "mulaw", "g711_ulaw", "mu-law") and audiosocket_format != "ulaw":
-                    issues.append(
-                        f"Deepgram expects μ-law input but audiosocket.format={audiosocket_format}; "
-                        "set audiosocket.format=ulaw or change deepgram.input_encoding to linear16."
-                    )
+                if enc_canon in {"ulaw", "mulaw", "g711_ulaw", "mu-law"} and audiosocket_canon not in {"ulaw", "mulaw"}:
+                    # Allow intentional bridge: audiosocket carries PCM16 while provider works in μ-law
+                    if audiosocket_canon not in {"slin", "slin16"}:
+                        issues.append(
+                            f"Deepgram expects μ-law input but audiosocket.format={audiosocket_format}; "
+                            "set audiosocket.format=ulaw or change deepgram.input_encoding to linear16."
+                        )
 
             if name == "openai_realtime":
                 provider_rate = int(provider_cfg.get("provider_input_sample_rate_hz") or 0)
@@ -2910,12 +2914,14 @@ class Engine:
                     audiosocket_format = (self.config.audiosocket.format or "ulaw").lower()
             except Exception:
                 audiosocket_format = "ulaw"
+            audiosocket_canon = self._canonicalize_encoding(audiosocket_format)
 
             streaming_encoding = getattr(self.streaming_playback_manager, "audiosocket_format", None)
             if streaming_encoding:
                 streaming_encoding = streaming_encoding.lower()
             else:
                 streaming_encoding = audiosocket_format
+            streaming_canon = self._canonicalize_encoding(streaming_encoding) or audiosocket_canon
 
             try:
                 streaming_rate = int(getattr(self.streaming_playback_manager, "sample_rate", 8000) or 8000)
@@ -2926,8 +2932,8 @@ class Engine:
             if callable(describe_method):
                 issues.extend(
                     describe_method(
-                        audiosocket_format=audiosocket_format,
-                        streaming_encoding=streaming_encoding,
+                        audiosocket_format=audiosocket_canon,
+                        streaming_encoding=streaming_canon,
                         streaming_sample_rate=streaming_rate,
                     )
                 )

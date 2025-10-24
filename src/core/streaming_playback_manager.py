@@ -335,6 +335,30 @@ class StreamingPlaybackManager:
         canonical = StreamingPlaybackManager._canonicalize_encoding(value)
         return canonical in {"ulaw", "mulaw", "g711_ulaw", "mu-law"}
 
+    def _ensure_call_tap_buffers(self, call_id: str, sample_rate: int) -> None:
+        if not getattr(self, "diag_enable_taps", False):
+            return
+        try:
+            self.call_tap_pre_pcm16.setdefault(call_id, bytearray())
+            self.call_tap_post_pcm16.setdefault(call_id, bytearray())
+            if sample_rate > 0 and call_id not in self.call_tap_rate:
+                self.call_tap_rate[call_id] = int(sample_rate)
+        except Exception:
+            logger.debug("Call tap buffer init failed", call_id=call_id, exc_info=True)
+
+    def _append_call_taps(self, call_id: str, pre: Optional[bytes], post: Optional[bytes], sample_rate: int) -> None:
+        if not getattr(self, "diag_enable_taps", False):
+            return
+        try:
+            if sample_rate > 0 and call_id not in self.call_tap_rate:
+                self.call_tap_rate[call_id] = int(sample_rate)
+            if pre:
+                self.call_tap_pre_pcm16.setdefault(call_id, bytearray()).extend(pre)
+            if post:
+                self.call_tap_post_pcm16.setdefault(call_id, bytearray()).extend(post)
+        except Exception:
+            logger.debug("Call-level tap accumulation failed", call_id=call_id, exc_info=True)
+
     @staticmethod
     def _default_sample_rate_for_format(fmt: Optional[str], fallback: int) -> int:
         canonical = StreamingPlaybackManager._canonicalize_encoding(fmt)
@@ -596,16 +620,7 @@ class StreamingPlaybackManager:
             # Small pre-start wait to allow inbound endianness probe to populate session.vad_state
             # This helps avoid a race where the first greeting frames are sent with the wrong byte order
             # Initialize call-level taps if enabled
-            if self.diag_enable_taps:
-                try:
-                    self.call_tap_pre_pcm16.setdefault(call_id, bytearray())
-                    self.call_tap_post_pcm16.setdefault(call_id, bytearray())
-                    self.call_tap_rate[call_id] = int(resolved_target_rate)
-                except Exception:
-                    try:
-                        self.call_tap_rate[call_id] = int(self.sample_rate)
-                    except Exception:
-                        pass
+            self._ensure_call_tap_buffers(call_id, resolved_target_rate)
 
             self.active_streams[call_id] = {
                 'stream_id': stream_id,
@@ -638,7 +653,7 @@ class StreamingPlaybackManager:
                 'warned_grace_cap': False,
                 'tap_pre_pcm16': bytearray(),
                 'tap_post_pcm16': bytearray(),
-                'tap_rate': (resolved_target_rate if self.diag_enable_taps else 0),
+                'tap_rate': (self.call_tap_rate.get(call_id, resolved_target_rate if self.diag_enable_taps else 0)),
                 'diag_enabled': self.diag_enable_taps,
                 'tap_first_window_pre': bytearray(),
                 'tap_first_window_post': bytearray(),
@@ -1651,15 +1666,8 @@ class StreamingPlaybackManager:
                         if len(post_buf) < post_lim:
                             need2 = post_lim - len(post_buf)
                             post_buf.extend(back_pcm[:need2])
-                    # Call-level accumulation (pre/post)
-                    try:
-                        if self.diag_enable_taps:
-                            if call_id in self.call_tap_pre_pcm16 and working:
-                                self.call_tap_pre_pcm16[call_id].extend(working)
-                            if call_id in self.call_tap_post_pcm16 and back_pcm:
-                                self.call_tap_post_pcm16[call_id].extend(back_pcm)
-                    except Exception:
-                        logger.debug("Call-level tap accumulation failed (ulaw)", call_id=call_id, exc_info=True)
+                    tap_rate = int(rate) if isinstance(rate, int) else int(self.sample_rate)
+                    self._append_call_taps(call_id, working, back_pcm, tap_rate)
                     # First-window (200ms) per-segment snapshots
                     try:
                         win_rate = int(rate) if isinstance(rate, int) else int(self.sample_rate)
@@ -1786,15 +1794,8 @@ class StreamingPlaybackManager:
                     if len(post_buf) < post_lim:
                         need2 = post_lim - len(post_buf)
                         post_buf.extend(out_pcm[:need2])
-                # Call-level accumulation (pre/post)
-                try:
-                    if self.diag_enable_taps:
-                        if call_id in self.call_tap_pre_pcm16 and working:
-                            self.call_tap_pre_pcm16[call_id].extend(working)
-                        if call_id in self.call_tap_post_pcm16 and out_pcm:
-                            self.call_tap_post_pcm16[call_id].extend(out_pcm)
-                except Exception:
-                    logger.debug("Call-level tap accumulation failed (pcm)", call_id=call_id, exc_info=True)
+                tap_rate = int(rate) if isinstance(rate, int) else int(self.sample_rate)
+                self._append_call_taps(call_id, working, out_pcm, tap_rate)
                 # First-window (200ms) per-segment snapshots
                 try:
                     win_rate = int(target_rate) if isinstance(target_rate, int) else int(self.sample_rate)
@@ -2923,6 +2924,11 @@ class StreamingPlaybackManager:
                         logger.debug("Call-level tap write failed", call_id=call_id, exc_info=True)
             except Exception:
                 logger.debug("Diagnostic tap write failed", call_id=call_id, exc_info=True)
+            finally:
+                if getattr(self, "diag_enable_taps", False):
+                    self.call_tap_pre_pcm16.pop(call_id, None)
+                    self.call_tap_post_pcm16.pop(call_id, None)
+                    self.call_tap_rate.pop(call_id, None)
 
             # Before clearing gating/state, give provider a grace period and flush any remaining audio
             # to avoid chopping off the tail of the playback.

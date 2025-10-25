@@ -302,7 +302,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         # CRITICAL: Wait for session.updated ACK (following Deepgram pattern)
         try:
             logger.debug("Waiting for OpenAI session.updated ACK...", call_id=call_id)
-            await asyncio.wait_for(self._session_ack_event.wait(), timeout=2.0)
+            await asyncio.wait_for(self._session_ack_event.wait(), timeout=3.0)  # Increased from 2.0s - ACK arrives at ~2.005s
             logger.info(
                 "✅ OpenAI session configuration ACKed",
                 call_id=call_id,
@@ -513,7 +513,8 @@ class OpenAIRealtimeProvider(AIProviderInterface):
             "output_audio_format": out_fmt,
             "voice": self.config.voice,
         }
-        # Optional server-side VAD/turn detection at session level
+        # CRITICAL FIX #1: Configure server-side VAD to prevent echo detection
+        # Default: Use more conservative settings to avoid detecting agent's own voice as user speech
         if getattr(self.config, "turn_detection", None):
             try:
                 td = self.config.turn_detection
@@ -525,6 +526,14 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                 }
             except Exception:
                 logger.debug("Failed to include turn_detection in session.update", call_id=self._call_id, exc_info=True)
+        else:
+            # Default VAD configuration: Less sensitive to reduce echo/feedback false positives
+            session["turn_detection"] = {
+                "type": "server_vad",
+                "threshold": 0.7,            # Higher = less sensitive (default 0.5)
+                "prefix_padding_ms": 300,    # Wait 300ms before considering speech started
+                "silence_duration_ms": 800,  # Need 800ms silence to consider speech ended (default 500ms)
+            }
 
         if self.config.instructions:
             session["instructions"] = self.config.instructions

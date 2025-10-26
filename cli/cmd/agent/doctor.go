@@ -51,7 +51,7 @@ Exit codes:
 		// Exit with appropriate code
 		if result.CriticalCount > 0 {
 			os.Exit(2)
-		} else if result.WarningCount > 0 {
+		} else if result.WarnCount > 0 {
 			os.Exit(1)
 		}
 		

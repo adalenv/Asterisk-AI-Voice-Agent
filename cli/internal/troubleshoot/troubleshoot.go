@@ -84,9 +84,22 @@ func (r *Runner) Run() error {
 			fmt.Println("  • Verify logs: docker logs ai_engine")
 			return fmt.Errorf("no calls to analyze")
 		}
-		r.callID = calls[0].ID
-		infoColor.Printf("Analyzing most recent call: %s\n", r.callID)
-		fmt.Println()
+		
+		// If --last flag or "last", use most recent
+		if r.callID == "last" {
+			r.callID = calls[0].ID
+			infoColor.Printf("Analyzing most recent call: %s\n", r.callID)
+			fmt.Println()
+		} else {
+			// No call ID and no --last flag: interactive selection
+			selectedID, err := SelectCallInteractive(calls)
+			if err != nil {
+				return err
+			}
+			r.callID = selectedID
+			infoColor.Printf("Analyzing call: %s\n", r.callID)
+			fmt.Println()
+		}
 	}
 
 	// Collect logs and data
@@ -185,19 +198,27 @@ func (r *Runner) getRecentCalls(limit int) ([]Call, error) {
 
 	callMap := make(map[string]*Call)
 	
-	// Pattern: call_id in logs (e.g., "call_id=1761424308.2043")
-	callIDPattern := regexp.MustCompile(`call_id[=:][\s]*([0-9]+\.[0-9]+)`)
+	// Multiple patterns to catch different log formats
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`"call_id":\s*"([0-9]+\.[0-9]+)"`),           // JSON: "call_id": "1761518880.2191"
+		regexp.MustCompile(`call_id[=:][\s]*"?([0-9]+\.[0-9]+)"?`),      // call_id=1761518880.2191 or call_id: "..."
+		regexp.MustCompile(`channel_id"?:\s*"?([0-9]+\.[0-9]+)"?`),      // channel_id: "1761518880.2191"
+		regexp.MustCompile(`\b([0-9]{10}\.[0-9]{4})\b`),                 // Plain number pattern
+	}
 	
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
-		matches := callIDPattern.FindStringSubmatch(line)
-		if len(matches) > 1 {
-			callID := matches[1]
-			if _, exists := callMap[callID]; !exists {
-				callMap[callID] = &Call{
-					ID:        callID,
-					Timestamp: time.Now(), // Will be refined from log timestamp
+		for _, pattern := range patterns {
+			matches := pattern.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				callID := matches[1]
+				if _, exists := callMap[callID]; !exists {
+					callMap[callID] = &Call{
+						ID:        callID,
+						Timestamp: time.Now(), // Will be refined from log timestamp
+					}
 				}
+				break // Found a match, no need to try other patterns
 			}
 		}
 	}

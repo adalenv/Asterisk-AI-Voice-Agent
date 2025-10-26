@@ -987,7 +987,7 @@ class Engine:
                 caller_channel_id=caller_channel_id,
                 bridge_id=bridge_id,
                 provider_name=self.config.default_provider,
-                audio_capture_enabled=False,
+                audio_capture_enabled=True,  # FIX #1: Start with capture enabled, only disable when TTS actually starts
                 status="connected"
             )
             session.enhanced_vad_enabled = bool(self.vad_manager)
@@ -1341,7 +1341,7 @@ class Engine:
                 caller_channel_id=caller_channel_id,
                 provider_name=self.config.default_provider,
                 status="waiting_for_local",
-                audio_capture_enabled=False
+                audio_capture_enabled=True  # FIX #1: Start with capture enabled
             )
             session.enhanced_vad_enabled = bool(self.vad_manager)
             await self._save_session(session, new=True)
@@ -2299,13 +2299,15 @@ class Engine:
                 # This causes 20+ false speech_started events, creating response cancellation loop
                 # 5 seconds ensures complete greeting plays before accepting any input
                 # Other providers unaffected: Deepgram uses continuous_input path (line 2204 early return)
+                # CRITICAL: Only apply if TTS has actually started (not during pre-TTS initialization)
                 try:
-                    if provider_name == "openai_realtime":
+                    if provider_name == "openai_realtime" and getattr(session, 'tts_started_ts', 0.0) > 0.0:
                         initial_protect = 5000  # 5 seconds to prevent echo feedback loop
                         logger.debug(
                             "Extended TTS protection for OpenAI Realtime (echo prevention)",
                             call_id=caller_channel_id,
-                            protect_ms=initial_protect
+                            protect_ms=initial_protect,
+                            tts_started_ts=session.tts_started_ts
                         )
                 except Exception:
                     pass

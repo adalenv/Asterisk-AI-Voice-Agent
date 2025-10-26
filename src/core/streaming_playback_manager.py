@@ -597,14 +597,17 @@ class StreamingPlaybackManager:
                 resolved_target_rate = preferred_rate
             elif pcm_transport == "slin":
                 resolved_target_format = "slin"
-                preferred_rate = 0
-                try:
-                    preferred_rate = int(src_rate) if src_rate else 0
-                except Exception:
-                    preferred_rate = 0
-                if preferred_rate <= 0:
-                    preferred_rate = resolved_target_rate if resolved_target_rate and resolved_target_rate > 0 else 8000
-                resolved_target_rate = preferred_rate
+                # CRITICAL FIX #4: slin is ALWAYS 8kHz (AudioSocket Type 0x10)
+                # Never use provider rate for AudioSocket target - it causes sample rate mismatch
+                # Provider sends 16kHz (OpenAI) but AudioSocket channel expects 8kHz c(slin)
+                # This mismatch causes buffer overflow and premature segment ending
+                resolved_target_rate = 8000  # Fixed to 8kHz, ignore provider rate
+                logger.debug(
+                    "AudioSocket slin format locked to 8kHz",
+                    call_id=call_id,
+                    provider_rate=src_rate,
+                    target_rate=resolved_target_rate
+                )
             else:
                 resolved_target_rate = self._default_sample_rate_for_format(
                     resolved_target_format,

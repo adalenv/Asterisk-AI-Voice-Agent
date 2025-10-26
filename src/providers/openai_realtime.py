@@ -339,33 +339,37 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         await self._send_session_update()
         self._log_session_assumptions()
         
-        # CRITICAL: Wait for session.updated ACK (following Deepgram pattern)
-        try:
-            logger.debug("Waiting for OpenAI session.updated ACK...", call_id=call_id)
-            await asyncio.wait_for(self._session_ack_event.wait(), timeout=3.0)  # Increased from 2.0s - ACK arrives at ~2.005s
-            logger.info(
-                "✅ OpenAI session configuration ACKed",
-                call_id=call_id,
-                output_format=self._provider_output_format,
-                sample_rate=self._active_output_sample_rate_hz,
-            )
-        except asyncio.TimeoutError:
-            logger.error(
-                "❌ OpenAI session.updated ACK timeout!",
-                call_id=call_id,
-                note="OpenAI may have rejected audio format configuration - will use inference"
-            )
-
+        # CRITICAL FIX #2: Send greeting IMMEDIATELY, don't wait for ACK
+        # Waiting for ACK blocks greeting for 3+ seconds (ACK arrives 8ms after timeout)
+        # This creates 4.5 second silence gap before greeting plays
         # Proactively request an initial response so the agent can greet
         # even before user audio arrives. Prefer explicit greeting text
         # when provided; otherwise fall back to generic instructions.
         try:
             if (self.config.greeting or "").strip():
+                logger.info("Sending explicit greeting (before ACK wait)", call_id=call_id)
                 await self._send_explicit_greeting()
             else:
                 await self._ensure_response_request()
         except Exception:
             logger.debug("Initial response.create request failed", call_id=call_id, exc_info=True)
+        
+        # THEN wait for session.updated ACK (doesn't block greeting anymore)
+        try:
+            logger.debug("Waiting for OpenAI session.updated ACK...", call_id=call_id)
+            await asyncio.wait_for(self._session_ack_event.wait(), timeout=3.0)  # Increased from 2.0s - ACK arrives at ~2.005s
+            logger.info(
+                "✅ OpenAI session.updated ACK received",
+                call_id=call_id,
+                output_format=self._provider_output_format,
+                sample_rate=self._active_output_sample_rate_hz,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "❌ OpenAI session.updated ACK timeout (greeting already sent)",
+                call_id=call_id,
+                note="OpenAI may have rejected audio format configuration - will use inference"
+            )
 
         self._receive_task = asyncio.create_task(self._receive_loop())
         self._keepalive_task = asyncio.create_task(self._keepalive_loop())

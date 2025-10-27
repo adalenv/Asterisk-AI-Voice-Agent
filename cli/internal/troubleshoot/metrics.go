@@ -100,8 +100,16 @@ func ExtractMetrics(logData string) *CallMetrics {
 		
 		case "Streaming segment bytes summary v2":
 			// Extract underflow count from segment summary
+			// Check if this is a greeting segment
+			streamID, _ := logEntry["stream_id"].(string)
+			isGreeting := strings.Contains(streamID, "greeting")
+			
 			if uf, ok := logEntry["underflow_events"].(float64); ok {
-				metrics.UnderflowCount += int(uf)
+				// Only count underflows from non-greeting segments
+				// Greeting segments have underflows during conversation pauses (normal)
+				if !isGreeting {
+					metrics.UnderflowCount += int(uf)
+				}
 			}
 		
 		default:

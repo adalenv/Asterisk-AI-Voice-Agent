@@ -36,18 +36,30 @@ logger = get_logger(__name__)
 
 
 def _normalize_ws_url(base_url: Optional[str]) -> str:
-    """Ensure we use the v2 endpoint for Flux."""
+    """Ensure we use the v2 endpoint for Flux with correct websocket scheme."""
     default = "wss://api.deepgram.com/v2/listen"
     if not base_url:
         return default
     parsed = urlparse(base_url)
-    path = parsed.path
+    
+    # Convert HTTP(S) to WS(S) scheme for websocket
+    scheme = parsed.scheme
+    if scheme == "https":
+        scheme = "wss"
+    elif scheme == "http":
+        scheme = "ws"
+    elif scheme not in ("ws", "wss"):
+        # If scheme is something else, default to wss
+        scheme = "wss"
+    
     # Force v2 endpoint for Flux
+    path = parsed.path
     if "/v1/" in path:
         path = path.replace("/v1/", "/v2/")
     elif not path or path == "/":
         path = "/v2/listen"
-    return urlunparse(parsed._replace(path=path))
+    
+    return urlunparse(parsed._replace(scheme=scheme, path=path))
 
 
 class _FluxSessionState:

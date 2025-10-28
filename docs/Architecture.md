@@ -30,6 +30,7 @@ The production code still follows the **Hybrid ARI** call-control pattern and is
 - **Local Provider Tuning**: The local AI server now reads `LOCAL_LLM_*` and `LOCAL_STT/TTS_*` environment variables so operators can swap GGUF/ONNX assets or lower response latency without rebuilding images.
 
 This staged architecture provides:
+
 - **Improved State Consistency**: Critical paths (playback gating, RTP routing, TTS cleanup) now rely on a single store.
 - **Type Safety for New Code**: New helpers work with dataclasses (`CallSession`, `PlaybackRef`) instead of ad-hoc dicts, while older handlers are refactored gradually.
 - **Observability**: `/metrics` now exposes `ai_agent_tts_gating_active`, `ai_agent_audio_capture_enabled`, and `ai_agent_barge_in_events_total` counters, while `/health` includes a `conversation` block summarising gating and capture status.
@@ -190,6 +191,7 @@ Dashboards are stored under `monitoring/dashboards/`, and configuration instruct
   - `conversation`: summary now includes `latest_turn_latency_s` and `latest_transcription_latency_s` derived from new latency timers.
   
 Configure via env:
+
 - `HEALTH_HOST` (default `0.0.0.0`), `HEALTH_PORT` (default `15000`).
 
 ### Known Constraints
@@ -214,9 +216,11 @@ Configure via env:
    - Run full regression suite (Deepgram + OpenAI), publish telemetry-backed tuning guide, update quick-start/install docs, and tag the GA release.
 
 ### Roadmap Tracking
+
 Ongoing milestones and their acceptance criteria live in `docs/plan/ROADMAP.md`. Update that file after each deliverable so any collaborator—or tool-specific assistant—can resume work without manual hand-off.
 
 ### IDE Playbooks
+
 - **Codex / CLI**: `Agents.md` and `call-framework.md` summarize deployment runbooks and regression expectations for terminal-first workflows.
 - **Cursor**: `.cursor/rules/asterisk_ai_voice_agent.mdc` mirrors the same guardrails, emphasising SessionStore usage and AudioSocket-first assumptions.
 - **Windsurf**: `.windsurf/rules/asterisk_ai_voice_agent.md` keeps IDE prompts aligned with the roadmap so code and documentation stays in sync.
@@ -233,7 +237,7 @@ Ongoing milestones and their acceptance criteria live in `docs/plan/ROADMAP.md`.
 
 ## Architecture Diagrams
 
-### 1. EXTERNALMEDIA CALL FLOW 
+### 1. EXTERNALMEDIA CALL FLOW
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -282,7 +286,7 @@ Ongoing milestones and their acceptance criteria live in `docs/plan/ROADMAP.md`.
          │                       │                       │                       │
 ```
 
-### 2. DEEPGRAM PROVIDER CALL FLOW 
+### 2. DEEPGRAM PROVIDER CALL FLOW
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -325,7 +329,7 @@ Ongoing milestones and their acceptance criteria live in `docs/plan/ROADMAP.md`.
          │                       │                       │                       │
 ```
 
-### 3. EXTERNALMEDIA SERVER ARCHITECTURE 
+### 3. EXTERNALMEDIA SERVER ARCHITECTURE
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -498,6 +502,7 @@ When `audio_transport=audiosocket` and `downstream_mode=stream` are enabled, the
 - Cleanup tears down the AudioSocket channel, removes its bridge mapping, and disconnects the TCP connection to keep compatibility with both Deepgram and the local provider.
 
 Implementation references:
+
 - `src/core/streaming_playback_manager.py` — format-aware conversion, 20 ms frame segmentation, pacing, remainder buffering
 - `src/engine.py::_audiosocket_handle_audio` — inbound μ-law decode and 8k→16k resample for VAD
 - `src/providers/deepgram.py` — emits `AgentAudio`/`AgentAudioDone` with streaming flags and call_id
@@ -506,12 +511,14 @@ Implementation references:
 ### Dialplan Contexts Explained
 
 **`[from-ai-agent]`**:
+
 - **Purpose**: Direct call routing to AI processing
 - **Usage**: Main entry point for incoming calls
 - **Flow**: Call → Stasis → AI Engine → RTP Server
 - **Benefits**: Simple, reliable, no complex audio handling
 
 **`[ai-externalmedia]`**:
+
 - **Purpose**: ExternalMedia context for RTP audio processing
 - **Usage**: Alternative entry point with explicit ExternalMedia setup
 - **Flow**: Call → Answer → Wait → Stasis → AI Engine
@@ -525,9 +532,11 @@ Implementation references:
 4. **Monitor**: Check AI engine logs for successful call processing
 
 ### Optional: ExternalMedia RTP Bridging
+
 In deployments that require RTP/SRTP interop, an optional path using Asterisk `ExternalMedia` may be enabled to bridge media via RTP. This is not required for the default ExternalMedia architecture and should be considered only when standards-based RTP interop is necessary.
 
 ## Streaming TTS over ExternalMedia Gateway (Feature Flag)
+
 With `downstream_mode=stream`, the engine now streams provider audio directly back to Asterisk over the ExternalMedia RTP leg (μ-law @ 8 kHz). The jitter buffer is managed in process and the transport will automatically fall back to file playback if the downstream path becomes unhealthy. The remaining work in this area focuses on:
 
 - **Barge-in**: detect inbound speech while streaming and cancel/attenuate TTS on demand.
@@ -572,6 +581,7 @@ All streaming state is also reflected in `SessionStore` (`CallSession` fields: `
 ## Real-Time Conversation Management
 
 ### RTP Server Pattern
+
 Two-way audio hinges on the `RTPServer` implementation in `src/rtp_server.py`:
 
 - **Transport**: UDP socket bound to the configured host/port range (default `0.0.0.0:18080-18099`) – Asterisk’s `ExternalMedia()` application sends 20 ms μ-law frames to this endpoint.
@@ -580,7 +590,9 @@ Two-way audio hinges on the `RTPServer` implementation in `src/rtp_server.py`:
 - **Outbound Audio**: Downstream audio remains file-based (no RTP transmit path yet); playback continues to flow through ARI bridges managed by `PlaybackManager`.
 
 ### State Management
+
 Call lifecycle is tracked across both the legacy dictionaries and the new `SessionStore`:
+
 - **Connecting**: Caller enters Stasis, bridge is created, and ExternalMedia channel is originated.
 - **Streaming**: ExternalMedia RTP arrives; SSRC mapping enables per-call routing into the VAD pipeline.
 - **Processing**: Providers receive buffered frames via `send_audio`; responses transition conversation state to `processing` until playback completes.
@@ -588,11 +600,13 @@ Call lifecycle is tracked across both the legacy dictionaries and the new `Sessi
 - **Cleanup**: `_cleanup_call()` tears down bridges/channels and removes sessions from both legacy maps and `SessionStore`.
 
 ### Connection & Error Handling
+
 - **Per-call Isolation**: Each SSRC maps to a single call; `RTPServer` maintains lightweight `RTPSession` stats (packet loss, jitter buffer state).
 - **Resilience**: Packet loss and out-of-order packets are logged; fallback buffering ensures speech still reaches STT if VAD misses it.
 - **Resource Cleanup**: `engine.stop()` stops the RTP server and `SessionStore.cleanup_expired_sessions()` removes stale entries.
 
 ### Performance Targets
+
 - **Audio Latency**: Maintain <200 ms decode/dispatch for inbound RTP frames.
 - **End-to-End Response**: Aim for <2 s voice response; provider timeout watchdogs reset conversations after 30 s.
 - **Streaming STT**: Fallback sends 4 s audio chunks (configurable) when VAD is silent to keep transcripts flowing.
@@ -601,12 +615,14 @@ Call lifecycle is tracked across both the legacy dictionaries and the new `Sessi
 ## Testing and Verification
 
 ### ExternalMedia Testing
+
 - **Socket Availability**: Confirm the RTP server binds to the configured UDP port or port range (default `18080:18099`) without collisions.
 - **Audio Stream Testing**: Stream μ-law audio over ExternalMedia and verify RTP frames reach `_on_rtp_audio`.
 - **Provider Integration**: Ensure buffered audio reaches the active provider WebSocket session.
 - **Error Handling**: Simulate packet loss / SSRC churn and monitor recovery logging.
 
 ### Critical Testing Points
+
 - **RTP Server**: Must be listening on the configured UDP port or range (default `18080:18099`)
 - **SSRC Mapping**: Must associate the first packet on each SSRC with the active call
 - **Audio Format Handling**: Must process μ-law audio correctly
@@ -619,26 +635,31 @@ Call lifecycle is tracked across both the legacy dictionaries and the new `Sessi
 ### ExternalMedia-Specific Issues
 
 **No RTP Packets Observed**:
+
 - Check that the RTP server is running on the configured UDP port/range (default `18080:18099`)
 - Verify the dialplan invokes `ExternalMedia()` with the correct host/port
 - Confirm firewall rules allow UDP traffic on the configured port
 
 **Audio Not Received**:
+
 - Verify the ExternalMedia channel is established (confirm `StasisStart` for the caller and ExternalMedia entries)
 - Check audio format compatibility (μ-law when `external_media.codec=ulaw`)
 - Monitor RTP server logs for packet receipt and decoder errors
 
 **Connection Drops**:
+
 - Confirm Asterisk keeps the ExternalMedia channel bridged; unbridged channels stop media immediately
 - Check network stability between Asterisk and the container hosting the RTP server
 - Review RTP server logs for timeouts (`last_packet_at`) and packet-loss counters
 
 **Performance Issues**:
+
 - Monitor RTP packet loss and jitter metrics emitted by `RTPServer`
 - Check VAD/fallback buffer sizes in engine logs for overflows
 - Verify provider processing speed (watch WebSocket send queue depth)
 
 When issues arise:
+
 1. Check RTP server logs for packet activity and SSRC mapping events
 2. Verify Asterisk dialplan configuration
 3. Send test RTP packets (e.g., `rtpplay`, `pjsip send media`) to the configured RTP port (default `18080`)

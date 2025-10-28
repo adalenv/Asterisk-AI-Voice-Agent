@@ -50,6 +50,7 @@ python3 scripts/validate_externalmedia_config.py
 ```
 
 Expected output:
+
 ```
 🎉 All validations passed! Ready for deployment.
 ```
@@ -75,6 +76,7 @@ make server-logs
 ```
 
 Expected logs:
+
 ```
 ✅ Successfully connected to ARI HTTP endpoint
 ✅ Successfully connected to ARI WebSocket
@@ -89,48 +91,58 @@ Expected logs:
 When placing a test call, monitor these logs:
 
 #### 1. Call Initiation
+
 - ✅ "StasisStart event received"
 - ✅ "Caller channel entered Stasis"
 - ✅ "Caller channel answered"
 
 #### 2. Bridge Creation
+
 - ✅ "Bridge created"
 - ✅ "Caller added to bridge"
 
 #### 3. ExternalMedia Channel
+
 - ✅ "Creating ExternalMedia channel"
 - ✅ "ExternalMedia channel created successfully"
 - ✅ "ExternalMedia channel added to bridge"
 
 #### 4. Provider Session
+
 - ✅ "Provider session started for ExternalMedia"
 - ✅ "Greeting playback started for ExternalMedia"
 
 #### 5. RTP Audio Capture
+
 - ✅ "RTP audio received" (when you speak)
 - ✅ "RTP audio sent to provider"
 
 #### 6. Provider Response
+
 - ✅ "Audio playback initiated successfully"
 
 ### Troubleshooting
 
 #### No RTP Received
+
 - **Check**: Asterisk can reach the configured RTP endpoint (default `127.0.0.1:18080`)
 - **Verify**: Host networking is enabled in docker-compose.yml
 - **Confirm**: RTP server is listening on the correct port
 
 #### Garbled Audio
+
 - **Check**: Codec consistency (`ulaw` vs `slin16`)
 - **Verify**: Only one resample step (8k→16k)
 - **Confirm**: Audio format matches between Asterisk and RTP server
 
 #### ExternalMedia Channel Creation Fails
+
 - **Check**: ARI credentials are correct
 - **Verify**: Asterisk has ExternalMedia support
 - **Confirm**: Network connectivity between containers
 
 #### No Voice Capture After Greeting
+
 - **Check**: `audio_capture_enabled` flag is set after greeting
 - **Verify**: RTP packets are being received
 - **Confirm**: Provider is processing audio correctly
@@ -179,6 +191,7 @@ Access RTP server statistics via the engine logs or health endpoint:
 ## Fallback Strategy
 
 If ExternalMedia fails, check the following:
+
 1. RTP server is listening on the configured port
 2. ExternalMedia channels are being created successfully
 3. Bridge operations are working correctly

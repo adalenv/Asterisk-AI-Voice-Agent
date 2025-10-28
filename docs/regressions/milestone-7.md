@@ -26,17 +26,21 @@ Milestone 7 introduces pipeline orchestration, provider adapters, and hot reload
 ## 2. Hot Reload Validation
 
 1. **Baseline**
+
    ```bash
    cp examples/pipelines/local_only.yaml config/ai-agent.yaml
    make engine-reload
    ```
+
    - Place a call → confirm local STT/LLM/TTS path in logs.
    - Metrics: `pipeline="local_only"` labels appear in `/metrics`.
 2. **Switch Pipeline**
+
    ```bash
    cp examples/pipelines/hybrid_deepgram_openai.yaml config/ai-agent.yaml
    make engine-reload
    ```
+
    - Verify reload log: `Pipeline configuration reload succeeded`.
    - New calls show Deepgram/OpenAI adapters; existing calls stay on previous adapters.
 3. **Failure Handling**

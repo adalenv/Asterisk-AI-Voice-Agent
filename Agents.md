@@ -3,10 +3,12 @@
 This document captures how I (the agent) work most effectively on this repo. It distills the project rules, adds hands‑on runbooks, and lists what I still need from you to build, deploy, and test quickly.
 
 ## Mission & Scope
+
 - **Current mandate (GA track)**: Execute Milestones 5–8 to deliver production‑ready streaming audio, dual cloud providers (Deepgram + OpenAI Realtime), configurable pipelines, and an optional monitoring stack. Each milestone has a dedicated instruction file under `docs/milestones/`.
 - **Always ensure** the system remains AudioSocket-first with file playback as fallback; streaming transport must be stable out of the box.
 
 ## Current Status (2025-09-23)
+
 - Deepgram AudioSocket regression passes end-to-end, but streaming transport still restarts after greeting; Milestone 5 addresses adaptive pacing and jitter buffering (`docs/milestones/milestone-5-streaming-transport.md`).
 - Latency histograms/gauges (`ai_agent_turn_latency_seconds`, `ai_agent_transcription_to_audio_seconds`, `ai_agent_last_turn_latency_seconds`) are emitted during calls; capture `/metrics` snapshots before restarting containers so dashboards (Milestone 8) have data.
 - Streaming defaults (`streaming.min_start_ms`, etc.) will be configurable via YAML; ensure documentation updates land in `docs/Architecture.md` and `docs/ROADMAP.md` after each change.
@@ -15,12 +17,14 @@ This document captures how I (the agent) work most effectively on this repo. It 
 - Local-only pipeline now has idle-finalized, aggregated STT: the local server promotes partials to finals after ~1.2 s of silence and the engine drains AudioSocket frames while buffering transcripts until they reach ≥ 3 words or ≥ 12 chars, so slow TinyLlama responses no longer stall STT.
 
 ## Architecture Snapshot (Current) — Runtime Contexts (Always Current)
+
 - Two containers: `ai-engine` (ARI + AudioSocket) and `local-ai-server` (models).
 - Upstream (caller → engine): AudioSocket TCP into the engine.
 - Downstream (engine → caller): ARI file playback via tmpfs for low I/O latency.
 - Providers: pluggable via `src/providers/*` (local, deepgram, etc.).
 
 Active contexts and call path (server):
+
 - `ivr-3` (example) → `from-ai-agent` → Stasis(asterisk-ai-voice-agent)
 - Engine originates `Local/<exten>@ai-agent-media-fork/n` to start AudioSocket
 - `ai-agent-media-fork` generates canonical UUID, calls `AudioSocket(UUID, host:port)`, sets `AUDIOSOCKET_UUID=${EXTEN}` for binder
@@ -28,6 +32,7 @@ Active contexts and call path (server):
 - Engine binds socket to caller channel; sets upstream input mode `pcm16_8k`; provider greets immediately (no demo tone)
 
 ## Feature Flags & Config
+
 - `audio_transport`: `audiosocket` (default) | `externalmedia` (fallback RTP path) | `legacy` (deprecated snoop path).
 - `downstream_mode`: `file` (default) | `stream` (enabled once Milestone 5 tasks complete; retains file fallback automatically).
 - `streaming.*` (Milestone 5): `min_start_ms`, `low_watermark_ms`, `fallback_timeout_ms`, `provider_grace_ms`, `chunk_size_ms`, `jitter_buffer_ms`.
@@ -38,6 +43,7 @@ Active contexts and call path (server):
 - Logging levels are configurable per service via YAML once the hot-reload work lands; default is INFO for GA builds.
 
 ## Pre‑flight Checklist (Local or Server)
+
 - Asterisk:
   - `app_audiosocket.so` loaded: `module show like audiosocket`.
   - Dialplan context uses AudioSocket + Stasis.
@@ -49,6 +55,7 @@ Active contexts and call path (server):
   - `.env` present with `ASTERISK_HOST`, `ASTERISK_ARI_USERNAME`, `ASTERISK_ARI_PASSWORD`, provider API keys.
 
 ## Dialplan Example (AudioSocket + Stasis)
+
 ```
 [ai-voice-agent]
 exten => s,1,NoOp(Starting AI Voice Agent with AudioSocket)
@@ -61,6 +68,7 @@ exten => s,1,NoOp(Starting AI Voice Agent with AudioSocket)
 ```
 
 ### Deepgram Test Entry (Provider Override)
+
 Add a dedicated context when you want to force the Deepgram provider without touching the default local flow:
 
 ```
@@ -88,6 +96,7 @@ exten => s,1,NoOp(Local)
 Route specific DIDs or test extensions to `ai-voice-agent-deepgram` when exercising streaming; leave existing routes on `[ai-voice-agent]` so the local provider flow stays untouched. The engine reads `AI_PROVIDER` on `StasisStart` and falls back to the configured default when the variable is absent.
 
 ## Active Contexts & Usage (Server)
+
 - Entry context (`from-ai-agent`): hands call directly to `Stasis(asterisk-ai-voice-agent)`.
 - Media-fork context (`ai-agent-media-fork`): originated by the engine to start AudioSocket.
   - Generates canonical UUID and calls `AudioSocket(UUID, host:port)`
@@ -95,6 +104,7 @@ Route specific DIDs or test extensions to `ai-voice-agent-deepgram` when exercis
   - Minimal `s` extension keeps the Local ;1 leg alive.
 
 Current server snippet (working):
+
 ```
 [from-ai-agent]
 exten => s,1,NoOp(Handing call directly to Stasis for AI processing)
@@ -121,6 +131,7 @@ exten => s,1,NoOp(Local)
 ```
 
 ## Runtime Context — Quick Checks Before Each Test
+
 - Health: `curl http://127.0.0.1:15000/health` → `ari_connected`, `audiosocket_listening`, `active_calls`, providers’ readiness.
 - Engine logs (tail): `docker-compose logs -f ai-engine`
   - Expect: `AudioSocket server listening`, `AudioSocket connection bound to channel`, `Set provider upstream input mode ... pcm16_8k`.
@@ -130,6 +141,7 @@ exten => s,1,NoOp(Local)
   - No `getaddrinfo(..., "8090,ulaw")` errors — use host:port only.
 
 ## GA Track — At A Glance
+
 - **Milestone 5**: Harden streaming transport, add telemetry, document tuning tips.
 - **Milestone 6**: Implement OpenAI Realtime provider; verify codec negotiation and regression docs (`docs/regressions/openai-call-framework.md`).
 - **Milestone 7**: Deliver configurable pipelines with hot reload; add pipeline examples and tests.
@@ -137,6 +149,7 @@ exten => s,1,NoOp(Local)
 - After these milestones, tag GA and update quick-start instructions.
 
 ## Common Commands
+
 - Build & run locally (both services): `docker-compose up -d --build`
 - Logs (engine): `docker-compose logs -f ai-engine`
 - Logs (local models): `docker-compose logs -f local-ai-server`
@@ -144,6 +157,7 @@ exten => s,1,NoOp(Local)
 - Asterisk CLI (host): `asterisk -rvvvvv`
 
 ## Development Workflow
+
 1) Edit code on `develop`.
 2) `docker-compose restart ai-engine` for local code-only spikes (do not use on the server).
 3) **Before touching the server**: commit + push to `develop`. Never rely on `scp` or manual edits; the server must `git pull` the exact commit you just pushed before any `docker-compose up --build` run.
@@ -151,6 +165,7 @@ exten => s,1,NoOp(Local)
 5) Keep `.env` out of git; configure providers via env and YAML.
 
 ## Testing Workflow
+
 - Smoke test AudioSocket ingest:
   - Confirm: `AudioSocket server listening ...:8090` in engine logs.
   - Place a call into the AudioSocket + Stasis context, watch for:
@@ -159,18 +174,21 @@ exten => s,1,NoOp(Local)
   - Verify file‑based playback (ensure sound URIs without file extensions).
 
 ## Observability & Troubleshooting
+
 - Engine logs: ARI connection errors, AudioSocket binds, playback IDs.
 - Known gotcha: Do not append `.ulaw` to `sound:` URIs (Asterisk adds extensions automatically).
 - Metrics: hit `curl http://127.0.0.1:15000/metrics` after each regression to capture latency histograms and `ai_agent_last_*` gauges before recycling containers.
 - Remote logs: from the local repo run `timestamp=$(date +%Y%m%d-%H%M%S); ssh root@voiprnd.nemtclouddispatch.com "cd /root/Asterisk-AI-Voice-Agent && docker-compose logs ai-engine --since 30m --no-color" > logs/ai-engine-voiprnd-$timestamp.log` to pull the most recent `ai-engine` output for RCA.
 
 ## IDE Hand-Off Notes
+
 - **Codex CLI**: Follow this file plus `call-framework.md` for deployment + regression steps.
 - **Cursor**: `.cursor/rules/asterisk_ai_voice_agent.mdc` mirrors the same guardrails for code edits; keep it updated when workflows change.
 - **Windsurf**: `.windsurf/rules/asterisk_ai_voice_agent.md` references the roadmap; ensure milestone docs stay in sync so prompts remain accurate.
 - **Shared history**: Document every regression in `docs/regressions/` so all IDEs inherit the same context without log-diving.
 
 ### GPT-5 Prompting Guidance
+
 - **Precision & consistency**: Keep instructions aligned across `Agents.md`, `.cursor/…`, `.windsurf/…`, and `Gemini.md`; avoid conflicting language when updating prompts or workflow notes.
 - **Structured prompts**: Wrap guidance in XML-style blocks when scripting Codex messaging, e.g.
 
@@ -191,12 +209,15 @@ exten => s,1,NoOp(Local)
 Mirror any updates to this guidance in `.cursor/rules/asterisk_ai_voice_agent.mdc`, `.windsurf/rules/asterisk_ai_voice_agent.md`, and `Gemini.md`.
 
 ## Ports & Paths
+
 - AudioSocket: TCP 8090 (default; configurable via `AUDIOSOCKET_PORT`).
 - ARI: default 8088 HTTP/WS (from Asterisk).
 - Shared media dir: `/mnt/asterisk_media/ai-generated/`.
 
 ## Deploy (Server) — Runbook
+
 Assumptions: server `root@voiprnd.nemtclouddispatch.com`, repo at `/root/Asterisk-AI-Voice-Agent`, branch `develop`.
+
 ```
 ssh root@voiprnd.nemtclouddispatch.com \
   'cd /root/Asterisk-AI-Voice-Agent && \
@@ -208,20 +229,23 @@ ssh root@voiprnd.nemtclouddispatch.com \
 
 **Deployment rule**: the server must only run committed code. Before executing this runbook, ensure the local changes (e.g., `src/engine.py`, `config/ai-agent.yaml`) are committed and pushed so `git pull` brings them across.
 Then place a test call. Expect:
+
 - `AudioSocket connection accepted` → `bound to channel` → provider session → playback.
 If no connection arrives in time, the engine will fall back to legacy snoop (logged warning).
 
 ## Acceptance (Current Release)
+
 - Upstream audio via AudioSocket reaches provider (or snoop fallback).
 - Downstream responses play via file‑based playback reliably.
 - P95 response time ~≤ 2s under basic load; robust cleanup of temp audio files.
 
 ## Next Phase (Streaming TTS)
+
 - Enable `downstream_mode=stream` (when implemented): full‑duplex streaming, barge‑in (<300ms cancel‑to‑listen), jitter buffer, keepalives, telemetry.
 - Keep `file` path as fallback.
 
-
 ## What I Still Need From You
+
 1) Server details to deploy:
    - SSH host/user, repo path (confirm `/root/Asterisk-Agent-Develop`).
    - Whether to rebuild both `ai-engine` and `local-ai-server`, or only `ai-engine`.
@@ -235,6 +259,7 @@ If no connection arrives in time, the engine will fall back to legacy snoop (log
    - Preferred provider (`default_provider`); confirm local vs deepgram.
 
 ## Nice‑to‑Haves to Work Faster
+
 - Health endpoint in ai‑engine (optional) exposing ARI, AudioSocket, provider status.
 - A Makefile or npm scripts for common ops (build, logs, ps, deploy).
 - A dev compose override for mapping ports explicitly if host networking isn’t used.
@@ -242,10 +267,12 @@ If no connection arrives in time, the engine will fall back to legacy snoop (log
 - Pre‑baked dialplan snippet files in `docs/snippets/` for quick copy/paste.
 
 ## Rollback Plan
+
 - Switch `audio_transport=legacy` to re‑enable snoop capture.
 - Revert `downstream_mode` to `file` (default).
 - `git checkout` previous commit on develop and rebuild `ai-engine` if needed.
 
 ## Security Notes
+
 - Keep API keys and ARI credentials strictly in `.env` (never commit them).
 - Restrict AudioSocket listener to `127.0.0.1` when engine and Asterisk are co‑located; otherwise secure the path appropriately.

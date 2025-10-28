@@ -25,23 +25,27 @@ Despite the successful upgrade from Asterisk 16.30.0 to 18.26.4, **`ChannelAudio
 ## 🔍 **COMPREHENSIVE TESTING RESULTS**
 
 ### **Test 1: Basic WebSocket Connectivity**
+
 - **Result**: ✅ **SUCCESS**
 - **Details**: Successfully connected to ARI WebSocket with `ChannelAudioFrame` subscription
 - **Events Received**: 0 ChannelAudioFrame events in 5 seconds
 
 ### **Test 2: Comprehensive Audio Frame Generation**
+
 - **Result**: ❌ **FAILURE**
 - **Details**: Created bridge, channels, played audio, set audioframe variables
 - **Events Received**: 0 ChannelAudioFrame events, 61 other events
 - **Key Issue**: `CHANNEL(audioframe)` variable returns 404 errors
 
 ### **Test 3: Snooping Audio Capture**
+
 - **Result**: ❌ **FAILURE**
 - **Details**: Created snoop channel, bridge, set audioframe variables on both channels
 - **Events Received**: 0 ChannelAudioFrame events
 - **Key Issue**: Same 404 errors on `CHANNEL(audioframe)` variable
 
 ### **Test 4: Main Application Integration**
+
 - **Result**: ✅ **PARTIAL SUCCESS**
 - **Details**: Application connects and functions correctly with Asterisk 18.26.4
 - **TTS Pipeline**: Working perfectly (greeting playback confirmed)
@@ -52,6 +56,7 @@ Despite the successful upgrade from Asterisk 16.30.0 to 18.26.4, **`ChannelAudio
 ## 🛠 **TECHNICAL ANALYSIS**
 
 ### **Configuration Status**
+
 ```bash
 # Asterisk Version
 Asterisk 18.26.4 built by mockbuild @ jenkins7 on a x86_64 running Linux
@@ -89,13 +94,17 @@ res_audiosocket.so            - ✅ Running
 ## 🎯 **ROOT CAUSE ANALYSIS**
 
 ### **Primary Hypothesis: FreePBX Configuration Limitation**
+
 The Asterisk installation appears to be a **FreePBX-managed system** where:
+
 - ARI configuration is auto-generated and restricted
 - Certain advanced ARI features may be disabled for security/stability
 - `ChannelAudioFrame` events may be intentionally disabled
 
 ### **Secondary Hypothesis: Missing Configuration**
+
 The `CHANNEL(audioframe)` variable may require:
+
 - Additional Asterisk modules not loaded
 - Specific configuration settings not present
 - Compile-time options not enabled
@@ -105,6 +114,7 @@ The `CHANNEL(audioframe)` variable may require:
 ## 📊 **CURRENT SYSTEM STATUS**
 
 ### **✅ WHAT WORKS PERFECTLY**
+
 1. **Asterisk 18.26.4**: Fully operational
 2. **ARI WebSocket**: Stable connections
 3. **Bridge Architecture**: Our implementation is correct
@@ -114,6 +124,7 @@ The `CHANNEL(audioframe)` variable may require:
 7. **Application Integration**: Main app connects and functions
 
 ### **❌ WHAT DOESN'T WORK**
+
 1. **ChannelAudioFrame Events**: Not generated at all
 2. **Real-time STT**: Blocked by missing audio frames
 3. **Two-way Conversation**: Cannot process user speech
@@ -123,7 +134,9 @@ The `CHANNEL(audioframe)` variable may require:
 ## 🚀 **RECOMMENDED SOLUTIONS**
 
 ### **Option 1: Alternative Audio Capture (Recommended)**
+
 Implement **external audio capture** using:
+
 - **Asterisk's `externalMedia` feature**
 - **UDP-based audio streaming**
 - **Direct RTP capture**
@@ -133,6 +146,7 @@ Implement **external audio capture** using:
 **Cons**: More complex implementation, requires additional setup
 
 ### **Option 2: Asterisk Configuration Investigation**
+
 - Research FreePBX-specific ARI limitations
 - Check if `ChannelAudioFrame` can be enabled
 - Investigate compile-time options
@@ -142,6 +156,7 @@ Implement **external audio capture** using:
 **Cons**: May require significant configuration changes
 
 ### **Option 3: Hybrid Approach**
+
 - Keep current TTS pipeline (working perfectly)
 - Implement alternative STT capture method
 - Bridge the two systems together
@@ -154,18 +169,21 @@ Implement **external audio capture** using:
 ## 🎯 **IMMEDIATE NEXT STEPS**
 
 ### **Priority 1: Implement Alternative Audio Capture**
+
 1. Research `externalMedia` implementation
 2. Create UDP audio streaming solution
 3. Integrate with existing STT pipeline
 4. Test end-to-end conversation flow
 
 ### **Priority 2: Investigate Configuration Options**
+
 1. Research FreePBX ARI limitations
 2. Check Asterisk compile options
 3. Investigate enabling ChannelAudioFrame support
 4. Consider Asterisk configuration modifications
 
 ### **Priority 3: Document and Plan**
+
 1. Document all findings for future reference
 2. Plan migration strategy for alternative audio capture
 3. Prepare implementation timeline
@@ -176,6 +194,7 @@ Implement **external audio capture** using:
 ## 📈 **SUCCESS METRICS**
 
 ### **Current Achievement Level: 75%**
+
 - ✅ **Architecture**: 100% complete and correct
 - ✅ **TTS Pipeline**: 100% working
 - ✅ **ARI Integration**: 100% functional
@@ -183,6 +202,7 @@ Implement **external audio capture** using:
 - ❌ **STT Pipeline**: 0% (blocked by ChannelAudioFrame limitation)
 
 ### **Target Achievement Level: 100%**
+
 - Implement alternative audio capture
 - Enable real-time STT processing
 - Achieve full two-way conversation
@@ -203,4 +223,3 @@ Implement **external audio capture** using:
 **Report Generated**: September 14, 2025  
 **Next Review**: After implementing alternative audio capture  
 **Status**: Ready for implementation phase
-

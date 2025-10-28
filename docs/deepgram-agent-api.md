@@ -2,11 +2,11 @@
 
 This document summarizes the parts of Deepgram’s Voice Agent API that are relevant to our telephony integration. It is based on the following Deepgram docs:
 
-- Configure the Voice Agent: https://developers.deepgram.com/docs/configure-voice-agent
-- Settings (SettingsConfiguration): https://developers.deepgram.com/docs/voice-agent-settings-configuration
-- Getting Started: https://developers.deepgram.com/docs/voice-agent
-- Voice Agent Audio & Playback: https://developers.deepgram.com/docs/voice-agent-audio-playback
-- Authentication: https://developers.deepgram.com/reference/authentication
+- Configure the Voice Agent: <https://developers.deepgram.com/docs/configure-voice-agent>
+- Settings (SettingsConfiguration): <https://developers.deepgram.com/docs/voice-agent-settings-configuration>
+- Getting Started: <https://developers.deepgram.com/docs/voice-agent>
+- Voice Agent Audio & Playback: <https://developers.deepgram.com/docs/voice-agent-audio-playback>
+- Authentication: <https://developers.deepgram.com/reference/authentication>
 
 Note: The legacy reference path sometimes linked as “reference/voice-agent/agent” can 404. Prefer the docs above for canonical field names and examples.
 
@@ -31,6 +31,7 @@ Note: The legacy reference path sometimes linked as “reference/voice-agent/age
 Send immediately after connecting, before streaming any audio. The server replies with `SettingsApplied` when accepted.
 
 Top‑level fields:
+
 - `type`: "Settings"
 - `tags`: string[]
 - `experimental`: boolean
@@ -40,6 +41,7 @@ Top‑level fields:
 - `agent`: object
 
 Audio configuration:
+
 - `audio.input`
   - `audio.input.encoding`: string (e.g., "linear16", "ulaw")
   - `audio.input.sample_rate`: number (Hz) (e.g., 8000, 16000, 24000)
@@ -50,6 +52,7 @@ Audio configuration:
   - `audio.output.container`: string (e.g., "none", "wav")
 
 Agent configuration:
+
 - `agent.language`: string (e.g., "en-US"). Notes:
   - With Flux models, `agent.language` is ignored for STT but may be propagated to TTS settings.
 - `agent.context`: optional
@@ -71,6 +74,7 @@ Agent configuration:
 - `agent.greeting`: string
 
 Minimal example from docs (normalized formatting):
+
 ```json
 {
   "type": "Settings",
@@ -94,21 +98,25 @@ Minimal example from docs (normalized formatting):
 ## Server → client messages (canonical names)
 
 - `Welcome`
+
 ```json
 { "type": "Welcome", "request_id": "550e8400-e29b-41d4-a716-446655440000" }
 ```
 
 - `SettingsApplied`
+
 ```json
 { "type": "SettingsApplied" }
 ```
 
 - `ConversationText`
+
 ```json
 { "type": "ConversationText", "role": "user", "content": "What's the weather like today?" }
 ```
 
 - `UserStartedSpeaking`
+
 ```json
 { "type": "UserStartedSpeaking" }
 ```
@@ -120,6 +128,7 @@ Minimal example from docs (normalized formatting):
   - Used within context priming and sometimes sent as part of conversation state; shape varies.
 
 - `Error`
+
 ```json
 { "type": "Error", "message": "Error details..." }
 ```
@@ -145,6 +154,7 @@ Ambiguity: Full JSON schemas for `AgentAudio` and some event bodies are not prov
   - TTS output (PCM): 24000
 
 Playback troubleshooting notes:
+
 - Verify receipt of `SettingsApplied` after sending `Settings`.
 - Incorrect `encoding`/`sample_rate` leads to static/garbled audio.
 

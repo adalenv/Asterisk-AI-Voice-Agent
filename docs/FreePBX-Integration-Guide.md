@@ -43,17 +43,22 @@ Snapshot:
 ### 2.1 Prerequisite checks
 
 - Verify ARI and AudioSocket modules:
+
   ```bash
   asterisk -rx "module show like res_ari_applications"
   asterisk -rx "module show like app_audiosocket"
   ```
+
   Expect both to show Status: Running. If your Asterisk is <18, on FreePBX Distro use:
+
   ```bash
   asterisk-switch-version   # aka asterisk-version-switch
   ```
+
   and select Asterisk 18+.
 
   Example output:
+
   ```
   Module                         Description                               Use Count  Status   Support Level
   res_ari_applications.so        RESTful API module - Stasis application   0          Running  core
@@ -71,6 +76,7 @@ Snapshot:
 Use the built‑in editor to add the contexts below.
 
 Steps:
+
 - Navigate to: Admin → Config Edit.
 - In the left tree, expand “Asterisk Custom Configuration Files”.
 - Click `extensions_custom.conf`.
@@ -85,6 +91,7 @@ Snapshot 1:
 Append the following contexts to `extensions_custom.conf` (or the appropriate custom include). Each context can be targeted from a FreePBX Custom Destination or IVR option so you can exercise a specific provider pipeline during testing.
 
 Note:
+
 - The `AI_PROVIDER` value must match a pipeline name in your active `config/ai-agent.yaml`. Example names provided below exist in `config/ai-agent.yaml` or the example templates under `config/`.
 
 #### 3.1.1 AI_PROVIDER name mapping (by template)
@@ -98,6 +105,7 @@ Note:
 | `config/ai-agent.deepgram-agent.yaml` | Provider override: `deepgram` (or `deepgram_agent`) | Monolithic provider (no pipeline needed) |
 
 Provider overrides vs Pipelines:
+
 - If you set `AI_PROVIDER` to a known provider alias/name (e.g., `openai`, `deepgram`), the engine uses that provider directly for this call.
 - Otherwise, `AI_PROVIDER` is treated as a pipeline name and must exactly match `pipelines.<name>` in your active config.
 
@@ -147,6 +155,7 @@ exten => s,1,NoOp(Local keepalive for AudioSocket leg)
 Create a FreePBX Custom Destination for each context you want to expose to IVRs or inbound routes.
 
 Steps:
+
 - Navigate to: Admin → Custom Destination.
 - Click “Add” to create a new destination.
 - Set Target to your dialplan entry, e.g.:
@@ -236,9 +245,11 @@ sudo ln -sfn /mnt/asterisk_media/ai-generated /var/lib/asterisk/sounds/ai-genera
 ## 6. Verification & Testing
 
 1. **Health Check**
+
    ```bash
    curl http://127.0.0.1:15000/health
    ```
+
    Expect `audiosocket_listening: true`, `audio_transport: "audiosocket"`, and provider readiness.
 
 2. **Test Call**
@@ -247,6 +258,7 @@ sudo ln -sfn /mnt/asterisk_media/ai-generated /var/lib/asterisk/sounds/ai-genera
    - Scrape `/metrics` to capture latency gauges (`ai_agent_turn_latency_seconds`, etc.) before stopping containers.
 
 3. **Log Monitoring**
+
    ```bash
    docker-compose logs -f ai-engine
    docker-compose logs -f local-ai-server
@@ -262,6 +274,7 @@ sudo ln -sfn /mnt/asterisk_media/ai-generated /var/lib/asterisk/sounds/ai-genera
 
 Use this checklist alongside `docs/plan/ROADMAP.md` and the launch strategy under `docs/plan/` to prepare your deployment for GA:
 {{ ... }}
+
 ```yaml
 # Application
 default_provider: openai_realtime

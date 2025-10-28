@@ -11,14 +11,17 @@
 ## ✅ What's Working (Major Progress!)
 
 ### 1. Format ACK Working
+
 ```
 "✅ OpenAI session.updated ACK received"
 "output_format": "pcm16"
 "acknowledged": true
 ```
+
 **Note**: ACK arrives 5ms after 2s timeout - should increase timeout to 3s
 
 ### 2. Audio Quality Excellent
+
 - Agent audio SNR: **65.7dB** (excellent!)
 - Clear transcription: "hello how can i help you today i'm here to assist..."
 - No garbling or distortion
@@ -31,6 +34,7 @@
 ### The Problem
 
 Agent audio gets cut off mid-sentence repeatedly, creating broken speech:
+
 - User hears: "Hello, how can I... [CUT] ...assist... [CUT] ...what inform... [CUT]"
 - Expected: "Hello, how can I help you today? I'm here to assist. What information do you need?"
 
@@ -41,6 +45,7 @@ Agent audio gets cut off mid-sentence repeatedly, creating broken speech:
 ### Issue #1: Echo/Feedback Loop (PRIMARY)
 
 **Evidence**:
+
 ```
 22:26:38: input_audio_buffer.speech_started
 22:26:40: ConversationCoordinator gating audio  ← STOPS PLAYBACK
@@ -54,6 +59,7 @@ Agent audio gets cut off mid-sentence repeatedly, creating broken speech:
 ```
 
 **What's Happening**:
+
 1. Agent starts speaking
 2. Agent's own audio gets picked up by input path (echo)
 3. OpenAI VAD detects "speech" (the echo)
@@ -63,6 +69,7 @@ Agent audio gets cut off mid-sentence repeatedly, creating broken speech:
 7. Cycle repeats continuously
 
 **Proof**:
+
 - 50+ `speech_started` events during agent playback
 - Each triggers gating
 - No actual user speech at those times
@@ -73,6 +80,7 @@ Agent audio gets cut off mid-sentence repeatedly, creating broken speech:
 ### Issue #2: Buffer Underflows (SECONDARY)
 
 **Evidence**:
+
 ```json
 {
   "underflow_events": 106,      // 106 underflows in 66 seconds!
@@ -84,6 +92,7 @@ Agent audio gets cut off mid-sentence repeatedly, creating broken speech:
 ```
 
 **What's Happening**:
+
 1. OpenAI stops sending audio (due to detecting "speech")
 2. Playback buffer drains
 3. Buffer underflow occurs
@@ -93,6 +102,7 @@ Agent audio gets cut off mid-sentence repeatedly, creating broken speech:
 7. Repeat
 
 **Impact**:
+
 - 1.6 underflows per second
 - Only 9% of time has actual audio (6s / 66s)
 - 91% of time is silence/waiting
@@ -136,6 +146,7 @@ Agent audio gets cut off mid-sentence repeatedly, creating broken speech:
 ### Fix #1: Prevent Echo (CRITICAL)
 
 **Option A: Input Muting During Output** (Recommended)
+
 ```python
 # When agent is speaking, mute input to OpenAI
 if agent_audio_playing:
@@ -144,6 +155,7 @@ if agent_audio_playing:
 ```
 
 **Option B: OpenAI Turn Detection Config**
+
 ```python
 # Disable or tune OpenAI's VAD sensitivity
 session_config = {
@@ -157,6 +169,7 @@ session_config = {
 ```
 
 **Option C: Echo Cancellation**
+
 - Enable AEC (Acoustic Echo Cancellation) in audio path
 - Or use Asterisk's echo cancellation features
 
@@ -165,6 +178,7 @@ session_config = {
 ### Fix #2: Disable Gating on OpenAI Speech Detection
 
 **Current Code Issue**:
+
 ```python
 # When OpenAI detects speech, we gate audio
 if event_type == "input_audio_buffer.speech_started":
@@ -172,6 +186,7 @@ if event_type == "input_audio_buffer.speech_started":
 ```
 
 **Should Be**:
+
 ```python
 # For OpenAI Realtime, let OpenAI handle interruption
 # Don't gate at engine level - OpenAI will stop sending if user speaks
@@ -186,11 +201,13 @@ if event_type == "input_audio_buffer.speech_started":
 ### Fix #3: Increase ACK Timeout
 
 **Current**:
+
 ```python
 await asyncio.wait_for(self._session_ack_event.wait(), timeout=2.0)
 ```
 
 **Should Be**:
+
 ```python
 await asyncio.wait_for(self._session_ack_event.wait(), timeout=3.0)  # 3 seconds
 ```
@@ -202,11 +219,13 @@ await asyncio.wait_for(self._session_ack_event.wait(), timeout=3.0)  # 3 seconds
 ### Fix #4: Increase Buffer Low Watermark
 
 **Current Issue**:
+
 ```
 "low_watermark": 80  (bytes)
 ```
 
 **Should Be**:
+
 ```
 "low_watermark": 320  (bytes) # 20ms at 16kHz PCM16
 ```
@@ -235,16 +254,19 @@ await asyncio.wait_for(self._session_ack_event.wait(), timeout=3.0)  # 3 seconds
 ## 🧪 Testing Plan
 
 ### Test #1: Verify Echo Fixed
+
 - **Action**: Place call, let agent speak without interrupting
 - **Expected**: No `speech_started` events during agent speech
 - **Success**: Agent completes full sentences
 
 ### Test #2: Verify Real Interruption Works
+
 - **Action**: Interrupt agent mid-sentence
 - **Expected**: Agent stops gracefully
 - **Success**: System handles real user speech
 
 ### Test #3: Verify Quality Maintained
+
 - **Action**: Complete natural conversation
 - **Expected**: SNR >60dB, no distortion
 - **Success**: Clear, intelligible audio
@@ -265,16 +287,20 @@ await asyncio.wait_for(self._session_ack_event.wait(), timeout=3.0)  # 3 seconds
 
 ## 💡 Key Insights
 
-### 1. Format ACK Works!
+### 1. Format ACK Works
+
 The session.updated handler successfully receives format confirmation. Minor timeout adjustment needed but core functionality works.
 
 ### 2. Audio Quality Perfect
+
 SNR of 65.7dB proves the audio pipeline (format, resampling, encoding) is working correctly.
 
 ### 3. Echo is the Enemy
+
 The cutoff issue is NOT audio quality, NOT format mismatch, but **echo detection triggering false interruptions**.
 
 ### 4. Simple Fix Available
+
 Disabling input gating on OpenAI's speech_started events should resolve 90% of cutoffs immediately.
 
 ---
@@ -282,6 +308,7 @@ Disabling input gating on OpenAI's speech_started events should resolve 90% of c
 ## 🚀 Implementation
 
 **Recommended Approach**:
+
 1. Increase ACK timeout to 3s (5 min)
 2. Disable ConversationCoordinator gating on OpenAI speech_started (15 min)
 3. Test and validate (10 min)
@@ -308,6 +335,7 @@ Disabling input gating on OpenAI's speech_started events should resolve 90% of c
 ## ✅ Success Criteria
 
 After fixes, test call should show:
+
 - [ ] No ACK timeout errors
 - [ ] Agent completes full sentences
 - [ ] <5 underflows in 60 seconds

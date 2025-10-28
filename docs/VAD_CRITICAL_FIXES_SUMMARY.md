@@ -6,7 +6,8 @@
 
 **Problem**: Original implementation dropped ALL audio for first 3 seconds, starving providers.
 
-**Solution**: 
+**Solution**:
+
 - **Always forward audio for first 2 seconds** regardless of VAD result
 - **Gradual wake-word support**: Forward 25 frames (500ms) after speech ends
 - **Intelligent filtering**: Only after 2-second initialization period
@@ -35,6 +36,7 @@ else:
 **Problem**: Fallback only fired after 3s, then continuously forwarded all audio.
 
 **Solution**:
+
 - **Reduced fallback interval** from 3000ms to 1500ms
 - **Periodic forwarding**: 1 frame every 10 frames (200ms intervals) during fallback
 - **Prevents continuous forwarding** while maintaining provider connectivity
@@ -57,6 +59,7 @@ if silence_duration > 1500:  # Faster response
 **Problem**: Shared global state caused cross-call contamination and memory leaks.
 
 **Solution**:
+
 - **Per-call state isolation**: Each call has independent VAD state
 - **No global mutations**: Base thresholds preserved, per-call adaptation
 - **Proper cleanup**: Complete state removal on call end
@@ -89,6 +92,7 @@ class EnhancedVADManager:
 **Problem**: Partial cleanup left adaptive state persisting across calls.
 
 **Solution**:
+
 - **Complete state removal**: All per-call data cleaned up
 - **Context analyzer cleanup**: Call history properly removed
 - **No state persistence**: Fresh state for each new call
@@ -135,14 +139,16 @@ async def test_wake_word_gradual_support():
 
 ## **📊 Performance Impact of Fixes**
 
-### **Before Fixes (Broken)**:
+### **Before Fixes (Broken)**
+
 - ❌ **0% audio forwarded** for first 3 seconds (provider starvation)
 - ❌ **100% audio forwarded** during fallback (provider flooding)
 - ❌ **Cross-call contamination** affecting accuracy
 - ❌ **Memory leaks** from persistent state
 - ❌ **Unpredictable behavior** due to global mutations
 
-### **After Fixes (Working)**:
+### **After Fixes (Working)**
+
 - ✅ **100% audio forwarded** for first 2 seconds (no starvation)
 - ✅ **10% audio forwarded** during fallback (periodic, not flooding)
 - ✅ **Complete call isolation** with independent state
@@ -151,7 +157,7 @@ async def test_wake_word_gradual_support():
 
 ## **🎯 Expected Results**
 
-### **Immediate Improvements**:
+### **Immediate Improvements**
 
 1. **No More Provider Starvation**
    - Providers receive continuous audio during call initialization
@@ -173,7 +179,7 @@ async def test_wake_word_gradual_support():
    - Fresh state for each new call
    - Scalable for high call volumes
 
-### **Quality Improvements**:
+### **Quality Improvements**
 
 - **Reliable Call Initialization**: No more silent starts or provider timeouts
 - **Natural Wake-Word Support**: "Hey Siri" style interactions work properly
@@ -182,19 +188,22 @@ async def test_wake_word_gradual_support():
 
 ## **🚀 Deployment Safety**
 
-### **Backward Compatibility**:
+### **Backward Compatibility**
+
 - ✅ **Feature flag controlled**: `vad.enhanced_enabled: true/false`
 - ✅ **Graceful degradation**: Falls back to original behavior if VAD fails
 - ✅ **No provider changes**: All existing provider interfaces unchanged
 - ✅ **Configuration driven**: Can adjust behavior without code changes
 
-### **Monitoring & Debugging**:
+### **Monitoring & Debugging**
+
 - ✅ **Comprehensive logging**: All VAD decisions logged with context
 - ✅ **Prometheus metrics**: Performance tracking and alerting
 - ✅ **Test coverage**: 20/20 tests passing including integration scenarios
 - ✅ **Error handling**: Robust fallbacks for all failure modes
 
-### **Rollback Plan**:
+### **Rollback Plan**
+
 ```yaml
 # To disable if issues arise:
 vad:
@@ -203,31 +212,36 @@ vad:
 
 ## **🔍 Verification Steps**
 
-### **1. Provider Starvation Test**:
+### **1. Provider Starvation Test**
+
 ```bash
 # Make a call and stay silent for 5 seconds
 # Expected: No provider timeout errors, continuous audio flow
 ```
 
-### **2. Wake-Word Test**:
+### **2. Wake-Word Test**
+
 ```bash
 # Say "Hello" then pause 300ms then "Assistant"  
 # Expected: Both words processed, no audio gaps
 ```
 
-### **3. Multi-Call Test**:
+### **3. Multi-Call Test**
+
 ```bash
 # Make 3 simultaneous calls with different noise levels
 # Expected: Independent VAD behavior, no cross-contamination
 ```
 
-### **4. Memory Leak Test**:
+### **4. Memory Leak Test**
+
 ```bash
 # Make 100 calls, monitor memory usage
 # Expected: Stable memory, no growth after calls end
 ```
 
-### **5. Fallback Test**:
+### **5. Fallback Test**
+
 ```bash
 # Make call, stay silent for 2+ seconds
 # Expected: Periodic audio forwarding, not continuous

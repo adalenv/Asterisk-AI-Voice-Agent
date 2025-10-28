@@ -15,16 +15,19 @@
 Based on OpenAI Realtime API patterns (similar providers):
 
 **Supported Formats**:
+
 - `pcm16` - 16-bit PCM audio at 24kHz (recommended)
 - `g711_ulaw` - G.711 μ-law at 8kHz
 - `g711_alaw` - G.711 A-law at 8kHz
 
 **Format Configuration Methods**:
+
 1. **URL Query Parameters** (most reliable)
 2. **session.update Message** (after connection)
 3. **Initial Connection Configuration**
 
 **Critical Events**:
+
 - `session.created` - Server confirms connection, provides default session
 - `session.updated` - Server confirms format changes
 
@@ -33,6 +36,7 @@ Based on OpenAI Realtime API patterns (similar providers):
 ## 🔍 Deepgram Success Pattern (Proven Working)
 
 ### 1. Configuration Request
+
 ```python
 settings = {
     "type": "Settings",  # Deepgram's config message type
@@ -53,6 +57,7 @@ await websocket.send(json.dumps(settings))
 ```
 
 ### 2. ACK Reception
+
 ```python
 # Deepgram sends back:
 {
@@ -65,6 +70,7 @@ await websocket.send(json.dumps(settings))
 ```
 
 ### 3. ACK Handling
+
 ```python
 if event_type == "SettingsApplied":
     self._settings_acked = True
@@ -81,6 +87,7 @@ if event_type == "SettingsApplied":
 ```
 
 ### 4. Wait for ACK Before Streaming
+
 ```python
 # Send configuration
 await self._send_settings()
@@ -101,6 +108,7 @@ if self._settings_acked:
 ## ❌ OpenAI Current Pattern (Broken)
 
 ### 1. Configuration Request ✅ (Working)
+
 ```python
 session = {
     "modalities": ["audio", "text"],
@@ -116,6 +124,7 @@ await websocket.send(json.dumps(payload))
 ```
 
 ### 2. ACK Reception ❌ (MISSING!)
+
 ```python
 # OpenAI SHOULD send back:
 {
@@ -130,6 +139,7 @@ await websocket.send(json.dumps(payload))
 ```
 
 ### 3. ACK Handling ❌ (NOT IMPLEMENTED!)
+
 ```python
 # Current code in _handle_event():
 # NO handler for "session.updated" event!
@@ -139,6 +149,7 @@ logger.debug("Unhandled OpenAI Realtime event", event_type=event_type)
 ```
 
 ### 4. No Wait for ACK ❌ (BROKEN!)
+
 ```python
 # Current code:
 await self._send_session_update()  # Send request
@@ -165,6 +176,7 @@ await self._send_session_update()  # Send request
 ## 🎯 Critical Missing Code
 
 ### Missing #1: session.updated Handler
+
 ```python
 # In _handle_event(), ADD:
 if event_type == "session.updated":
@@ -200,6 +212,7 @@ if event_type == "session.updated":
 ```
 
 ### Missing #2: ACK Wait Mechanism
+
 ```python
 # In start_session(), MODIFY:
 async def start_session(self, call_id: str):
@@ -229,6 +242,7 @@ async def start_session(self, call_id: str):
 ```
 
 ### Missing #3: Format Validation
+
 ```python
 # After ACK received, validate:
 def _validate_format_ack(self):
@@ -370,6 +384,7 @@ effective_fmt = self._provider_output_format  # Use confirmed format only
 ## 🧪 Testing & Validation
 
 ### Test #1: Verify ACK Reception
+
 ```bash
 # In logs, should see:
 "OpenAI session.update payload" - Sent
@@ -378,6 +393,7 @@ effective_fmt = self._provider_output_format  # Use confirmed format only
 ```
 
 ### Test #2: Verify Format Enforcement
+
 ```bash
 # Should NOT see:
 "inferred": "ulaw" - Inference should not trigger
@@ -389,6 +405,7 @@ effective_fmt = self._provider_output_format  # Use confirmed format only
 ```
 
 ### Test #3: Audio Quality Check
+
 ```bash
 # After fix:
 - Provider chunks: bytes=640, encoding=slin16, sample_rate=16000
@@ -403,7 +420,8 @@ effective_fmt = self._provider_output_format  # Use confirmed format only
 
 The `AudioSocket-Provider-Alignment.md` document needs updating for OpenAI:
 
-### Current (Lines 92-133) - INCOMPLETE:
+### Current (Lines 92-133) - INCOMPLETE
+
 ```markdown
 ### 2. OpenAI Realtime API
 
@@ -412,7 +430,8 @@ The `AudioSocket-Provider-Alignment.md` document needs updating for OpenAI:
 - **Sample Rates**: 8 kHz, 16 kHz, 24 kHz (preferred)
 ```
 
-### Should Add:
+### Should Add
+
 ```markdown
 ### 2. OpenAI Realtime API
 
@@ -448,12 +467,14 @@ session_config = {
 ```
 
 #### Common Pitfalls
+
 - ❌ **DON'T**: Send audio before session.updated ACK
 - ❌ **DON'T**: Assume format was accepted without ACK
 - ❌ **DON'T**: Use format inference as primary path
 - ✅ **DO**: Wait for explicit session.updated confirmation
 - ✅ **DO**: Log and validate ACKed formats
 - ✅ **DO**: Fail loudly if format rejected
+
 ```
 ```
 

@@ -1,21 +1,25 @@
 # Milestone 5 — Streaming Transport Production Readiness
 
 ## Objective
+
 Promote the experimental AudioSocket downstream streaming path to production quality with adaptive pacing, configurable defaults, and regression coverage. After this milestone the default install must deliver clear greetings and low-latency turns without manual tuning.
 
 ## Success Criteria
+
 - Default configuration (fresh clone, no manual tweaks) produces a clean two-way Deepgram call with < 1 restart of the streaming pipeline per turn.
 - Telemetry logs report jitter buffer depth, restarts, and fallback triggers for every call.
 - Operators can adjust streaming quality through documented YAML settings without editing code.
 - Regression guide updated with new streaming checklist and tuning notes.
 
 ## Dependencies
+
 - Milestones 1–4 complete (SessionStore, provider switching, model setup, ConversationCoordinator).
 - Existing Deepgram AudioSocket integration working end-to-end.
 
 ## Work Breakdown
 
 ### 5.1 Configurable Streaming Settings
+
 - Add the following fields to `config/ai-agent.yaml` under `streaming`:
   - `min_start_ms`
   - `low_watermark_ms`
@@ -26,6 +30,7 @@ Promote the experimental AudioSocket downstream streaming path to production qua
 - Document defaults and overrides in `docs/Architecture.md` (see "Streaming Transport Defaults" section) and double-check `docs/ROADMAP.md` references.
 
 ### 5.2 StreamingPlaybackManager Enhancements
+
 - Modify `src/core/streaming_playback_manager.py` to:
   - Convert `min_start_ms`/`low_watermark_ms` into chunk counts at runtime.
   - Pause/resume output when depth < low watermark instead of tearing down streams.
@@ -34,26 +39,31 @@ Promote the experimental AudioSocket downstream streaming path to production qua
 - Add structured debug logging guarded by the new logging level.
 
 ### 5.3 Telemetry & Metrics
+
 - Extend `SessionStore` to capture per-call streaming metrics (depth, restarts, fallbacks, codec info).
 - Expose new Prometheus counters/gauges (see `docs/Architecture.md` for list).
 - Emit a summary tuning hint at INFO level when a call ends (e.g., suggest increasing `min_start_ms`).
 
 ### 5.4 Regression & Documentation
+
 - Update `docs/regressions/deepgram-call-framework.md` with the new test procedure and expected metrics.
 - Update `call-framework.md` regression template with Streaming QA section.
 - Add a “Streaming Defaults & Tuning” section to `docs/Architecture.md` and highlight YAML keys.
 
 ## Deliverables
+
 - Code changes merged on `develop` with updated tests.
 - Documentation updates committed (`docs/Architecture.md`, roadmap, regression guide).
 - Sample telemetry output included in the regression log.
 
 ## Verification Checklist
+
 - Clean call log shows no more than one `STREAMING STARTED` event per turn.
 - INFO logs include tuning summary (even if all metrics look healthy).
 - Regression doc updated with date, call ID, and audio quality assessment.
 
 ## Handover Notes
+
 - Leave comments in `docs/milestones/milestone-6-openai-provider.md` if any follow-up is required for provider integration.
 - Flag any config or logging changes that alter deployment procedures so IDE rule files can be updated.
 
@@ -62,15 +72,18 @@ Promote the experimental AudioSocket downstream streaming path to production qua
 ## 5.6 Barge-In Functionality (Subtask)
 
 ### Objective
+
 Allow the caller to interrupt agent TTS playback (“barge-in”) cleanly: detect sustained inbound speech while TTS is active, stop the current playback deterministically, re-enable capture, and forward the caller’s audio to the provider with minimal latency and no self-echo.
 
 ### Success Criteria
+
 - Caller speech during an agent turn reliably interrupts playback within ≤300 ms.
 - No self-echo: provider does not ingest the agent’s downlink audio at the start of a turn.
 - Duplicate `PlaybackFinished` warnings are eliminated (single registration).
 - Metrics show barge-in events and capture gating transitions per call.
 
 ### Design Outline
+
 - Engine gating and detection
   - `src/engine.py::_audiosocket_handle_audio`:
     - While TTS playback is active (via `session.audio_capture_enabled == False`), monitor inbound frames.
@@ -90,6 +103,7 @@ Allow the caller to interrupt agent TTS playback (“barge-in”) cleanly: detec
   - Add `note_audio_during_tts(call_id)` on pre-trigger frames to increment barge-in attempts counter.
 
 ### Metrics (Milestone 8 tie-in)
+
 - Gauges (existing):
   - `ai_agent_audio_capture_enabled{call_id}`
   - `ai_agent_tts_gating_active{call_id}`
@@ -99,6 +113,7 @@ Allow the caller to interrupt agent TTS playback (“barge-in”) cleanly: detec
   - Time-to-barge-in from playback start; number of false/true barge-in detections per call.
 
 ### Configuration (YAML)
+
 - Under `streaming:` or a new `barge_in:` section:
   - `barge_in.enabled: true`
   - `barge_in.min_ms: 250` (minimum continuous speech window to trigger)
@@ -107,6 +122,7 @@ Allow the caller to interrupt agent TTS playback (“barge-in”) cleanly: detec
   - `barge_in.initial_protection_ms: 200` (self-echo guard after TTS start)
 
 ### Test Plan
+
 - Place test calls with early caller speech during agent greeting/turn.
 - Verify logs:
   - `Dropping inbound AudioSocket audio during TTS playback` only within the protection window.
@@ -115,6 +131,7 @@ Allow the caller to interrupt agent TTS playback (“barge-in”) cleanly: detec
 - Validate `/metrics` barge-in counters Increased; `/health` conversation summary reflects capture transitions.
 
 ### Risks & Mitigations
+
 - False positives (background noise) → require both time window and energy threshold; add cooldown.
 - ARI stop timing races → use deterministic playback IDs and handle 404 safely if already finished.
 - Echo leakage window → maintain small initial protection period; consider tighter bridge mix or echo cancellation (out of scope for this milestone).

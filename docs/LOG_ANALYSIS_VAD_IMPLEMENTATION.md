@@ -16,6 +16,7 @@ Based on comprehensive analysis of logs in `/logs` directory, the **Enhanced VAD
 ```
 
 **Analysis**:
+
 - ✅ **WebRTC VAD is initialized** (aggressiveness=0 - most conservative)
 - ✅ **Streaming mode is enabled** (downstream_mode=stream)
 - ❌ **No Enhanced VAD logs** - No "Enhanced VAD" initialization messages
@@ -43,6 +44,7 @@ Based on comprehensive analysis of logs in `/logs` directory, the **Enhanced VAD
 ```
 
 **Performance Metrics**:
+
 - **Provider Connection**: 295ms (excellent)
 - **Greeting Latency**: 2.04s from audio start to greeting
 - **Total Call Duration**: ~28 seconds
@@ -67,6 +69,7 @@ AudioSocket (back to caller)
 ```
 
 **Key Observations**:
+
 1. **No audio filtering** - All 320-byte frames forwarded to provider
 2. **No VAD decision logs** - No speech/silence classification
 3. **No fallback logic** - Continuous audio stream
@@ -87,6 +90,7 @@ AudioSocket (back to caller)
 ```
 
 **Analysis**:
+
 - ✅ **Streaming working well** - No fallbacks triggered
 - ✅ **Stable audio delivery** - Consistent frame transmission
 - ✅ **Good buffer management** - Low watermark at 200ms
@@ -102,6 +106,7 @@ AudioSocket (back to caller)
 ```
 
 **Analysis**:
+
 - ✅ **Barge-in infrastructure working** - Gating system operational
 - ✅ **Protection windows active** - Audio capture toggling correctly
 - ❌ **No VAD-enhanced barge-in** - Using energy-only detection
@@ -109,7 +114,7 @@ AudioSocket (back to caller)
 
 ## **📈 Expected Changes When Enhanced VAD is Enabled**
 
-### **New Log Patterns to Expect**:
+### **New Log Patterns to Expect**
 
 ```log
 # Initialization
@@ -134,7 +139,7 @@ AudioSocket (back to caller)
 [debug] VAD call state cleaned up call_id=xxx
 ```
 
-### **Performance Impact Predictions**:
+### **Performance Impact Predictions**
 
 | Metric | Current (No VAD) | With Enhanced VAD | Change |
 |--------|------------------|-------------------|--------|
@@ -146,7 +151,7 @@ AudioSocket (back to caller)
 
 ## **🎯 Architecture Comparison**
 
-### **Current Production Architecture**:
+### **Current Production Architecture**
 
 ```
 ┌─────────────────┐
@@ -173,7 +178,7 @@ AudioSocket (back to caller)
 └─────────────────┘
 ```
 
-### **Enhanced VAD Architecture** (When Enabled):
+### **Enhanced VAD Architecture** (When Enabled)
 
 ```
 ┌─────────────────┐
@@ -216,6 +221,7 @@ AudioSocket (back to caller)
 ### **1. No Provider Starvation Risk Currently**
 
 **Current Behavior**: All audio forwarded continuously
+
 - ✅ **No timeout risk** - Providers receive constant audio stream
 - ✅ **No initialization issues** - Audio flows from first frame
 - ✅ **No wake-word problems** - All audio captured
@@ -225,6 +231,7 @@ AudioSocket (back to caller)
 ### **2. High Provider Processing Load**
 
 **Current Behavior**: 100% of audio frames sent to OpenAI
+
 - ❌ **Unnecessary processing** - Silence and noise sent to STT
 - ❌ **Higher API costs** - Processing non-speech audio
 - ❌ **Potential latency** - Provider processing overhead
@@ -234,6 +241,7 @@ AudioSocket (back to caller)
 ### **3. Simple Barge-In Detection**
 
 **Current Behavior**: Energy-threshold only
+
 - ⚠️ **False positives** - Background noise can trigger
 - ⚠️ **False negatives** - Soft speech might miss
 - ⚠️ **No confidence scoring** - Binary decision
@@ -294,61 +302,70 @@ vad:
 
 ## **🔧 Troubleshooting Guide**
 
-### **If No VAD Logs Appear**:
+### **If No VAD Logs Appear**
 
 1. **Check configuration**:
+
    ```bash
    grep "enhanced_enabled" config/ai-agent.yaml
    # Should show: enhanced_enabled: true
    ```
 
 2. **Check initialization logs**:
+
    ```bash
    grep "Enhanced VAD" logs/ai-engine-latest.log
    # Should show: "Enhanced VAD enabled"
    ```
 
 3. **Verify feature flag**:
+
    ```python
    # In engine.py __init__
    if vad_cfg and getattr(vad_cfg, "enhanced_enabled", False):
        self.vad_manager = EnhancedVADManager(...)
    ```
 
-### **If Provider Timeouts Occur**:
+### **If Provider Timeouts Occur**
 
 1. **Check fallback interval**:
+
    ```yaml
    vad:
      fallback_interval_ms: 1500  # Reduce if timeouts occur
    ```
 
 2. **Monitor fallback activation**:
+
    ```bash
    grep "VAD - Using periodic fallback" logs/ai-engine-latest.log
    ```
 
 3. **Verify initialization period**:
+
    ```bash
    grep "vad_start_time" logs/ai-engine-latest.log
    # Should show 2-second protection period
    ```
 
-### **If Audio Quality Degrades**:
+### **If Audio Quality Degrades**
 
 1. **Check frame drop rate**:
+
    ```bash
    grep "VAD - Frame dropped" logs/ai-engine-latest.log | wc -l
    # Should be 40-60% of total frames
    ```
 
 2. **Verify confidence thresholds**:
+
    ```yaml
    vad:
      confidence_threshold: 0.5  # Lower if too aggressive
    ```
 
 3. **Monitor speech ratio**:
+
    ```bash
    curl http://localhost:15000/metrics | grep speech_ratio
    # Should be 30-50% for normal conversation
@@ -356,7 +373,7 @@ vad:
 
 ## **📊 Success Criteria**
 
-### **Deployment Successful If**:
+### **Deployment Successful If**
 
 - ✅ **No provider timeouts** - Fallback mechanism working
 - ✅ **40-60% frame reduction** - VAD filtering effective
@@ -364,7 +381,7 @@ vad:
 - ✅ **Stable memory usage** - No leaks from per-call state
 - ✅ **Improved barge-in** - Multi-criteria detection working
 
-### **Rollback If**:
+### **Rollback If**
 
 - ❌ **Provider timeout rate > 5%** - Fallback not working
 - ❌ **Audio quality complaints** - VAD too aggressive
@@ -372,6 +389,7 @@ vad:
 - ❌ **CPU usage > +10%** - Processing overhead too high
 
 **Rollback Command**:
+
 ```yaml
 vad:
   enhanced_enabled: false  # Instant rollback

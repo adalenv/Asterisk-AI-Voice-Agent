@@ -7,11 +7,13 @@
 ## ✅ WHAT WAS DEPLOYED
 
 ### **Fix #1: Disabled Attack Envelope**
+
 - **File:** `config/ai-agent.yaml`
 - **Change:** `attack_ms: 20` → `attack_ms: 0`
 - **Why:** Attack envelope was ramping volume from 0% to 100% over 20ms, creating artificial silence
 
 ### **Fix #2: Silence Trimming**
+
 - **File:** `src/core/streaming_playback_manager.py`
 - **Added:** `_trim_leading_silence()` function
 - **Integration:** Runs after decode, before normalizer
@@ -22,6 +24,7 @@
 ## 🎯 HOW IT WORKS
 
 ### **Before (Broken):**
+
 ```
 Deepgram → [SILENCE] → Normalize → [SILENCE] → Attack (0-100%) → [SILENCE] → Caller
 Deepgram → [SILENCE] → Normalize → [SILENCE] → Attack (0-100%) → [SILENCE] → Caller
@@ -31,6 +34,7 @@ Deepgram → [AUDIO]   → Normalize → [LOUDER]  → Attack (0-100%) → [QUIE
 ```
 
 ### **After (Fixed):**
+
 ```
 Deepgram → [SILENCE] → Trim (SKIP!) → Not sent to caller
 Deepgram → [SILENCE] → Trim (SKIP!) → Not sent to caller
@@ -44,12 +48,14 @@ Deepgram → [AUDIO]   → Trim (PASS)  → Normalize → [LOUDER] → No envelo
 ## 📊 EXPECTED IMPROVEMENTS
 
 ### **Audio Quality:**
+
 - ✅ No initial silence (trimmed before transmission)
 - ✅ Immediate clear audio (no ramp-up)
 - ✅ Consistent volume (normalizer works on real audio)
 - ✅ No garbled/fast/unclear sound
 
 ### **Log Evidence to Look For:**
+
 ```
 "SILENCE TRIMMED FROM CHUNK" - When leading silence is detected
 "trimmed_ms": 20-200 - Amount of silence removed
@@ -74,6 +80,7 @@ After test call, look for:
 ## 🎯 SUCCESS CRITERIA
 
 **Two-way clean audio achieved when:**
+
 - Person speaks → AI hears clearly → AI responds immediately with clear audio
 - No silence/gaps at start of AI responses
 - Volume is consistent and intelligible

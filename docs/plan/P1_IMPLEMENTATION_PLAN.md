@@ -11,6 +11,7 @@
 ## Overview
 
 P1 implements a **Transport Orchestrator** that:
+
 1. Resolves audio format/rate per call based on provider + profile + channel vars
 2. Negotiates with provider during handshake (e.g., OpenAI `session.updated`)
 3. Provides per-call overrides via Asterisk channel variables
@@ -25,6 +26,7 @@ P1 implements a **Transport Orchestrator** that:
 **File**: `config/ai-agent.yaml`
 
 Add `profiles.*` block:
+
 ```yaml
 profiles:
   default: telephony_ulaw_8k
@@ -72,6 +74,7 @@ profiles:
 ### 2. Context Mapping (Configuration)
 
 Add `contexts.*` block for semantic routing:
+
 ```yaml
 contexts:
   default:
@@ -100,6 +103,7 @@ contexts:
 ### 3. Per-Call Channel Variables
 
 **Dialplan** (`extensions_custom.conf`):
+
 ```
 [from-ai-agent-deepgram]
 exten => s,1,NoOp(AI Agent with Channel Var Overrides)
@@ -118,6 +122,7 @@ exten => s,1,NoOp(AI Agent - OpenAI Realtime)
 ```
 
 **Precedence** (highest to lowest):
+
 1. `AI_PROVIDER` channel var → overrides everything
 2. `AI_CONTEXT` → maps to context config (includes profile + provider)
 3. `AI_AUDIO_PROFILE` → overrides profile only
@@ -286,6 +291,7 @@ class TransportOrchestrator:
 **File**: `src/providers/base.py`
 
 Add to `AIProviderInterface`:
+
 ```python
 @dataclass
 class ProviderCapabilities:
@@ -525,12 +531,14 @@ def _synthesize_legacy_profile(self, config: Dict[str, Any]) -> AudioProfile:
 
 ### Task 8: Documentation
 
-**Files**: 
+**Files**:
+
 - `docs/Architecture.md` - Add "Transport Orchestrator" section
 - `docs/MULTI_PROVIDER_GUIDE.md` - New user guide
 - `docs/providers/openai_realtime.md` - OpenAI integration guide
 
 **Content**:
+
 - How to configure multiple providers
 - Audio profile selection guide
 - Channel variable reference
@@ -544,11 +552,13 @@ def _synthesize_legacy_profile(self, config: Dict[str, Any]) -> AudioProfile:
 ### Task 9: Testing
 
 **Test Files**:
+
 - `tests/unit/test_transport_orchestrator.py`
 - `tests/unit/test_provider_capabilities.py`
 - `tests/integration/test_multi_provider_switching.py`
 
 **Test Scenarios**:
+
 1. Default profile resolution
 2. Channel var overrides (AI_PROVIDER, AI_AUDIO_PROFILE, AI_CONTEXT)
 3. Context mapping with profile inheritance
@@ -564,12 +574,14 @@ def _synthesize_legacy_profile(self, config: Dict[str, Any]) -> AudioProfile:
 ## Testing Plan
 
 ### Phase 1: Unit Tests (Day 1-2)
+
 - TransportOrchestrator resolution logic
 - ProviderCapabilities parsing
 - Profile/context precedence
 - Backward compatibility
 
 ### Phase 2: Integration Tests (Day 2-3)
+
 - Deepgram with telephony_ulaw_8k profile
 - Deepgram with wideband_pcm_16k profile
 - OpenAI Realtime with openai_realtime_24k profile
@@ -577,12 +589,14 @@ def _synthesize_legacy_profile(self, config: Dict[str, Any]) -> AudioProfile:
 - Context mapping (sales/support contexts)
 
 ### Phase 3: Regression Tests (Day 3-4)
+
 - Run golden baseline call with Deepgram
 - Verify metrics match P0 validation
 - Test OpenAI Realtime end-to-end
 - Verify no regressions in existing Deepgram setup
 
 ### Phase 4: User Acceptance (Day 4-5)
+
 - Multi-turn conversation with Deepgram
 - Multi-turn conversation with OpenAI Realtime
 - Switch providers mid-deployment (different DID routes)
@@ -592,7 +606,7 @@ def _synthesize_legacy_profile(self, config: Dict[str, Any]) -> AudioProfile:
 
 ## Acceptance Criteria
 
-### ✅ P1 Complete When:
+### ✅ P1 Complete When
 
 1. **Multi-Provider Support**:
    - ✅ Can route calls to Deepgram or OpenAI via `AI_PROVIDER` channel var
@@ -630,25 +644,30 @@ def _synthesize_legacy_profile(self, config: Dict[str, Any]) -> AudioProfile:
 
 ## Timeline
 
-### Day 1 (8 hours):
+### Day 1 (8 hours)
+
 - ✅ Task 1: TransportOrchestrator class (6h)
 - ✅ Task 2: Provider capability interface (2h)
 
-### Day 2 (8 hours):
+### Day 2 (8 hours)
+
 - ✅ Task 3: Deepgram capabilities (2h)
 - ✅ Task 4: OpenAI Realtime capabilities (4h)
 - ✅ Unit tests (2h)
 
-### Day 3 (8 hours):
+### Day 3 (8 hours)
+
 - ✅ Task 5: Integrate orchestrator into engine (6h)
 - ✅ Task 6: Configuration schema (2h)
 
-### Day 4 (8 hours):
+### Day 4 (8 hours)
+
 - ✅ Task 7: Backward compatibility (2h)
 - ✅ Task 9: Integration tests (4h)
 - ✅ Regression testing (2h)
 
-### Day 5 (8 hours):
+### Day 5 (8 hours)
+
 - ✅ Task 8: Documentation (4h)
 - ✅ User acceptance testing (3h)
 - ✅ Final validation + tag (1h)
@@ -660,15 +679,19 @@ def _synthesize_legacy_profile(self, config: Dict[str, Any]) -> AudioProfile:
 ## Risks & Mitigation
 
 ### Risk 1: OpenAI Realtime API Changes
+
 **Mitigation**: Reference official OpenAI docs; implement capability parsing to adapt to ACK format
 
 ### Risk 2: Format Negotiation Complexity
+
 **Mitigation**: Start with static profiles; add dynamic negotiation incrementally
 
 ### Risk 3: Backward Compatibility Breaks
+
 **Mitigation**: Extensive testing with existing config; legacy synthesis as fallback
 
 ### Risk 4: Performance Regression
+
 **Mitigation**: Run golden baseline regression after each major change
 
 ---
@@ -676,6 +699,7 @@ def _synthesize_legacy_profile(self, config: Dict[str, Any]) -> AudioProfile:
 ## Success Metrics
 
 **P1 is successful if**:
+
 1. ✅ Deepgram calls work identically to P0 (no regression)
 2. ✅ OpenAI Realtime calls deliver clean audio
 3. ✅ Provider switching works via channel vars

@@ -1,7 +1,9 @@
 # External Media Pipeline Test Guide
 
 ## Overview
+
 This test script verifies the complete audio pipeline using External Media channels instead of AudioSocket. It tests:
+
 - ARI connection and Stasis app registration
 - External Media channel creation
 - Audio capture simulation
@@ -9,9 +11,11 @@ This test script verifies the complete audio pipeline using External Media chann
 - Audio playback via ARI
 
 ## Prerequisites
+
 1. **Asterisk running** with ARI enabled
 2. **Local AI Server running** on port 8765
 3. **Dialplan context** `from-audio-test` configured:
+
    ```asterisk
    [from-audio-test]
    exten => s,1,NoOp(Starting Audio Test External Media)
@@ -23,16 +27,19 @@ This test script verifies the complete audio pipeline using External Media chann
 ## Usage
 
 ### Basic Test (Call Flow)
+
 ```bash
 python3 scripts/test_externalmedia_call.py
 ```
 
 ### Deployment Sanity (RTP + ARI wiring)
+
 ```bash
 python3 scripts/test_externalmedia_deployment.py
 ```
 
 ### With Custom Health Endpoint (non-default URL)
+
 ```bash
 python3 scripts/test_externalmedia_call.py --url http://127.0.0.1:15000/health
 ```
@@ -51,6 +58,7 @@ python3 scripts/test_externalmedia_call.py --url http://127.0.0.1:15000/health
 ## Debug Features
 
 ### Detailed Logging
+
 - Function names and line numbers in log messages
 - Audio data hex dumps for troubleshooting
 - Full ARI event details
@@ -58,6 +66,7 @@ python3 scripts/test_externalmedia_call.py --url http://127.0.0.1:15000/health
 - Error type identification
 
 ### Statistics Tracking
+
 - Events received count
 - Channels created count
 - Audio messages sent/received
@@ -65,6 +74,7 @@ python3 scripts/test_externalmedia_call.py --url http://127.0.0.1:15000/health
 - Active call details
 
 ### Periodic Reporting
+
 - Statistics printed every 30 seconds in debug mode
 - Final statistics on exit
 - Real-time monitoring of system state
@@ -72,6 +82,7 @@ python3 scripts/test_externalmedia_call.py --url http://127.0.0.1:15000/health
 ## Expected Output
 
 ### Successful Test
+
 ```
 🚀 Starting External Media Pipeline Test
 ============================================================
@@ -87,6 +98,7 @@ python3 scripts/test_externalmedia_call.py --url http://127.0.0.1:15000/health
 ```
 
 ### During Call
+
 ```
 🚀 StasisStart received for channel: 1757899326.70
    Channel Name: SIP/callcentricB15-00000014
@@ -120,15 +132,18 @@ python3 scripts/test_externalmedia_call.py --url http://127.0.0.1:15000/health
    - Check channel lifecycle management
 
 ### Debug Mode Benefits
+
 - Set `DEBUG_MODE=true` for maximum logging detail
 - Monitor statistics to identify bottlenecks
 - Check audio data hex dumps for format issues
 - Track WebSocket connection states
 
 ## File Locations
+
 - **Test Scripts**: `scripts/test_externalmedia_call.py`, `scripts/test_externalmedia_deployment.py`
 - **In-Container Paths**: `/app/scripts/test_externalmedia_call.py`, `/app/scripts/test_externalmedia_deployment.py`
 - **Logs**: `docker-compose logs -f ai-engine`
 
 ## Next Steps
+
 Once these tests pass, your ExternalMedia + RTP path is validated end-to-end (ARI, RTP server, and playback lifecycle) for the current configuration.

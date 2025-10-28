@@ -10,6 +10,7 @@
 ### 1. ✅ Updated Registry with CPU/GPU Tiers (`models/registry.json`)
 
 **Old Tiers (Broken):**
+
 ```
 LIGHT  → TinyLlama (assumes any hardware)
 MEDIUM → Llama-2-7B (assumes any hardware)  
@@ -17,6 +18,7 @@ HEAVY  → Llama-2-13B (assumes GPU!) ❌
 ```
 
 **New Tiers (Fixed):**
+
 ```
 LIGHT_CPU   → TinyLlama (8GB+, 4+ cores)
 MEDIUM_CPU  → Phi-3-mini (16GB+, 8+ cores, CPU benchmark > 2.5)
@@ -26,6 +28,7 @@ HEAVY_GPU   → Llama-2-13B + GPU (32GB+, 8+ cores, 12GB+ VRAM)
 ```
 
 **Key Changes:**
+
 - Split tiers by GPU availability (CPU vs GPU)
 - Added CPU benchmarking requirements
 - Updated LLM selections:
@@ -37,9 +40,10 @@ HEAVY_GPU   → Llama-2-13B + GPU (32GB+, 8+ cores, 12GB+ VRAM)
 
 ### 2. ✅ Enhanced Bash Script (`scripts/model_setup.sh`)
 
-#### Added Functions:
+#### Added Functions
 
 **GPU Detection:**
+
 ```bash
 detect_gpu() {
   # Check NVIDIA GPU
@@ -55,6 +59,7 @@ detect_gpu() {
 ```
 
 **CPU Benchmarking:**
+
 ```bash
 benchmark_cpu() {
   # Times prime number calculation (CPU-intensive)
@@ -72,6 +77,7 @@ benchmark_cpu() {
 ```
 
 **Improved Tier Selection:**
+
 ```bash
 select_tier() {
   gpu=$(detect_gpu)
@@ -99,7 +105,7 @@ select_tier() {
 }
 ```
 
-#### Updated Setup Functions:
+#### Updated Setup Functions
 
 ```bash
 setup_medium_cpu() {
@@ -122,9 +128,10 @@ setup_heavy_gpu() {
 
 ### 3. ✅ Enhanced Python Script (`scripts/model_setup.py`)
 
-#### Added Functions:
+#### Added Functions
 
 **GPU Detection:**
+
 ```python
 def detect_gpu() -> Dict[str, Any]:
     """Detect GPU via nvidia-smi or rocm-smi."""
@@ -152,6 +159,7 @@ def detect_gpu() -> Dict[str, Any]:
 ```
 
 **CPU Benchmarking:**
+
 ```python
 def benchmark_cpu_speed() -> float:
     """
@@ -181,6 +189,7 @@ def benchmark_cpu_speed() -> float:
 ```
 
 **Improved Tier Selection:**
+
 ```python
 def determine_tier(registry, cpu_cores, ram_gb, override=None):
     gpu_info = detect_gpu()
@@ -248,7 +257,8 @@ def determine_tier(registry, cpu_cores, ram_gb, override=None):
 
 ## Example: Your Server (39GB RAM, 16 cores, Intel Xeon 2014, NO GPU)
 
-### Old Behavior (Broken):
+### Old Behavior (Broken)
+
 ```
 Detection: 39GB RAM + 16 cores → HEAVY tier
 Download: Llama-2-13B (7.3GB)
@@ -257,7 +267,8 @@ Reality: 135s warmup + 30s inference ❌
 Result: Pipeline broken, event loop blocked
 ```
 
-### New Behavior (Fixed):
+### New Behavior (Fixed)
+
 ```
 Detection: 39GB RAM + 16 cores + NO GPU
 Benchmark: CPU score = 1.8 (below 4.0 threshold)
@@ -285,7 +296,7 @@ Result: Pipeline functional, no blocking
 
 ## Testing the Implementation
 
-### Test on Your Server:
+### Test on Your Server
 
 ```bash
 # 1. Run model setup with new logic
@@ -309,7 +320,7 @@ bash scripts/model_setup.sh
 # Proceed with model download/setup? [Y/n]:
 ```
 
-### Test on Local Machine:
+### Test on Local Machine
 
 ```bash
 # Run Python version
@@ -328,11 +339,13 @@ python3 scripts/model_setup.py
 ### 1. ✅ Accurate Model Selection
 
 **Before:**
+
 - Llama-2-13B downloaded for any 32GB+ system
 - Assumed GPU available
 - Caused 30s+ latency and pipeline blocking
 
 **After:**
+
 - Phi-3-mini for CPU-only MEDIUM tier
 - Llama-2-7B only for fast CPUs or GPUs
 - Llama-2-13B only with GPU
@@ -341,6 +354,7 @@ python3 scripts/model_setup.py
 ### 2. ✅ Realistic Expectations
 
 **Before:**
+
 ```json
 "HEAVY": {
   "llm_latency_sec": 15  // Wrong for CPU-only!
@@ -348,6 +362,7 @@ python3 scripts/model_setup.py
 ```
 
 **After:**
+
 ```json
 "MEDIUM_CPU": {
   "llm_latency_sec": 12,
@@ -358,11 +373,13 @@ python3 scripts/model_setup.py
 ### 3. ✅ Better User Experience
 
 **Before:**
+
 - Silent download of wrong model
 - No warnings about performance
 - Broken pipeline, confused users
 
 **After:**
+
 - GPU detection shown upfront
 - CPU benchmarking provides feedback
 - Performance expectations before download
@@ -371,11 +388,13 @@ python3 scripts/model_setup.py
 ### 4. ✅ Prevents Event Loop Blocking
 
 **Before:**
+
 - 13B model: 30s inference → blocks async loop
 - STT/TTS requests timeout
 - Pipeline breaks down
 
 **After:**
+
 - Phi-3-mini: 12s inference → safe for async
 - Llama-2-7B: 18s inference → safe for modern CPUs
 - No blocking, stable pipeline
@@ -444,7 +463,7 @@ active_pipeline: "hybrid_support"
 
 ## Validation
 
-### Verify Implementation:
+### Verify Implementation
 
 ```bash
 # 1. Check registry has new tiers

@@ -1,4 +1,5 @@
 # OpenAI Agent Audio Cutoff - ROOT CAUSE ANALYSIS
+
 ## Call ID: 1761434348.2115 | Date: Oct 25, 2025 16:19 UTC
 
 ---
@@ -11,7 +12,7 @@
 
 ## 📊 The Smoking Gun Evidence
 
-### Timeline Pattern (Repeats Every 3-5 Seconds):
+### Timeline Pattern (Repeats Every 3-5 Seconds)
 
 ```
 Time         | Event                                | Impact
@@ -42,6 +43,7 @@ Time         | Event                                | Impact
 ### Finding #1: Only ONE Greeting Stream
 
 **Evidence**:
+
 ```json
 {
   "stream_id": "stream:greeting:1761434348.2115:1761434361899",
@@ -73,6 +75,7 @@ Time         | Event                                | Impact
 ### Finding #3: PROVIDER CHUNKS Trigger Gating
 
 **Code Path** (`src/engine.py` lines 3454-3460):
+
 ```python
 # In continuous-stream mode, ensure per-segment gating is active
 try:
@@ -85,6 +88,7 @@ except Exception:
 ```
 
 **Logic**:
+
 1. When `AgentAudio` (PROVIDER CHUNK) arrives
 2. If `continuous_stream` mode is enabled
 3. AND call_id not in `_segment_tts_active` set
@@ -95,6 +99,7 @@ except Exception:
 ### Finding #4: segment-end Clears Gating
 
 **Code Path** (`src/engine.py` lines 3616-3621):
+
 ```python
 # AgentAudioDone handling for continuous mode:
 try:
@@ -108,6 +113,7 @@ except Exception:
 ```
 
 **What Happens**:
+
 1. When segment ends (or periodically)
 2. `end_segment_gating()` is called
 3. Gating cleared with reason="segment-end"
@@ -118,6 +124,7 @@ except Exception:
 ### Finding #5: The Vicious Cycle
 
 **The Problem**:
+
 1. New PROVIDER CHUNK arrives from OpenAI
 2. Check: `call_id not in self._segment_tts_active` → TRUE
 3. Call `start_segment_gating()` → **STOPS PLAYBACK**
@@ -151,12 +158,14 @@ except Exception:
 ### The Continuous Stream Problem
 
 **OpenAI Realtime Behavior**:
+
 - Sends greeting audio as a **continuous stream**
 - Audio arrives in chunks over ~6 seconds
 - No explicit "segment boundaries" between chunks
 - All chunks belong to ONE response
 
 **System Behavior**:
+
 - Treats EACH chunk as potentially needing gating
 - Gates audio when chunk arrives
 - Clears gating after processing
@@ -169,9 +178,10 @@ except Exception:
 
 ## 🎯 Root Cause Summary
 
-**Primary Issue**: The segment gating logic is designed for discrete TTS segments (like Deepgram), but OpenAI Realtime sends **continuous streaming audio**. 
+**Primary Issue**: The segment gating logic is designed for discrete TTS segments (like Deepgram), but OpenAI Realtime sends **continuous streaming audio**.
 
 **Specific Bug**:
+
 ```python
 # Line 3621 in engine.py:
 self._segment_tts_active.discard(call_id)
@@ -180,6 +190,7 @@ self._segment_tts_active.discard(call_id)
 This line removes the call from the "gating active" tracking set EVERY time a segment ends. But for OpenAI's continuous greeting, there's no clear "segment end" - it's just one long stream. So the system keeps re-gating on every new chunk.
 
 **Secondary Issue**: The check for `continuous_stream` mode (line 3455) exists but isn't preventing the problem, likely because:
+
 1. OpenAI provider isn't setting `continuous_stream` flag properly
 2. OR the greeting isn't treated as continuous even though it streams
 3. OR the logic still gates even in continuous mode when call_id not in set
@@ -195,7 +206,8 @@ Despite 20+ interruptions, 91.5% of audio (6.06s of 6.62s) eventually plays beca
 3. **Buffer Persists**: StreamingPlaybackManager keeps buffered audio
 4. **Underflow Recovery**: System recovers from buffer underruns
 
-But the **user experience is terrible**: 
+But the **user experience is terrible**:
+
 - Hears: "Hello... [pause]... how can... [pause]... I help... [pause]... you today?"
 - Instead of: "Hello, how can I help you today?"
 
@@ -204,6 +216,7 @@ But the **user experience is terrible**:
 ## 🔍 Evidence Files
 
 ### Gating Cycle Count
+
 ```bash
 grep "1761434348.2115" logs/*/ai-engine*.log | grep "gating audio" | wc -l
 # Result: 20 gating events
@@ -213,6 +226,7 @@ grep "1761434348.2115" logs/*/ai-engine*.log | grep "clearing gating.*segment-en
 ```
 
 ### PROVIDER CHUNK Pattern
+
 ```bash
 grep "1761434348.2115" logs/*/ai-engine*.log | grep "PROVIDER CHUNK" | head -6
 # Shows: seq 1, seq 2 pairs arriving
@@ -220,6 +234,7 @@ grep "1761434348.2115" logs/*/ai-engine*.log | grep "PROVIDER CHUNK" | head -6
 ```
 
 ### Stream Continuity
+
 ```bash
 grep "1761434348.2115" logs/*/ai-engine*.log | grep "stream:greeting" | grep "Started\|Stopped"
 # Shows: Only ONE start and ONE stop for the same stream_id
@@ -246,6 +261,7 @@ grep "1761434348.2115" logs/*/ai-engine*.log | grep "stream:greeting" | grep "St
 ### Root Cause to Fix
 
 **Problem Code** (`src/engine.py`):
+
 ```python
 # Lines 3454-3460: Gates on every chunk
 if getattr(self.streaming_playback_manager, 'continuous_stream', False):
@@ -273,6 +289,7 @@ if continuous:
 ```
 
 **Why This Works**:
+
 - First chunk: Gates audio (expected)
 - Subsequent chunks: `call_id` still in set, no re-gating
 - Greeting plays continuously without interruption
@@ -295,6 +312,7 @@ if getattr(self.streaming_playback_manager, 'continuous_stream', False):
 ```
 
 **Why This Works**:
+
 - Greeting plays without any gating
 - Later responses can still use gating if needed
 - Simpler logic for greeting case
@@ -322,16 +340,16 @@ Ensure OpenAI provider sets `continuous_stream=True` and verify the logic proper
 
 ## 🎯 Summary
 
-**What's Really Happening**: 
+**What's Really Happening**:
 The greeting audio from OpenAI is being played through ONE continuous stream, but the system's segment gating logic treats it as multiple segments. Each time new audio chunks arrive, the system gates (stops) the playback, processes the chunk, then clears the gating. This causes the greeting to play in a choppy, interrupted manner.
 
-**Root Cause Code**: 
+**Root Cause Code**:
 `src/engine.py` line 3621: `self._segment_tts_active.discard(call_id)` removes the call from tracking, causing subsequent chunks to re-trigger gating.
 
-**Solution**: 
+**Solution**:
 Don't discard the call_id from `_segment_tts_active` for continuous streams, OR don't gate greeting playback at all.
 
-**Impact**: 
+**Impact**:
 This is THE issue causing agent audio cutoffs. The empty buffer commit issue explains why OpenAI doesn't respond to user, but THIS issue explains why the agent's own speech is choppy.
 
 ---

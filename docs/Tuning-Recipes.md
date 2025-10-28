@@ -126,4 +126,5 @@ streaming:
 ```
 
   This converts outbound streaming audio back to μ-law/8 kHz right before it is written to Asterisk, regardless of provider output.
+
 - RMS/DC offset diagnostics for each stage are published as `ai_agent_audio_rms{stage=...}` and `ai_agent_audio_dc_offset{stage=...}` so you can alert on silent or biased audio before customers notice.

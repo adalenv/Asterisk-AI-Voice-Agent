@@ -49,6 +49,7 @@ This document summarizes the utilities under `scripts/` and when to use them.
 - `scripts/rca_collect.sh`
   - Remote log/recording capture. Stores wav stats and now transcripts at `logs/remote/<ts>/transcripts/`.
   - When `/tmp/ai-engine-captures/<call_id>` exists in the container, the capture bundle is copied into `logs/remote/<ts>/captures/` for offline waveform review.
+
 ## Provider & Model Management
 
 - `scripts/switch_provider.py`

@@ -49,6 +49,7 @@
 ### Key Log Evidence
 
 **TransportCard** (Line 191):
+
 ```json
 {
   "wire_encoding": "slin",              ✅ CORRECT
@@ -58,6 +59,7 @@
 ```
 
 **STREAMING OUTBOUND** (Line 197):
+
 ```json
 {
   "target_format": "slin",              ✅ CORRECT
@@ -66,6 +68,7 @@
 ```
 
 **STREAM FRAME SIZE** (Line 198):
+
 ```json
 {
   "frame_size_bytes": 320,              ✅ CORRECT (20ms @ 8kHz PCM16)
@@ -73,6 +76,7 @@
 ```
 
 **First Frame** (Line 210):
+
 ```json
 {
   "audiosocket_format": "slin",         ✅ CORRECT
@@ -81,6 +85,7 @@
 ```
 
 **Provider Bytes** (Line 252):
+
 ```json
 {
   "provider_bytes": 16320,
@@ -94,12 +99,14 @@
 ## Minor Issues Identified (Non-Critical)
 
 ### 1. Low-Buffer Backoff Cycling
+
 - **What**: Adaptive backoff events during silence (streaks 1-5)
 - **Why**: Normal behavior when provider pauses between responses
 - **Impact**: None - prevents wasteful filler injection
 - **Action**: Monitor; working as designed
 
 ### 2. Provider Grace Period Capped
+
 - **What**: Config `provider_grace_ms: 500` capped internally to 60ms
 - **Why**: Code applies conservative cap for some operations
 - **Impact**: Minor - may limit tail-end cleanup window
@@ -107,12 +114,14 @@
 - **Action**: Review cap logic if continuous_stream cleanup needs tuning
 
 ### 3. Low Audio Energy Warning
+
 - **What**: Single frame (RMS 189 vs threshold 200) at greeting start
 - **Why**: Attack envelope or initial silence
 - **Impact**: None - transient, overall RMS healthy (2557 avg)
 - **Action**: None required
 
 ### 4. Offline Vosk Transcription Limited
+
 - **What**: Engine's offline Vosk can't transcribe caller 8 kHz audio
 - **Why**: Model `vosk-model-small-en-us-0.15` may not handle 8 kHz telephony well
 - **Impact**: None - Deepgram live STT works perfectly
@@ -125,6 +134,7 @@
 ### ✅ System Status: **PRODUCTION READY**
 
 **Checklist**:
+
 - ✅ AudioSocket wire format stable (`slin` enforced from YAML)
 - ✅ Provider transcoding working (μ-law ↔ PCM16)
 - ✅ Frame pacing correct (320 bytes @ 20ms)
@@ -142,6 +152,7 @@
 ## Next Steps
 
 ### Immediate (Complete)
+
 - ✅ Fix AudioSocket format override bug
 - ✅ Deploy and validate
 - ✅ Document in ROADMAPv4
@@ -149,6 +160,7 @@
 - ✅ Save memory
 
 ### Near-Term (Optional Tuning)
+
 1. **Monitor Low-Buffer Backoff Behavior**
    - Observe in additional calls
    - Consider adjusting `empty_backoff_ticks_max` if needed
@@ -162,9 +174,11 @@
    - Improves offline RCA transcription quality
 
 ### Roadmap Progression
+
 **Current Status**: Pre-P0 Critical Bug Fixed ✅
 
 **Next Milestone**: P0 - Transport Stabilization & Endianness
+
 - Remove/simplify egress swap logic (currently set to `auto`)
 - Establish AudioSocket as single source of truth for wire format
 - Implement regression test suite
@@ -177,23 +191,28 @@
 ## Key Learnings
 
 ### 1. Architecture Clarity
+
 **AudioSocket wire leg is SEPARATE from caller trunk codec**:
+
 - Caller trunk: μ-law (SIP codec negotiation)
 - AudioSocket wire: PCM16 slin (static per YAML/dialplan)
 - Transport profile: Governs provider transcoding only
 - Never mix caller codec with AudioSocket wire format
 
 ### 2. Transport Profile Purpose
+
 - **Purpose**: Provider transcoding alignment (caller ↔ provider)
 - **NOT for**: AudioSocket wire format (that's from YAML config)
 - **Example**: Caller μ-law → Deepgram μ-law (no transcode), but AudioSocket wire is still PCM16
 
 ### 3. Golden Baseline Value
+
 - Having a documented golden baseline with metrics was critical
 - Enabled precise comparison and fast validation
 - Should be maintained for regression testing
 
 ### 4. RCA Process Works
+
 - `scripts/rca_collect.sh` captured all needed artifacts
 - Comprehensive analysis possible with logs + audio + metrics
 - Process should be repeated for each major change
@@ -203,20 +222,24 @@
 ## File Locations
 
 ### Code Changes
+
 - **Fix**: `src/engine.py` (commit `1a049ce`)
 - **Documentation**: `docs/plan/ROADMAPv4.md` (commit `a326b1e`)
 
 ### RCA Artifacts
+
 - **Failed call**: `logs/remote/rca-20251025-062235/` (garbled audio, identified bug)
 - **Success call**: `logs/remote/rca-20251025-203447/` (clean audio, validated fix)
 - **Analysis**: `logs/remote/rca-20251025-203447/SUCCESS_RCA_ANALYSIS.md`
 
 ### Audio Files (Success Call)
+
 - Trunk recording: 40.92s, clean transcript
 - Agent captures: 11.84s, SNR 68.2 dB
 - Diagnostic taps: Pre/post compand snapshots
 
 ### Git Commits
+
 - `1a049ce` - AudioSocket format override bug fix
 - `a326b1e` - ROADMAPv4 documentation update
 
@@ -225,12 +248,14 @@
 ## Metrics Summary
 
 ### Audio Quality
+
 - **SNR**: 64.6 - 68.2 dB (excellent)
 - **RMS**: 1702 - 2557 (healthy levels)
 - **Clipping**: 0 events
 - **Frame pacing**: Consistent 20ms (320 bytes PCM16)
 
 ### Streaming Performance
+
 - **Provider bytes**: 16,320 bytes delivered
 - **Enqueued bytes**: 16,320 bytes processed
 - **Enqueue ratio**: 1.0 (100% - perfect)
@@ -238,6 +263,7 @@
 - **Transcoding**: μ-law → PCM16 FAST PATH (optimal)
 
 ### Call Duration
+
 - **Total**: 45 seconds (user report)
 - **Asterisk monitor**: 40.92s
 - **Agent audio**: 11.84s

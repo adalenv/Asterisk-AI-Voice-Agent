@@ -1,8 +1,6 @@
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" style="height:64px;margin-right:32px"/>
+# AudioSocket with Asterisk: Technical Summary for AI Voice Agents
 
-## AudioSocket with Asterisk: Technical Summary for AI Voice Agents
-
-### AudioSocket Transport Profiles & Packet Framing
+## AudioSocket Transport Profiles & Packet Framing
 
 - Packet framing uses a TLV header: 1‑byte `type`, 2‑byte `length` in network byte order (big‑endian), then payload. The common audio payload is 16‑bit PCM. [^2]
 
@@ -15,9 +13,10 @@
 | PCM wideband | slin16 | 16 kHz | mono | little‑endian (LE) |
 
 Notes:
-- Per the official Asterisk documentation, AudioSocket audio message types (0x10–0x18) carry signed 16‑bit PCM in little‑endian byte order. The TLV header’s 2‑byte length is big‑endian, but the audio payload is always little‑endian. Do not confuse header endianness with payload endianness. [^asterisk-doc]
 
-#### Message Types and Endianness (from Asterisk)
+- Per the official Asterisk documentation, AudioSocket audio message types (0x10–0x18) carry signed 16‑bit PCM in little‑endian byte order. The TLV header's 2‑byte length is big‑endian, but the audio payload is always little‑endian. Do not confuse header endianness with payload endianness. [^asterisk-doc]
+
+### Message Types and Endianness (from Asterisk)
 
 | Type | Meaning |
 | :--- | :------ |
@@ -39,11 +38,11 @@ Framing reminder: each packet begins with a 1‑byte type and a 2‑byte big‑e
 
 ***
 
-### Transcoding Behavior in Asterisk
+## Transcoding Behavior in Asterisk
 
 When a call uses a different codec (e.g., G.711 μ‑law, A‑law, GSM, Opus), Asterisk will **automatically transcode** between the SIP leg and the AudioSocket leg:
 
-```
+```text
 SIP Call (ulaw/alaw/other) → Asterisk Transcoding → AudioSocket (ulaw|slin@8k|slin16@16k)
 ```
 
@@ -53,18 +52,17 @@ SIP Call (ulaw/alaw/other) → Asterisk Transcoding → AudioSocket (ulaw|slin@8
 
 ***
 
-### Using AudioSocket with OpenAI Realtime API
+## Using AudioSocket with OpenAI Realtime API
 
-#### OpenAI Realtime Requirements
+### OpenAI Realtime Requirements
 
 - **Supported formats**: `pcm16` (16-bit PCM) or `g711_ulaw`/`g711_alaw`
 - **Sample rates**: 24 kHz (preferred), 16 kHz, or 8 kHz
 - **Channels**: Mono
 
+### Integration Strategy
 
-#### Integration Strategy
-
-**Option 1: Direct 8 kHz PCM (Simplest)**
+#### Option 1: Direct 8 kHz PCM (Simplest)
 
 ```python
 # AudioSocket outputs 8 kHz 16-bit PCM
@@ -86,7 +84,7 @@ async def forward_to_openai(audiosocket_packet):
         await openai_ws.send(audio_payload)  # Send raw PCM
 ```
 
-**Option 2: Upsample to 24 kHz (Better Quality)**
+#### Option 2: Upsample to 24 kHz (Better Quality)
 
 ```python
 from scipy import signal
@@ -108,18 +106,17 @@ await openai_ws.send(upsampled_audio)
 
 ***
 
-### Using AudioSocket with Deepgram Voice Agent
+## Using AudioSocket with Deepgram Voice Agent
 
-#### Deepgram Voice Agent Requirements
+### Deepgram Voice Agent Requirements
 
 - **Supported formats**: `linear16` (16-bit PCM), `mulaw`, `alaw`
 - **Sample rates**: 8 kHz, 16 kHz, 24 kHz, 48 kHz
 - **Channels**: Mono or stereo (mono recommended)
 
+### Deepgram Integration Strategy
 
-#### Integration Strategy
-
-**Direct 8 kHz PCM (Recommended when the selected voice supports it)**
+#### Direct 8 kHz PCM (Recommended when the selected voice supports it)
 
 ```python
 # Deepgram Voice Agent WebSocket configuration
@@ -156,8 +153,8 @@ config = {
 
 # Forward AudioSocket audio to Deepgram
 async def forward_to_deepgram(packet):
-    packet_type = packet[^0]
-    payload_length = struct.unpack('>H', packet[1:3])[^0]
+    packet_type = packet[0]
+    payload_length = struct.unpack('>H', packet[1:3])[0]
     
     if packet_type == 0x10:  # Audio
         audio_payload = packet[3:3+payload_length]
@@ -168,9 +165,9 @@ If the selected voice cannot synthesize linear16@8k, request μ‑law@8k instead
 
 **Why 8 kHz Works Best**:
 
-- Deepgram's `nova-2-phonecall` model is specifically trained on telephony audio (8 kHz)[^7][^8]
+- Deepgram's `nova-2-phonecall` model is specifically trained on telephony audio (8 kHz)[^3]
 - No resampling needed = lower latency
-- Matches AudioSocket's native format perfectly[^9][^10]
+- Matches AudioSocket's native format perfectly[^2][^asterisk-doc]
 
 ***
 
@@ -191,8 +188,8 @@ class AudioSocketParser:
         
         while len(self.buffer) >= 3:
             # Parse header
-            packet_type = self.buffer[^0]
-            payload_length = struct.unpack('>H', bytes(self.buffer[1:3]))[^0]
+            packet_type = self.buffer[0]
+            payload_length = struct.unpack('>H', bytes(self.buffer[1:3]))[0]
             
             # Wait for complete packet
             if len(self.buffer) < 3 + payload_length:
@@ -218,7 +215,6 @@ class AudioSocketParser:
         return packets
 ```
 
-
 ***
 
 ### Summary: Exact Technical Requirements
@@ -239,22 +235,17 @@ class AudioSocketParser:
 4. **Never send WAV headers**—providers expect raw frames.
 5. **Two supported transport profiles**: ulaw@8k or PCM (slin@8k/slin16@16k). Pick one and keep the pipeline consistent.
 
-**Common Mistakes**
+**Common Mistakes**:
+
 - Misreading header endianness: TLV length is big‑endian, but audio payload for PCM types is always little‑endian per Asterisk. Do not swap bytes for AudioSocket PCM types.
 - Forcing 8 kHz linear PCM on a voice that only supports 24 kHz PCM or 8 kHz μ‑law. Request a supported format and resample at the transport boundary. [^3][^4]
 
 This configuration ensures **low latency** and **reliable real‑time streaming** for AI voice agents using Asterisk AudioSocket, while acknowledging real‑world profiles (8/16 kHz PCM and μ‑law) and provider constraints. [^2][^3][^4]
 
-<div align="center">⁂</div>
+***
 
-[^1]: Asterisk project and channel driver documentation (general). The AudioSocket app is community distributed; behavior is validated via live dialplans and CLI in production deployments.
-[^2]: K3XEC — “Overview of the AudioSocket protocol” (TLV header, header big‑endian; audio payload int16 LE @ 8 kHz).
-      https://k3xec.com/audio-socket/
-[^3]: Deepgram Voice Agent v1 Reference — Settings/ACK schema and audio format nesting.
-      https://developers.deepgram.com/reference/voice-agent/agent-v-1
-[^4]: Deepgram — Supported audio formats.
-      https://developers.deepgram.com/docs/supported-audio-formats
+[^2]: K3XEC — "Overview of the AudioSocket protocol" (TLV header, header big‑endian; audio payload int16 LE @ 8 kHz). <https://k3xec.com/audio-socket/>
+[^3]: Deepgram Voice Agent v1 Reference — Settings/ACK schema and audio format nesting. <https://developers.deepgram.com/reference/voice-agent/agent-v-1>
+[^4]: Deepgram — Supported audio formats. <https://developers.deepgram.com/docs/supported-audio-formats>
 
-[^asterisk-doc]: Asterisk — AudioSocket channel driver documentation (official). Message types, payload format (PCM16 little‑endian), and TLV framing.
-      https://docs.asterisk.org/Configuration/Channel-Drivers/AudioSocket/
-
+[^asterisk-doc]: Asterisk — AudioSocket channel driver documentation (official). Message types, payload format (PCM16 little‑endian), and TLV framing. <https://docs.asterisk.org/Configuration/Channel-Drivers/AudioSocket/>

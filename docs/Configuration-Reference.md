@@ -47,6 +47,7 @@ Controls interruption of TTS playback when the caller speaks.
 - barge_in.post_tts_end_protection_ms: 250–500 ms. Short guard to avoid clipping the start of the next caller utterance.
 
 Tuning guidance:
+
 - Noisy lines: raise `energy_threshold` and `min_ms`.
 - Fast, chatty interactions: lower `min_ms` and `post_tts_end_protection_ms` cautiously.
 
@@ -81,6 +82,7 @@ Defines how inbound speech is segmented into utterances for STT.
 - vad.fallback_buffer_size: Bytes to accumulate at fallback thresholds.
 
 Common pitfalls:
+
 - Too-short utterances (e.g., 20 ms) cause empty STT transcripts → raise `min_utterance_duration_ms` and ensure `webrtc_end_silence_frames` is not too low.
 - Overly aggressive VAD (aggressiveness=2/3) may clip 8 kHz speech; prefer 0–1 for telephony.
 
@@ -94,6 +96,7 @@ Common pitfalls:
 ## Providers
 
 ### OpenAI Realtime (monolithic agent)
+
 - providers.openai_realtime.api_key: Bearer auth.
 - providers.openai_realtime.model, voice, base_url: Model and voice.
 - providers.openai_realtime.instructions: Persona override. Leave empty to inherit `llm.prompt`.
@@ -106,6 +109,7 @@ Common pitfalls:
 - Metrics: `ai_agent_openai_assumed_output_sample_rate_hz`, `ai_agent_openai_provider_output_sample_rate_hz`, and `ai_agent_openai_measured_output_sample_rate_hz` expose handshake vs. measured output rates per call.
 
 ### Deepgram Voice Agent
+
 - providers.deepgram.api_key, model, tts_model.
 - providers.deepgram.greeting: Agent greeting. Leave empty to inherit `llm.initial_greeting`.
 - providers.deepgram.instructions: Persona override for the “think” stage; leave empty to inherit `llm.prompt`.
@@ -114,11 +118,13 @@ Common pitfalls:
 - Metrics: `ai_agent_deepgram_input_sample_rate_hz` and `ai_agent_deepgram_output_sample_rate_hz` confirm negotiated codec settings per call.
 
 ### Google (pipelines)
+
 - google_llm.system_instruction/system_prompt: Persona; if missing, adapter falls back to `llm.prompt`.
 - google_tts/tts fields: voice, language, audio encoding/sample rate, target format.
 - google_stt/stt fields: encoding, language, model, sampleRateHertz.
 
 ### Local provider (pipelines)
+
 - Local STT/LLM/TTS parameters live under pipeline `options`. The engine plays `llm.initial_greeting` first if configured.
 
 ## Precedence summary

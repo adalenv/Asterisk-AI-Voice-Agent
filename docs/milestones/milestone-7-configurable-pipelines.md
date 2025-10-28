@@ -1,21 +1,25 @@
 # Milestone 7 — Configurable Pipelines & Hot Reload
 
 ## Objective
+
 Allow operators to mix and match STT, LLM, and TTS components (local or cloud) using YAML configuration only, with safe hot-reload support so changes apply without a full restart.
 
 ## Success Criteria
+
 - `config/ai-agent.yaml` can define multiple named pipelines (e.g., `pipelines.default`, `pipelines.sales`) with component references.
 - `active_pipeline` switch applies after a reload (hot reload or `make engine-reload`) without code edits.
 - Pipelines may mix local and cloud components (e.g., local STT + cloud LLM + cloud TTS) and selectively request only the capabilities they need.
 - Regression call succeeds using both a full-local pipeline and a hybrid pipeline defined in configuration alone.
 
 ## Dependencies
+
 - Milestones 5 and 6 complete (streaming defaults, OpenAI provider).
 - SessionStore fully authoritative for call state (Milestone 1).
 
 ## Work Breakdown
 
 ### 7.1 Configuration Schema
+
 - Extend YAML with:
   - `pipelines: { name: { stt: ..., llm: ..., tts: ..., options: {...} } }`
   - `active_pipeline: default`
@@ -53,12 +57,14 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
   which emitted `active_pipeline: default` and normalized entries for all documented pipelines (run 2025-09-25 17:59 UTC).
 
 ### 7.2 Pipeline Loader
+
 - Wire existing `PipelineOrchestrator` to engine startup so components instantiate from `active_pipeline`.
 - Provide adapters for each component role (e.g., `local_stt`, `local_llm`, `local_tts`, `deepgram_stt`, `openai_tts`) using common async interfaces.
 - Ensure local provider roles only invoke required capabilities (STT-only, LLM-only, TTS-only) based on the pipeline entry.
 - Surface component readiness/metadata for logging and metrics.
 
 ### 7.3 Hot Reload
+
 - Extend the existing configuration watcher so pipeline definitions reload safely:
   - Validate new config (including component options).
   - Rebuild orchestrator/component bindings; toggle local server feature flags (STT/LLM/TTS) to match active pipelines.
@@ -126,6 +132,7 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
   - Manually exercised orchestrator hot reload with alternating pipelines to confirm selective adapter instantiation and logging coverage.
 
 ### 7.4 Regression & Documentation
+
 - Add section to `call-framework.md` describing how to run calls with full-local and hybrid pipelines (local STT + cloud TTS, local STT + local LLM + cloud TTS, etc.).
 - Create example pipeline configs under `examples/pipelines/` showcasing:
   - `local_only`
@@ -135,6 +142,7 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
 - Capture regression notes covering selective STT-only, TTS-only, and complete local pipeline flows.
 
 ### 7.5 Local Provider Selective Components (Completed 2025-09-25)
+
 - Local pipeline adapters `LocalSTTAdapter`, `LocalLLMAdapter`, and `LocalTTSAdapter` implemented in [`src/pipelines/local.py`](src/pipelines/local.py) with dedicated connection lifecycles and WebSocket protocol handling (`mode: stt|llm|tts` messages, JSON payload parsing, μ-law streaming support).
 - `PipelineOrchestrator` now hydrates `LocalProviderConfig`, registers factories (`local_stt`, `local_llm`, `local_tts`), and prefers concrete adapters whenever the local provider is enabled; placeholders remain only when the provider is disabled or misconfigured.
 - Engine integration reuses provider metadata so calls that select local pipelines via `active_pipeline` or `AI_PROVIDER` channel variables invoke adapter-driven STT/LLM/TTS flows instead of the legacy full-provider session.
@@ -145,11 +153,13 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
   - `pytest tests/test_pipeline_local_adapters.py` *(requires `pytest` to be installed in the environment; current execution failed with `command not found`, so rerun after installing dev dependencies).*
 
 ## Deliverables
+
 - Pipeline loader integration with component adapters and tests.
 - Updated configuration schema, local provider/server selective-mode support, and documentation.
 - Hot reload support confirmed in regression notes for full-local and hybrid pipelines.
 
 ## Verification Checklist
+
 - Editing `config/ai-agent.yaml` to point to a different `active_pipeline` followed by `make engine-reload` switches providers on the next call.
 - INFO logs confirm pipeline composition (STT/LLM/TTS components) at call start with provider labels (e.g., `local_stt`, `deepgram_tts`).
 - Regression logs show successful calls for:
@@ -159,5 +169,6 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
 - `/metrics` exposes pipeline/component labels for monitoring.
 
 ## Handover Notes
+
 - Coordinate with Milestone 8 for monitoring hooks (record pipeline name in telemetry/metrics).
 - Document any component-specific options required for third-party services so future contributors can add adapters.

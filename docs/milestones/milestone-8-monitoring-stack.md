@@ -5,6 +5,7 @@ Deliver an opt-in monitoring and analytics experience that works out of the box,
 ---
 
 ## 1. Objectives & Success Criteria
+
 - **One-command enablement**: `make monitor-up` (or helper script) launches Prometheus + Grafana with provisioning; stack is opt-in and dormant by default.
 - **Per-call insight**: Every completed call produces a metrics + transcript artifact with pipeline/provider/model metadata and a summary in Prometheus.
 - **Actionable feedback**: Recommendation engine suggests concrete `config/ai-agent.yaml` tweaks based on measured jitter, fallback frequency, latency, and sentiment.
@@ -16,6 +17,7 @@ Verification quick check: run the helper script, place a single call, confirm da
 ---
 
 ## 2. Prerequisites & Reference Docs
+
 - Milestones 5–7 complete (streaming telemetry, pipeline metadata, hot reload).
 - Prometheus metrics already exposed at `/metrics` on `ai-engine` and `local-ai-server` (labels may need extension).
 - Follow-on documentation updates required in:
@@ -29,6 +31,7 @@ Verification quick check: run the helper script, place a single call, confirm da
 ## 3. Implementation Phases
 
 ### Phase 1 — Telemetry & Data Model
+
 1. **Metric schema**
    - Define structured labels: `call_uuid`, `pipeline_name`, `provider_id`, `model_variant`, `recommendation_key`.
    - Add counters/histograms:
@@ -47,6 +50,7 @@ Verification quick check: run the helper script, place a single call, confirm da
    - Ensure rotation/cleanup policy (configurable retention; document defaults).
 
 ### Phase 2 — Recommendation Engine
+
 1. **Rule definitions**
    - Map metrics to YAML adjustments, e.g.:
      - Jitter events > threshold ⇒ raise `streaming.low_watermark_ms`.
@@ -60,6 +64,7 @@ Verification quick check: run the helper script, place a single call, confirm da
    - Optional `scripts/monitoring/report_latest.py` to print recommendations in terminal.
 
 ### Phase 3 — Monitoring Stack Infrastructure
+
 1. **docker-compose updates**
    - Add `prometheus` and `grafana` services under a `monitoring` profile.
    - Configure scrape configs for engine + local server (use environment variables for endpoints).
@@ -79,6 +84,7 @@ Verification quick check: run the helper script, place a single call, confirm da
    - Document default admin credentials (pull from `.env`).
 
 ### Phase 4 — Dashboards & UX
+
 1. **Dashboards**
    - `Call Overview`: active calls, last 10 calls table with sentiment, duration, recommendations count.
    - `Streaming Health`: jitter buffer depth, fallback rate, transport restarts, AudioSocket vs fallback usage.
@@ -92,6 +98,7 @@ Verification quick check: run the helper script, place a single call, confirm da
    - Include call-out text for “Optional stack — safe to disable when not needed”.
 
 ### Phase 5 — Guided Setup & Documentation
+
 1. **Helper script (`scripts/setup_monitoring.py`)**
    - Detect Docker/Compose availability, prompt for Grafana password, ensure `.env` entries exist.
    - Snapshot `config/ai-agent.yaml` into `monitoring/config_snapshots/`.
@@ -109,6 +116,7 @@ Verification quick check: run the helper script, place a single call, confirm da
 ---
 
 ## 4. Testing & Verification Checklist
+
 - **Local smoke**: helper script completes; Grafana accessible; dashboards populate during `make call-smoke` (or manual test call).
 - **Metrics validation**: Prometheus metrics show labels for call UUID, pipeline, provider, model; new histograms/counters scrape without errors.
 - **Recommendation engine**: Induce a fallback or jitter event (via config tweak), confirm `/feedback/latest` surfaces matching YAML suggestions.
@@ -119,6 +127,7 @@ Verification quick check: run the helper script, place a single call, confirm da
 ---
 
 ## 5. Security, Data & Maintenance Considerations
+
 - Restrict Grafana access (bind to localhost by default, expose reverse proxy guidance for remote access).
 - Sanitize transcripts before storage if sensitive data expected; document retention settings and cleanup schedule.
 - Keep Prometheus/Grafana images pinned to specific tags; include `make monitor-update` task if upgrading frequently.
@@ -128,6 +137,7 @@ Verification quick check: run the helper script, place a single call, confirm da
 ---
 
 ## 6. Deliverables Summary
+
 - Updated code/config: metrics instrumentation, recommendation module, transcript persistence.
 - `docker-compose.yml` monitoring profile + new Make/IDE targets.
 - Grafana provisioning + dashboard JSON files.

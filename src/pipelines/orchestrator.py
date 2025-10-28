@@ -24,6 +24,7 @@ from ..config import (
 from ..logging_config import get_logger
 from .base import Component, STTComponent, LLMComponent, TTSComponent
 from .deepgram import DeepgramSTTAdapter, DeepgramTTSAdapter
+from .deepgram_flux import DeepgramFluxSTTAdapter
 from .google import GoogleLLMAdapter, GoogleSTTAdapter, GoogleTTSAdapter
 from .local import LocalLLMAdapter, LocalSTTAdapter, LocalTTSAdapter
 from .openai import OpenAISTTAdapter, OpenAILLMAdapter, OpenAITTSAdapter
@@ -375,14 +376,17 @@ class PipelineOrchestrator:
 
         if self._deepgram_provider_config:
             stt_factory = self._make_deepgram_stt_factory(self._deepgram_provider_config)
+            flux_stt_factory = self._make_deepgram_flux_stt_factory(self._deepgram_provider_config)
             tts_factory = self._make_deepgram_tts_factory(self._deepgram_provider_config)
 
             self.register_factory("deepgram_stt", stt_factory)
+            self.register_factory("deepgram_flux_stt", flux_stt_factory)
             self.register_factory("deepgram_tts", tts_factory)
 
             logger.info(
                 "Deepgram pipeline adapters registered",
                 stt_factory="deepgram_stt",
+                flux_stt_factory="deepgram_flux_stt",
                 tts_factory="deepgram_tts",
             )
         else:
@@ -482,6 +486,22 @@ class PipelineOrchestrator:
 
         def factory(component_key: str, options: Dict[str, Any]) -> Component:
             return DeepgramSTTAdapter(
+                component_key,
+                self.config,
+                DeepgramProviderConfig(**config_payload),
+                options,
+            )
+
+        return factory
+    
+    def _make_deepgram_flux_stt_factory(
+        self,
+        provider_config: DeepgramProviderConfig,
+    ) -> ComponentFactory:
+        config_payload = provider_config.model_dump()
+
+        def factory(component_key: str, options: Dict[str, Any]) -> Component:
+            return DeepgramFluxSTTAdapter(
                 component_key,
                 self.config,
                 DeepgramProviderConfig(**config_payload),

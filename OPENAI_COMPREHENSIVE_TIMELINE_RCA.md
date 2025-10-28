@@ -1,4 +1,5 @@
 # OpenAI Realtime - COMPREHENSIVE TIMELINE RCA
+
 ## Call ID: 1761437334.2123 | Date: Oct 26, 2025 00:09 UTC | Duration: 54.7 seconds
 
 ---
@@ -7,13 +8,15 @@
 
 **Status**: ❌❌❌ CRITICAL FAILURES ON MULTIPLE LEVELS
 
-### The Problems:
+### The Problems
+
 1. **Greeting Delayed 4.5 Seconds** (AudioSocket connects at T+0s, greeting starts at T+4.5s)
 2. **First Segment Only 84ms Long** (greeting cuts off after "Hel...")
 3. **Echo/Feedback Still Happening** (4 response cycles, audio still cutting off)
 4. **Protection Window BACKWARDS** (drops audio BEFORE TTS, not AFTER)
 
-### User Experience:
+### User Experience
+
 - User: *waits 4.5 seconds in silence*
 - Agent: "Hel--" *cuts off*
 - User: "Hello?"
@@ -27,7 +30,7 @@
 
 ### **Phase 1: Call Setup (00:09:00.394 - 00:09:00.570)**
 
-```
+```text
 Time (UTC)       | Event                                    | Impact
 -----------------|------------------------------------------|---------------------------
 00:09:00.394     | StasisStart received                     | Call begins
@@ -45,7 +48,7 @@ Time (UTC)       | Event                                    | Impact
 
 ### **Phase 2: Premature Audio Dropping (00:09:00.573 - 00:09:04.526)**
 
-```
+```text
 Time (UTC)       | Event                                    | tts_started_ts | Explanation
 -----------------|------------------------------------------|----------------|---------------------------
 00:09:00.573     | OpenAI connection started                | 0.0            |
@@ -72,7 +75,8 @@ Time (UTC)       | Event                                    | tts_started_ts | E
 
 **Problem #4**: Protection checks `audio_capture_enabled=False` which is ALWAYS false initially, so it starts dropping audio BEFORE any TTS exists!
 
-**Impact**: 
+**Impact**:
+
 - User waits 4.5 seconds hearing nothing
 - User audio dropped for 4.5 seconds (user trying to speak: "hello? can you hear me?")
 - By the time greeting starts, user is confused and talking over it
@@ -81,7 +85,7 @@ Time (UTC)       | Event                                    | tts_started_ts | E
 
 ### **Phase 3: First Segment (Ultra-Short) (00:09:04.526 - 00:09:04.873)**
 
-```
+```text
 Time (UTC)       | Event                                    | Bytes Played | Duration
 -----------------|------------------------------------------|--------------|------------
 00:09:04.526     | STREAMING PLAYBACK - Started             | 0            | 0ms
@@ -95,14 +99,16 @@ Time (UTC)       | Event                                    | Bytes Played | Dur
 00:09:04.872     | audio_capture_enabled = true             |              | Gates cleared
 ```
 
-**PROVIDER SEGMENT BYTES**: 
+**PROVIDER SEGMENT BYTES**:
+
 - provider_bytes: 10,240 (32 chunks of 320 bytes = 640ms @ 16kHz)
 - enqueued_bytes: 5,120 (50% ratio)
 - BUT only played ~84ms!
 
-**Problem #5**: Segment ends after only 84ms of playback! 
+**Problem #5**: Segment ends after only 84ms of playback!
 
-**Why?**: 
+**Why?**:
+
 - OpenAI generated 32 chunks (640ms worth)
 - System buffered only 5,120 bytes (50%)
 - Played only ~4 frames = 80ms
@@ -114,7 +120,7 @@ Time (UTC)       | Event                                    | Bytes Played | Dur
 
 ### **Phase 4: Echo Begins (00:09:04.873 onwards)**
 
-```
+```text
 Time (UTC)       | Event                                    | What's Happening
 -----------------|------------------------------------------|--------------------------------
 00:09:04.873     | audio_capture_enabled = true             | Protection OFF, audio flows
@@ -142,6 +148,7 @@ Time (UTC)       | Event                                    | What's Happening
 **Location**: `src/engine.py` lines 990, 1344
 
 **Code**:
+
 ```python
 session = CallSession(
     ...
@@ -150,7 +157,8 @@ session = CallSession(
 )
 ```
 
-**Impact**: 
+**Impact**:
+
 - System thinks TTS is playing from the moment AudioSocket connects
 - Protection code activates immediately (drops all audio for 5 seconds)
 - But no TTS is actually playing yet!
@@ -165,18 +173,21 @@ session = CallSession(
 **Location**: `src/providers/openai_realtime.py` line 352
 
 **Evidence**:
-```
+
+```text
 00:09:00.912 - Waiting for session.updated ACK
 00:09:03.914 - session.updated ACK timeout! (3 seconds later)
 00:09:03.920 - session.updated ACK received (8ms after timeout)
 ```
 
 **Code**:
+
 ```python
 await asyncio.wait_for(self._session_ack_event.wait(), timeout=3.0)
 ```
 
-**Impact**: 
+**Impact**:
+
 - Greeting request sent at 00:09:03.915 (after 3s wait)
 - Audio doesn't arrive until 00:09:04.525 (another 0.6s)
 - **Total delay: 4.5 seconds of silence**
@@ -190,6 +201,7 @@ await asyncio.wait_for(self._session_ack_event.wait(), timeout=3.0)
 ### **Root Cause #3: Segment Ends Too Early**
 
 **Evidence**:
+
 - OpenAI generated: 32 chunks = 10,240 bytes = 640ms worth
 - Enqueued to playback: 5,120 bytes (50%)
 - Actually played: ~2,560 bytes = 80ms
@@ -198,6 +210,7 @@ await asyncio.wait_for(self._session_ack_event.wait(), timeout=3.0)
 **Location**: Somewhere in streaming_playback_manager or engine
 
 **Possible causes**:
+
 1. `segment-end` triggered prematurely
 2. Jitter buffer underflow
 3. Playback stopped by some other mechanism
@@ -209,12 +222,14 @@ await asyncio.wait_for(self._session_ack_event.wait(), timeout=3.0)
 ### **Root Cause #4: Protection Window Logic Inverted**
 
 **Current Behavior**:
+
 - Drops audio BEFORE TTS starts (when `audio_capture_enabled=False` initially)
 - Should drop audio AFTER TTS starts (to prevent echo)
 
 **Location**: `src/engine.py` line 2238
 
 **Code**:
+
 ```python
 if hasattr(session, 'audio_capture_enabled') and not session.audio_capture_enabled:
     # This block executes when audio_capture_enabled=False
@@ -222,6 +237,7 @@ if hasattr(session, 'audio_capture_enabled') and not session.audio_capture_enabl
 ```
 
 **The Logic Flaw**:
+
 - `audio_capture_enabled=False` is supposed to mean "TTS is playing, don't capture"
 - But session initializes with `audio_capture_enabled=False` ALWAYS
 - So protection runs even when no TTS exists yet
@@ -233,6 +249,7 @@ if hasattr(session, 'audio_capture_enabled') and not session.audio_capture_enabl
 ### **Root Cause #5: Fix #3 (5-second protection) Applied in Wrong Place**
 
 **Our Fix #3 Code** (line 2303-2310):
+
 ```python
 if provider_name == "openai_realtime":
     initial_protect = 5000  # 5 seconds
@@ -240,7 +257,8 @@ if provider_name == "openai_realtime":
 
 **Where it runs**: Inside the `if not audio_capture_enabled` block (line 2238)
 
-**When it runs**: 
+**When it runs**:
+
 - At 00:09:00.666 (4.5 seconds BEFORE TTS starts!)
 - Drops audio for entire pre-TTS period
 - But TTS doesn't start until 00:09:04.526
@@ -253,9 +271,9 @@ if provider_name == "openai_realtime":
 
 ## 📊 **COMPARISON: What Should Happen vs What Actually Happens**
 
-### **Correct Flow** (What SHOULD Happen):
+### **Correct Flow** (What SHOULD Happen)
 
-```
+```text
 Time | Event                           | audio_capture_enabled | Audio Flow
 -----|----------------------------------|----------------------|------------
 T+0s | AudioSocket connects             | TRUE                 | Audio → OpenAI
@@ -270,9 +288,9 @@ T+6s | Greeting done, gating clears     | TRUE                 | Audio → OpenA
 
 ---
 
-### **Actual Flow** (What IS Happening):
+### **Actual Flow** (What IS Happening)
 
-```
+```text
 Time | Event                           | audio_capture_enabled | Audio Flow
 -----|----------------------------------|----------------------|------------
 T+0s | AudioSocket connects             | FALSE ❌             | Audio BLOCKED (wrong!)
@@ -284,7 +302,8 @@ T+4.58s | Segment ends, gating clears   | TRUE ❌              | Audio → Open
 T+4.58s onwards | Echo feedback loop   | TRUE/FALSE cycling   | Chaos!
 ```
 
-**Result**: 
+**Result**:
+
 - 4.5s silence → user confused
 - 80ms greeting → "Hel--"
 - Echo feedback → multiple interrupted responses
@@ -299,6 +318,7 @@ T+4.58s onwards | Echo feedback loop   | TRUE/FALSE cycling   | Chaos!
 **File**: `src/engine.py` lines 990, 1344
 
 **Change**:
+
 ```python
 session = CallSession(
     ...
@@ -307,7 +327,8 @@ session = CallSession(
 )
 ```
 
-**Impact**: 
+**Impact**:
+
 - Audio flows to OpenAI from the start
 - No premature protection
 - No 4.5-second silence gap
@@ -319,6 +340,7 @@ session = CallSession(
 **File**: `src/providers/openai_realtime.py` line 352
 
 **Option 1** - Don't block greeting:
+
 ```python
 # Send greeting immediately, don't wait for session.updated
 if (self.config.greeting or "").strip():
@@ -332,6 +354,7 @@ except asyncio.TimeoutError:
 ```
 
 **Option 2** - Increase timeout:
+
 ```python
 await asyncio.wait_for(self._session_ack_event.wait(), timeout=5.0)  # Was 3.0
 ```
@@ -345,6 +368,7 @@ await asyncio.wait_for(self._session_ack_event.wait(), timeout=5.0)  # Was 3.0
 **File**: `src/engine.py` around line 2303
 
 **Change**:
+
 ```python
 # Only apply extended protection if TTS has actually started
 if provider_name == "openai_realtime" and getattr(session, 'tts_started_ts', 0.0) > 0:
@@ -352,7 +376,8 @@ if provider_name == "openai_realtime" and getattr(session, 'tts_started_ts', 0.0
     logger.debug(...)
 ```
 
-**Impact**: 
+**Impact**:
+
 - Protection only runs AFTER TTS starts
 - No dropping audio during 4.5-second pre-TTS silence
 - Protection properly prevents echo during actual greeting playback
@@ -364,10 +389,12 @@ if provider_name == "openai_realtime" and getattr(session, 'tts_started_ts', 0.0
 **Need to find**: Why only 80ms of 640ms plays
 
 **Possible locations**:
+
 - `src/core/streaming_playback_manager.py` - segment boundary detection
 - `src/engine.py` - AgentAudioDone handling
 
 **Investigation needed**: Check logs for:
+
 - Buffer underflows
 - Early segment-end triggers
 - Playback stop conditions
@@ -389,21 +416,25 @@ if provider_name == "openai_realtime" and getattr(session, 'tts_started_ts', 0.0
 ## 💡 **KEY INSIGHTS**
 
 ### 1. The 5-Second Protection Was Applied in the Wrong Place
+
 - Applied BEFORE TTS starts (due to audio_capture_enabled=False default)
 - Should apply AFTER TTS starts
 - Timing is relative to wrong event (AudioSocket connect vs TTS start)
 
 ### 2. Session Initialization is Backwards
+
 - `audio_capture_enabled=False` means "gated, don't capture"
 - But set to False BEFORE any gating happens
 - Should start True, only set False when TTS actually starts
 
 ### 3. The 3-Second ACK Timeout Blocks Everything
+
 - Waits 3 seconds for session.updated ACK
 - ACK arrives 8ms after timeout (too late)
 - Blocks greeting for 3+ seconds unnecessarily
 
 ### 4. Premature Segment Ending is a Separate Bug
+
 - Only 80ms of 640ms audio plays
 - Needs separate investigation
 - Likely jitter buffer or playback manager issue

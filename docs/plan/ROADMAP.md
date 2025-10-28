@@ -3,6 +3,7 @@
 This roadmap tracks the open-source enablement work for the Asterisk AI Voice Agent. Each milestone includes scope, primary tasks, and quick verification steps that should take less than a minute after deployment.
 
 ## Milestone 1 — SessionStore-Only State (✅ Completed)
+
 - **Goal**: Remove remaining legacy dictionaries from `engine.py` and rely exclusively on `SessionStore` / `PlaybackManager` for call state.
 - **Tasks**:
   - Replace reads/writes to `active_calls`, `caller_channels`, etc. with SessionStore helpers.
@@ -13,6 +14,7 @@ This roadmap tracks the open-source enablement work for the Asterisk AI Voice Ag
   - No `active_calls[...]` or similar dict mutations remain in the codebase.
 
 ## Milestone 2 — Provider Switch CLI (✅ Completed)
+
 - **Goal**: Provide one command to switch the active provider, restart the engine, and confirm readiness.
 - **What We Shipped**:
   - Added `scripts/switch_provider.py` and Makefile targets `provider-switch`, `provider-switch-remote`, and `provider-reload` for local + server workflows.
@@ -21,6 +23,7 @@ This roadmap tracks the open-source enablement work for the Asterisk AI Voice Ag
   - `make provider=<name> provider-reload` updates `config/ai-agent.yaml`, restarts `ai-engine`, and the next call uses the requested provider. Logged on 2025-09-22 during regression.
 
 ## Milestone 3 — Model Auto-Fetch (✅ Completed)
+
 - **Goal**: Automatically download and cache local AI models based on the host architecture.
 - **What We Shipped**:
   - Added `models/registry.json` and the `scripts/model_setup.py` utility to detect hardware tier, download the right STT/LLM/TTS bundles, and verify integrity.
@@ -29,6 +32,7 @@ This roadmap tracks the open-source enablement work for the Asterisk AI Voice Ag
   - First-run downloads populate `models/` on both laptops and the server; subsequent runs detect cached artifacts and exit quickly. Local provider boots cleanly after `make model-setup`.
 
 ## Milestone 4 — Conversation Coordinator & Metrics (✅ Completed)
+
 - **Goal**: Centralize gating/barge-in decisions and expose observability.
 - **What We Shipped**:
   - Introduced `ConversationCoordinator` (SessionStore-integrated) plus Prometheus gauges/counters for capture state and barge-in attempts.
@@ -37,6 +41,7 @@ This roadmap tracks the open-source enablement work for the Asterisk AI Voice Ag
   - 2025-09-22 regression call shows coordinator toggling capture around playback, `ai_agent_tts_gating_active` returning to zero post-call, and `/metrics` scrape succeeding from the server.
 
 ## Milestone 5 — Streaming Transport Production Readiness (✅ Completed)
+
 - **Goal**: Promote the AudioSocket streaming path to production quality with adaptive pacing, configurable defaults, and telemetry. Details and task breakdown live in `docs/milestones/milestone-5-streaming-transport.md`.
 - **What We Shipped**:
   - Configurable streaming defaults in `config/ai-agent.yaml` (`min_start_ms`, `low_watermark_ms`, `fallback_timeout_ms`, `provider_grace_ms`, `jitter_buffer_ms`).
@@ -52,6 +57,7 @@ This roadmap tracks the open-source enablement work for the Asterisk AI Voice Ag
   - Operators can fine‑tune behaviour via YAML without code changes.
 
 ## Milestone 6 — OpenAI Realtime Voice Agent (✅ Completed)
+
 - **Goal**: Add an OpenAI Realtime provider so Deepgram ↔️ OpenAI switching happens via configuration alone. Milestone instructions: `docs/milestones/milestone-6-openai-realtime.md`.
 - **Dependencies**: Milestone 5 complete; OpenAI API credentials configured.
 - **Primary Tasks**:
@@ -86,6 +92,7 @@ This roadmap tracks the open-source enablement work for the Asterisk AI Voice Ag
   - Logs show `response.created` → output audio chunks → playback start/finish with gating clear; no `unknown_parameter` errors.
 
 ## Milestone 7 — Configurable Pipelines & Hot Reload (✅ Completed)
+
 - **Goal**: Support multiple named pipelines (STT/LLM/TTS) defined in YAML, with hot reload for rapid iteration. See `docs/milestones/milestone-7-configurable-pipelines.md`.
 - **What We Shipped**:
   - YAML pipelines with `active_pipeline` switching and safe hot reload.
@@ -103,6 +110,7 @@ This roadmap tracks the open-source enablement work for the Asterisk AI Voice Ag
   - Changing OpenAI/Deepgram endpoints or voice/model via YAML takes effect on next call.
 
 ## Milestone 8 — Monitoring, Feedback & Guided Setup (Planned)
+
 - **Goal**: Ship an opt-in monitoring + analytics experience that is turnkey, captures per-call transcripts/metrics, and surfaces actionable YAML tuning guidance. Implementation details live in `docs/milestones/milestone-8-monitoring-stack.md`.
 - **Dependencies**: Milestones 5–7 in place so streaming telemetry, pipeline metadata, and configuration hot-reload already work.
 - **Workstreams & Tasks**:

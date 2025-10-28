@@ -224,3 +224,6 @@ rca-out*/
 tmp_rca/
 rca-*.tar.gz
 logs/remote/
+# RCA analysis artifacts (should remain local-only)
+OPENAI_*RCA*.md
+logs/remote/

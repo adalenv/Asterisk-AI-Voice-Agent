@@ -2868,9 +2868,12 @@ class Engine:
                 if q:
                     try:
                         q.put_nowait(pcm_16k)  # Pipeline expects PCM16@16kHz
+                        logger.debug("RTP audio routed to pipeline queue", call_id=caller_channel_id, bytes=len(pcm_16k))
                     except Exception as exc:
-                        logger.debug("Pipeline queue full or unavailable (RTP)", call_id=caller_channel_id, error=str(exc))
+                        logger.warning("Pipeline queue full or unavailable (RTP)", call_id=caller_channel_id, error=str(exc))
                     return  # Done - don't route to monolithic provider
+                else:
+                    logger.warning("Pipeline mode active but no queue found (RTP)", call_id=caller_channel_id)
 
             # Check if provider requires continuous audio input (P1 providers: Deepgram, OpenAI Realtime)
             # These providers handle turn-taking internally and need uninterrupted audio flow

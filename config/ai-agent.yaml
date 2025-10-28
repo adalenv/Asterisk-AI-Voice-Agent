@@ -93,7 +93,6 @@ pipelines:
         response_timeout_sec: 15.0
         temperature: 0.7
       stt:
-        base_url: wss://api.deepgram.com
         encoding: linear16
         language: en-US
         mode: stt

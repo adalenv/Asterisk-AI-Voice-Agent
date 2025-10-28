@@ -47,6 +47,7 @@ pipelines:
     tts: deepgram_tts
     options:
       stt:
+        base_url: "https://api.deepgram.com"
         mode: "stt"
         model: "nova-2"
         language: "en"

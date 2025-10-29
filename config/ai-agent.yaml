@@ -260,8 +260,8 @@ providers:
     connect_timeout_sec: ${LOCAL_WS_CONNECT_TIMEOUT:=2.0}
     enabled: true
     llm_model: models/llm/phi-3-mini-4k-instruct.Q4_K_M.gguf
-    max_tokens: 64
-    response_timeout_sec: ${LOCAL_WS_RESPONSE_TIMEOUT:=5.0}
+    max_tokens: 32
+    response_timeout_sec: ${LOCAL_WS_RESPONSE_TIMEOUT:=10.0}
     stt_model: models/stt/vosk-model-en-us-0.22
     temperature: 0.4
     tts_voice: models/tts/en_US-lessac-medium.onnx

@@ -57,22 +57,62 @@ class LocalProvider(AIProviderInterface):
         )
 
     async def _reconnect(self):
-        backoff = [1, 2, 5, 10]
-        for delay in backoff + [10, 10, 10]:
+        # Exponential backoff up to 30s, total ~3 minutes to cover LLM warmup (~111s)
+        backoff_schedule = [2, 5, 10, 20, 30, 30, 30, 30]  # Total: ~157s
+        total_elapsed = 0
+        
+        for attempt, delay in enumerate(backoff_schedule, 1):
             try:
-                logger.info("Reconnecting to Local AI Server...", url=self.ws_url, delay=delay)
+                if attempt == 1:
+                    logger.info(
+                        "🔄 Connecting to Local AI Server...",
+                        url=self.ws_url,
+                        note="Server may be warming up models (~2 minutes)"
+                    )
+                else:
+                    logger.info(
+                        f"🔄 Reconnect attempt {attempt}/{len(backoff_schedule)}",
+                        url=self.ws_url,
+                        next_retry=f"{delay}s",
+                        elapsed=f"{total_elapsed}s"
+                    )
+                
                 self.websocket = await self._connect_ws()
-                logger.info("✅ Reconnected to Local AI Server.")
+                logger.info("✅ Connected to Local AI Server", elapsed=f"{total_elapsed}s")
+                
                 # Restart listener and sender loops
                 if self._listener_task is None or self._listener_task.done():
                     self._listener_task = asyncio.create_task(self._receive_loop())
                 if self._sender_task is None or self._sender_task.done():
                     self._sender_task = asyncio.create_task(self._send_loop())
                 return True
+                
+            except (ConnectionRefusedError, OSError) as e:
+                # Common during startup - don't spam logs with full error
+                if attempt < len(backoff_schedule):
+                    logger.debug(
+                        f"Connection attempt {attempt} failed (likely warmup)",
+                        error=type(e).__name__,
+                        next_retry=f"{delay}s"
+                    )
+                else:
+                    logger.warning(
+                        "Connection failed after all retries",
+                        attempts=len(backoff_schedule),
+                        total_elapsed=f"{total_elapsed}s",
+                        error=str(e)
+                    )
             except Exception as e:
-                # Intentionally avoid traceback at non-debug levels; summarize the reason instead
-                logger.warning("Reconnect attempt failed", delay=delay, error=str(e))
+                logger.warning(
+                    f"Reconnect attempt {attempt} failed",
+                    error=f"{type(e).__name__}: {str(e)}",
+                    next_retry=f"{delay}s" if attempt < len(backoff_schedule) else "none"
+                )
+            
+            if attempt < len(backoff_schedule):
                 await asyncio.sleep(delay)
+                total_elapsed += delay
+                
         return False
 
     async def initialize(self):

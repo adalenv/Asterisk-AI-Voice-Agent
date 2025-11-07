@@ -345,7 +345,7 @@ monitor-externalmedia-once:
 monitor-up:
 	@echo "--> Starting monitoring stack (Prometheus +Grafana) on host network..."
 	$(DOCKER_COMPOSE) -f docker-compose.yml -f docker-compose.monitor.yml up -d prometheus grafana
-{{ ... }}
+
 ## monitor-down: Stop monitoring stack
 monitor-down:
 	@echo "--> Stopping monitoring stack..."
@@ -355,7 +355,7 @@ monitor-down:
 monitor-logs:
 	@echo "--> Tailing Prometheus +Grafana logs... (Ctrl+C to exit)"
 	$(DOCKER_COMPOSE) -f docker-compose.yml -f docker-compose.monitor.yml logs -f prometheus grafana
-{{ ... }}
+
 ## capture-logs: Capture structured logs during test call (default: 40 seconds)
 capture-logs:
 	@echo "--> Starting structured log capture for test call..."

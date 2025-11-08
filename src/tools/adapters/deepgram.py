@@ -61,16 +61,17 @@ class DeepgramToolAdapter:
         """
         Handle function call event from Deepgram.
         
-        Per Deepgram docs, event format is:
+        Actual Deepgram format:
         {
-            "type": "function_call",
-            "id": "call_123456",
-            "function_call": {
-                "name": "transfer_call",
-                "arguments": {
-                    "target": "2765"
+            "type": "FunctionCallRequest",
+            "functions": [
+                {
+                    "id": "call_123456",
+                    "name": "transfer_call",
+                    "arguments": "{\"target\": \"2765\"}",  # JSON string!
+                    "client_side": true
                 }
-            }
+            ]
         }
         
         Args:
@@ -86,11 +87,24 @@ class DeepgramToolAdapter:
         Returns:
             Dict with function_call_id and result for sending back to Deepgram
         """
-        # Extract function call details per Deepgram spec
-        function_call_id = event.get('id')
-        function_call = event.get('function_call', {})
-        function_name = function_call.get('name')
-        parameters = function_call.get('arguments', {})
+        # Extract function call details from actual Deepgram format
+        functions = event.get('functions', [])
+        if not functions:
+            logger.error("No functions in FunctionCallRequest event")
+            return {"status": "error", "message": "No functions in event"}
+        
+        # Get first function (Deepgram sends array but we process one at a time)
+        func = functions[0]
+        function_call_id = func.get('id')
+        function_name = func.get('name')
+        
+        # Parse arguments from JSON string to dict
+        arguments_str = func.get('arguments', '{}')
+        try:
+            parameters = json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse function arguments: {e}", arguments=arguments_str)
+            parameters = {}
         
         logger.info(f"🔧 Deepgram tool call: {function_name}({parameters})", call_id=function_call_id)
         

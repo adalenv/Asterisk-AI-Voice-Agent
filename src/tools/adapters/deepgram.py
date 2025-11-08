@@ -61,12 +61,15 @@ class DeepgramToolAdapter:
         """
         Handle function call event from Deepgram.
         
-        Deepgram event format:
+        Per Deepgram docs, event format is:
         {
-            "type": "FunctionCallRequest",
-            "function_name": "transfer_call",
-            "parameters": {
-                "target": "2765"
+            "type": "function_call",
+            "id": "call_123456",
+            "function_call": {
+                "name": "transfer_call",
+                "arguments": {
+                    "target": "2765"
+                }
             }
         }
         
@@ -81,12 +84,15 @@ class DeepgramToolAdapter:
                 - config
         
         Returns:
-            Tool execution result dict
+            Dict with function_call_id and result for sending back to Deepgram
         """
-        function_name = event.get('function_name')
-        parameters = event.get('parameters', {})
+        # Extract function call details per Deepgram spec
+        function_call_id = event.get('id')
+        function_call = event.get('function_call', {})
+        function_name = function_call.get('name')
+        parameters = function_call.get('arguments', {})
         
-        logger.info(f"🔧 Deepgram tool call: {function_name}({parameters})")
+        logger.info(f"🔧 Deepgram tool call: {function_name}({parameters})", call_id=function_call_id)
         
         # Get tool from registry
         tool = self.registry.get(function_name)
@@ -94,6 +100,7 @@ class DeepgramToolAdapter:
             error_msg = f"Unknown tool: {function_name}"
             logger.error(error_msg)
             return {
+                "function_call_id": function_call_id,
                 "status": "error",
                 "message": error_msg
             }
@@ -114,11 +121,13 @@ class DeepgramToolAdapter:
         try:
             result = await tool.execute(parameters, exec_context)
             logger.info(f"✅ Tool {function_name} executed: {result.get('status')}")
+            result['function_call_id'] = function_call_id
             return result
         except Exception as e:
             error_msg = f"Tool execution failed: {str(e)}"
             logger.error(error_msg, exc_info=True)
             return {
+                "function_call_id": function_call_id,
                 "status": "error",
                 "message": error_msg,
                 "error": str(e)
@@ -132,16 +141,17 @@ class DeepgramToolAdapter:
         """
         Send tool execution result back to Deepgram.
         
-        Result format sent to Deepgram:
+        Per Deepgram docs, format must be:
         {
-            "type": "FunctionCallResponse",
-            "status": "success" | "failed" | "error",
-            "output": "Human-readable message",
-            "data": {...}
+            "type": "function_call_result",
+            "id": "call_123456",  // The function_call_id from the request
+            "function_call_result": {
+                // Tool's result data
+            }
         }
         
         Args:
-            result: Tool execution result
+            result: Tool execution result (must include function_call_id)
             context: Context dict with websocket connection
         """
         websocket = context.get('websocket')
@@ -149,15 +159,21 @@ class DeepgramToolAdapter:
             logger.error("No websocket in context, cannot send tool result")
             return
         
+        # Extract function_call_id from result
+        function_call_id = result.pop('function_call_id', None)
+        if not function_call_id:
+            logger.error("No function_call_id in result, cannot send response")
+            return
+        
+        # Build response per Deepgram spec
         response = {
-            "type": "FunctionCallResponse",
-            "status": result.get('status', 'unknown'),
-            "output": result.get('message', ''),
-            "data": result
+            "type": "function_call_result",
+            "id": function_call_id,
+            "function_call_result": result  # Send the entire result as function output
         }
         
         try:
             await websocket.send(json.dumps(response))
-            logger.debug(f"Sent tool result to Deepgram: {response['status']}")
+            logger.info(f"✅ Sent tool result to Deepgram: {result.get('status')}", function_call_id=function_call_id)
         except Exception as e:
             logger.error(f"Failed to send tool result to Deepgram: {e}", exc_info=True)

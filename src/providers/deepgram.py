@@ -459,22 +459,38 @@ class DeepgramProvider(AIProviderInterface):
         }
         
         # Add tools if enabled in configuration
+        # Per Deepgram docs: tools go in agent.think.tools, NOT agent.tools
         try:
-            from src.config import load_config
-            full_config = load_config()
-            tools_config = full_config.get('tools', {})
+            import yaml
+            with open('/app/config/ai-agent.yaml', 'r') as f:
+                config_dict = yaml.safe_load(f)
+            
+            tools_config = config_dict.get('tools', {}) if config_dict else {}
             
             if tools_config.get('enabled', False):
                 # Get tools from adapter
                 tools_schemas = self.tool_adapter.get_tools_config()
                 
                 if tools_schemas:
-                    settings["agent"]["tools"] = tools_schemas
+                    # CRITICAL: Deepgram requires tools in agent.think.tools array
+                    # Each tool must have: type: "function", function: { name, description, parameters }
+                    formatted_tools = []
+                    for tool in tools_schemas:
+                        formatted_tools.append({
+                            "type": "function",
+                            "function": {
+                                "name": tool["name"],
+                                "description": tool["description"],
+                                "parameters": tool["parameters"]
+                            }
+                        })
+                    
+                    settings["agent"]["think"]["tools"] = formatted_tools
                     logger.info(
                         "✅ Deepgram tools configured",
                         call_id=self.call_id,
-                        tool_count=len(tools_schemas),
-                        tools=[t.get('name') for t in tools_schemas]
+                        tool_count=len(formatted_tools),
+                        tools=[t["function"]["name"] for t in formatted_tools]
                     )
                 else:
                     logger.warning("Tools enabled but no tools registered", call_id=self.call_id)
@@ -830,16 +846,22 @@ class DeepgramProvider(AIProviderInterface):
                 error=str(e),
                 exc_info=True
             )
-            # Send error response to Deepgram
+            # Send error response to Deepgram in correct format
             try:
-                error_response = {
-                    "type": "FunctionCallResponse",
-                    "status": "error",
-                    "output": f"Tool execution failed: {str(e)}",
-                    "data": {"error": str(e)}
-                }
-                if self.websocket and not self.websocket.closed:
-                    await self.websocket.send(json.dumps(error_response))
+                function_call_id = event_data.get("id")
+                if function_call_id:
+                    error_response = {
+                        "type": "function_call_result",
+                        "id": function_call_id,
+                        "function_call_result": {
+                            "status": "error",
+                            "message": f"Tool execution failed: {str(e)}",
+                            "error": str(e)
+                        }
+                    }
+                    if self.websocket and not self.websocket.closed:
+                        await self.websocket.send(json.dumps(error_response))
+                        logger.info("Sent error response to Deepgram", function_call_id=function_call_id)
             except Exception as send_error:
                 logger.error(f"Failed to send error response: {send_error}")
 
@@ -1121,12 +1143,12 @@ class DeepgramProvider(AIProviderInterface):
                                     call_id=self.call_id,
                                     request_id=getattr(self, "request_id", None),
                                 )
-                            elif et == "FunctionCallRequest":
+                            elif et == "function_call":
                                 logger.info(
-                                    "📞 Deepgram FunctionCallRequest",
+                                    "📞 Deepgram function_call",
                                     call_id=self.call_id,
-                                    function_call_id=event_data.get("function_call_id"),
-                                    function_name=event_data.get("function_name"),
+                                    function_call_id=event_data.get("id"),
+                                    function_name=event_data.get("function_call", {}).get("name"),
                                     request_id=getattr(self, "request_id", None),
                                 )
                                 # Handle function call via tool adapter

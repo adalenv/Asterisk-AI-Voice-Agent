@@ -139,7 +139,15 @@ class TransferCallTool(Tool):
             or None if not found
         """
         # Load extensions config
+        # DEBUG: Check what config looks like
+        logger.info(f"DEBUG: context.config type: {type(context.config)}", call_id=context.call_id)
+        logger.info(f"DEBUG: context.config is None: {context.config is None}", call_id=context.call_id)
+        if context.config:
+            has_tools = 'tools' in context.config if isinstance(context.config, dict) else hasattr(context.config, 'tools')
+            logger.info(f"DEBUG: config has 'tools': {has_tools}", call_id=context.call_id)
+        
         extensions_config = context.get_config_value('tools.extensions.internal', {})
+        logger.info(f"DEBUG: extensions_config result: {extensions_config}", call_id=context.call_id)
         
         if not extensions_config:
             logger.warning("No extensions configured in tools.extensions.internal")

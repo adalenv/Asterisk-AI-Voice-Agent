@@ -83,9 +83,10 @@ class TransferCallTool(Tool):
         await self.validate_parameters(parameters)
         
         target = parameters['target']
-        mode = parameters.get('mode', 'warm')
+        # AI can suggest a mode, but YAML config takes precedence
+        ai_suggested_mode = parameters.get('mode', 'warm')
         
-        logger.info(f"🔀 Transfer requested: {target} ({mode} mode)", 
+        logger.info(f"🔀 Transfer requested: {target} ({ai_suggested_mode} mode suggested by AI)", 
                    call_id=context.call_id)
         
         try:
@@ -100,13 +101,15 @@ class TransferCallTool(Tool):
             extension = extension_info['extension']
             dial_string = extension_info['dial_string']
             
-            logger.info(f"Resolved {target} → {extension} ({dial_string})")
+            # YAML config mode takes precedence over AI suggestion
+            mode = extension_info.get('mode', 'warm')
+            logger.info(f"Resolved {target} → {extension} ({dial_string}), using {mode} mode from config")
             
             # 2. Execute transfer based on mode
             if mode == "warm":
                 result = await self._warm_transfer(extension, dial_string, extension_info, context)
             else:
-                result = await self._blind_transfer(extension, dial_string, context)
+                result = await self._blind_transfer(extension, dial_string, extension_info, context)
             
             return result
             

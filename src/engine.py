@@ -1803,6 +1803,29 @@ class Engine:
                 except Exception:
                     logger.debug("Milestone7 pipeline release failed during cleanup", call_id=call_id, exc_info=True)
 
+            # Auto-send email summary if enabled (before session is removed)
+            try:
+                from src.tools.registry import tool_registry
+                email_tool_config = self.config.tools.get('send_email_summary', {})
+                if email_tool_config.get('enabled', False):
+                    email_tool = tool_registry.get('send_email_summary')
+                    if email_tool:
+                        # Build execution context
+                        from src.tools.context import ToolExecutionContext
+                        context = ToolExecutionContext(
+                            call_id=call_id,
+                            caller_channel_id=session.caller_channel_id,
+                            bridge_id=session.bridge_id,
+                            session_store=self.session_store,
+                            ari_client=self.ari_client,
+                            config=self.config.model_dump()
+                        )
+                        # Execute async without blocking cleanup
+                        asyncio.create_task(email_tool.execute({}, context))
+                        logger.info("📧 Auto-triggered email summary", call_id=call_id)
+            except Exception as e:
+                logger.warning("Failed to auto-trigger email summary", call_id=call_id, error=str(e))
+
             # Finally remove the session.
             await self.session_store.remove_call(call_id)
 

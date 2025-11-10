@@ -4121,8 +4121,9 @@ class Engine:
                     had_audio=had_audio
                 )
                 
-                # Small delay to let any pending audio finish playing
-                await asyncio.sleep(0.5)
+                # Delay to ensure audio completes through RTP pipeline
+                # Accounts for: RTP transmission, jitter buffer, and playback
+                await asyncio.sleep(1.0)
                 
                 try:
                     session = await self.session_store.get_by_call_id(call_id)

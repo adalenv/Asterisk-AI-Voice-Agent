@@ -418,9 +418,9 @@ providers:
     target_sample_rate_hz: 8000
     turn_detection:
       create_response: true
-      prefix_padding_ms: 200
-      silence_duration_ms: 200
-      threshold: 0.5
+      prefix_padding_ms: 300
+      silence_duration_ms: 700
+      threshold: 0.6
       type: server_vad
     voice: alloy
 streaming:

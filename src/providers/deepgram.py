@@ -1198,6 +1198,22 @@ class DeepgramProvider(AIProviderInterface):
                                     )
                                     
                                     # Track conversation for email tools
+                                    # Debug: Check conditions
+                                    has_call_id = bool(self.call_id)
+                                    has_text = bool(text)
+                                    has_attr = hasattr(self, '_session_store')
+                                    has_store = bool(getattr(self, '_session_store', None))
+                                    
+                                    logger.debug(
+                                        "🔍 Conversation tracking check",
+                                        call_id=self.call_id,
+                                        has_call_id=has_call_id,
+                                        has_text=has_text,
+                                        has_attr=has_attr,
+                                        has_store=has_store,
+                                        role=role
+                                    )
+                                    
                                     if self.call_id and text and hasattr(self, '_session_store') and self._session_store:
                                         try:
                                             session = await self._session_store.get_by_call_id(self.call_id)
@@ -1215,6 +1231,11 @@ class DeepgramProvider(AIProviderInterface):
                                                     call_id=self.call_id,
                                                     role=role,
                                                     text_preview=text[:50] + "..." if len(text) > 50 else text
+                                                )
+                                            else:
+                                                logger.warning(
+                                                    "⚠️ Session not found for conversation tracking",
+                                                    call_id=self.call_id
                                                 )
                                         except Exception as e:
                                             logger.error(

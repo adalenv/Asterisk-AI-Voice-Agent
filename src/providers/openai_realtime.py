@@ -33,6 +33,10 @@ from ..audio import (
 )
 from ..config import OpenAIRealtimeProviderConfig
 
+# Tool calling support
+from src.tools.registry import tool_registry
+from src.tools.adapters.openai import OpenAIToolAdapter
+
 logger = get_logger(__name__)
 
 _COMMIT_INTERVAL_SEC = 0.2
@@ -139,6 +143,10 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         self._pacer_lock: asyncio.Lock = asyncio.Lock()
         self._fallback_pcm24k_done: bool = False
         self._reconnect_task: Optional[asyncio.Task] = None
+
+        # Tool calling support
+        self.tool_adapter = OpenAIToolAdapter(tool_registry)
+        logger.info("🛠️  OpenAI Realtime provider initialized with tool support")
 
         try:
             if self.config.input_encoding:
@@ -481,6 +489,61 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         except Exception:
             logger.error("Failed to send response.cancel", call_id=self._call_id, exc_info=True)
 
+    async def _handle_function_call(self, event_data: Dict[str, Any]):
+        """
+        Handle function call request from OpenAI Realtime API.
+        
+        Routes the function call to the appropriate tool via the tool adapter.
+        """
+        try:
+            # Build context for tool execution
+            # These will be injected by the engine when it sets up the provider
+            context = {
+                'call_id': self._call_id,
+                'caller_channel_id': getattr(self, '_caller_channel_id', None),
+                'bridge_id': getattr(self, '_bridge_id', None),
+                'session_store': getattr(self, '_session_store', None),
+                'ari_client': getattr(self, '_ari_client', None),
+                'config': getattr(self, '_full_config', None),
+                'websocket': self.websocket
+            }
+            
+            # Execute tool via adapter
+            result = await self.tool_adapter.handle_tool_call_event(event_data, context)
+            
+            # Send result back to OpenAI
+            await self.tool_adapter.send_tool_result(result, context)
+            
+        except Exception as e:
+            logger.error(
+                "Function call handling failed",
+                call_id=self._call_id,
+                error=str(e),
+                exc_info=True
+            )
+            # Send error response to OpenAI in correct format
+            try:
+                item = event_data.get("item", {})
+                call_id_field = item.get("call_id")
+                if call_id_field:
+                    error_response = {
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "function_call_output",
+                            "call_id": call_id_field,
+                            "output": json.dumps({
+                                "status": "error",
+                                "message": f"Tool execution failed: {str(e)}",
+                                "error": str(e)
+                            })
+                        }
+                    }
+                    if self.websocket and not self.websocket.closed:
+                        await self._send_json(error_response)
+                        logger.info("Sent error response to OpenAI", call_id=call_id_field)
+            except Exception as send_error:
+                logger.error(f"Failed to send error response: {send_error}")
+
     async def stop_session(self):
         if self._closing or self._closed:
             return
@@ -606,6 +669,18 @@ class OpenAIRealtimeProvider(AIProviderInterface):
 
         if self.config.instructions:
             session["instructions"] = self.config.instructions
+
+        # Add tool calling configuration
+        try:
+            tools = self.tool_adapter.get_tools_config()
+            if tools:
+                session["tools"] = tools
+                session["tool_choice"] = "auto"  # Let OpenAI decide when to call tools
+                logger.info(f"🛠️  OpenAI session configured with {len(tools)} tools", 
+                           call_id=self._call_id)
+        except Exception as e:
+            logger.warning(f"Failed to add tools to OpenAI session: {e}", 
+                          call_id=self._call_id, exc_info=True)
 
         payload: Dict[str, Any] = {
             "type": "session.update",
@@ -1025,6 +1100,22 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                     error=str(exc),
                     exc_info=True
                 )
+            return
+
+        # Handle function calls from conversation.item.created events
+        if event_type == "conversation.item.created":
+            item = event.get("item", {})
+            if item.get("type") == "function_call":
+                call_id_field = item.get("call_id")
+                function_name = item.get("name")
+                logger.info(
+                    "📞 OpenAI function call",
+                    call_id=self._call_id,
+                    function_call_id=call_id_field,
+                    function_name=function_name,
+                )
+                # Handle function call via tool adapter
+                asyncio.create_task(self._handle_function_call(event))
             return
 
         logger.debug("Unhandled OpenAI Realtime event", event_type=event_type)

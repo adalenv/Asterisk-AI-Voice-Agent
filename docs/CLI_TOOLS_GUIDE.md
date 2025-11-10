@@ -6,43 +6,82 @@ Complete reference for the Asterisk AI Voice Agent command-line tools.
 
 The `agent` CLI provides a suite of tools for setup, diagnostics, and troubleshooting. These tools are implemented in Go and designed to simplify operations and reduce time-to-first-call.
 
-**Version**: v4.0  
-**Status**: Source code available, binary builds planned for v4.1
+**Version**: v4.1  
+**Status**: Production Ready - Binary builds available
 
 ---
 
 ## Installation
 
-### Option 1: Build from Source (Current)
+### Option 1: One-Line Installer (Recommended)
+
+```bash
+curl -sSL https://raw.githubusercontent.com/hkjarral/Asterisk-AI-Voice-Agent/main/scripts/install-cli.sh | bash
+```
+
+**Features**:
+- Auto-detects your platform (Linux/macOS/Windows, AMD64/ARM64)
+- Downloads latest release from GitHub
+- Verifies SHA256 checksum
+- Installs to `/usr/local/bin`
+- Works on: Linux (AMD64, ARM64), macOS (Intel, Apple Silicon), Windows (AMD64)
+
+**Custom installation directory**:
+```bash
+INSTALL_DIR=~/bin curl -sSL https://raw.githubusercontent.com/hkjarral/Asterisk-AI-Voice-Agent/main/scripts/install-cli.sh | bash
+```
+
+### Option 2: Manual Download
+
+Download pre-built binaries from [GitHub Releases](https://github.com/hkjarral/Asterisk-AI-Voice-Agent/releases):
+
+**Linux AMD64**:
+```bash
+wget https://github.com/hkjarral/Asterisk-AI-Voice-Agent/releases/latest/download/agent-linux-amd64
+chmod +x agent-linux-amd64
+sudo mv agent-linux-amd64 /usr/local/bin/agent
+```
+
+**macOS Apple Silicon (M1/M2/M3)**:
+```bash
+wget https://github.com/hkjarral/Asterisk-AI-Voice-Agent/releases/latest/download/agent-darwin-arm64
+chmod +x agent-darwin-arm64
+sudo mv agent-darwin-arm64 /usr/local/bin/agent
+```
+
+**All platforms**:
+- `agent-linux-amd64` - Linux x86_64
+- `agent-linux-arm64` - Linux ARM64 (Raspberry Pi, AWS Graviton)
+- `agent-darwin-amd64` - macOS Intel
+- `agent-darwin-arm64` - macOS Apple Silicon
+- `agent-windows-amd64.exe` - Windows x86_64
+
+### Option 3: Build from Source
 
 ```bash
 # Clone repository
 git clone https://github.com/hkjarral/Asterisk-AI-Voice-Agent.git
 cd Asterisk-AI-Voice-Agent
 
-# Build CLI tools
-cd cli
-go build -o ../bin/agent ./cmd/agent
-
-# Verify build
-../bin/agent version
-```
-
-### Option 2: Pre-built Binary (v4.1+)
-
-```bash
-# Using Makefile (planned for v4.1)
+# Build using Makefile
 make cli-build
 
 # Binary will be at: bin/agent
 ./bin/agent version
+
+# Optional: Install system-wide
+sudo cp bin/agent /usr/local/bin/
 ```
 
-### System-Wide Installation (Optional)
+### Verify Installation
 
 ```bash
-sudo cp bin/agent /usr/local/bin/
-agent version  # Test from anywhere
+agent version
+
+# Expected output:
+# agent version v4.1.0
+# Built: 2025-11-10T12:34:56Z
+# Go version: go1.21.0
 ```
 
 ---

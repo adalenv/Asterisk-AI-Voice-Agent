@@ -1,6 +1,6 @@
-# Asterisk AI Voice Agent v4.0
+# Asterisk AI Voice Agent v4.1
 
-![Version](https://img.shields.io/badge/version-4.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-4.1.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-compose-blue.svg)
@@ -8,15 +8,14 @@
 
 The most powerful, flexible open-source AI voice agent for Asterisk/FreePBX. Featuring a **modular pipeline architecture** that lets you mix and match STT, LLM, and TTS providers, plus **3 production-ready golden baselines** validated for enterprise deployment.
 
-## 🎉 What's New in v4.0
+## 🎉 What's New in v4.1
 
-* **🏗️ Modular Pipeline Architecture**: Mix and match STT, LLM, and TTS providers independently
-* **✅ 3 Golden Baselines**: Production-validated configurations ready to deploy
-* **🔒 Privacy-Focused Options**: Local Hybrid keeps audio processing on-premises
-* **⚡ Simplified Setup**: 3 clear configuration choices (down from 6)
-* **📊 Enterprise Monitoring**: Prometheus + Grafana out of the box
-* **🚀 ExternalMedia RTP**: Modern, reliable audio transport for pipelines
-* **🎯 Validated Performance**: Every config tested in production
+* **🔧 Tool Calling**: AI agents can now transfer calls and send emails
+* **🩺 Agent CLI**: Professional CLI tools (`agent doctor`, `agent troubleshoot`, `agent demo`, `agent init`)
+* **📞 Warm Transfers**: Direct SIP origination with bidirectional audio
+* **📧 Email Integration**: Send transcripts and call summaries via Resend API
+* **🏗️ Unified Architecture**: Write tools once, use with any provider (Deepgram, OpenAI)
+* **✅ Production Validated**: All features tested in production with real call traffic
 
 ## 🌟 Why Asterisk AI Voice Agent?
 
@@ -49,6 +48,8 @@ The most powerful, flexible open-source AI voice agent for Asterisk/FreePBX. Fea
 
 ### Technical Features
 
+* **Tool Calling System**: AI-powered actions (transfers, emails) work with any provider
+* **Agent CLI Tools**: `doctor`, `troubleshoot`, `demo`, `init` commands for operations
 * **Modular Pipeline System**: Independent STT, LLM, and TTS provider selection
 * **Dual Transport Support**: AudioSocket (full agents) and ExternalMedia RTP (pipelines)
 * **High-Performance Architecture**: Separate `ai-engine` and `local-ai-server` containers
@@ -73,6 +74,68 @@ Experience all three golden baseline configurations with a single phone call:
 - **Press 8** → Local Hybrid Pipeline (Privacy-focused, audio stays local)
 
 Each configuration uses the same Ava persona with full project knowledge. Compare response times, conversation quality, and naturalness!
+
+**NEW in v4.1**: Try asking the agent to "transfer me to support" or "email me a transcript"!
+
+## 🛠️ AI-Powered Actions (v4.1+)
+
+Your AI agent can now perform real-world actions:
+
+### Call Transfers
+
+```
+Caller: "I need to speak with technical support"
+Agent: "I'll transfer you to technical support right away."
+[Warm transfer to extension 6001 with bidirectional audio]
+```
+
+### Email Transcripts
+
+```
+Caller: "Can you email me a transcript of this call?"
+Agent: "I'd be happy to send you a transcript. What email address should I use?"
+Caller: "john dot smith at gmail dot com"
+Agent: "That's john.smith@gmail.com - is that correct?"
+Caller: "Yes"
+Agent: "Perfect! I'll send the transcript there shortly."
+[Email sent with full conversation transcript]
+```
+
+### Automatic Summaries
+
+After every call, admins automatically receive:
+- Full conversation transcript
+- Call duration and metadata
+- Caller information
+- Professional HTML formatting
+
+**Setup**: See [Tool Calling Guide](docs/TOOL_CALLING_GUIDE.md) for configuration.
+
+## 🩺 Agent CLI Tools (v4.1+)
+
+Production-ready CLI for operations:
+
+```bash
+# System health check
+agent doctor
+
+# Analyze specific call
+agent troubleshoot
+
+# Demo features
+agent demo
+
+# Interactive setup
+agent init
+```
+
+**Binary Installation** (one-line):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/hkjarral/Asterisk-AI-Voice-Agent/main/scripts/install-cli.sh | bash
+```
+
+Supports Linux, macOS (Intel + Apple Silicon), and Windows. See [CLI Tools Guide](docs/CLI_TOOLS_GUIDE.md).
 
 ## 🚀 Quick Start
 
@@ -108,7 +171,7 @@ Add this to your FreePBX (Config Edit → extensions_custom.conf):
 
 ```asterisk
 [from-ai-agent]
-exten => s,1,NoOp(Asterisk AI Voice Agent v4.0)
+exten => s,1,NoOp(Asterisk AI Voice Agent v4.1)
  same => n,Stasis(asterisk-ai-voice-agent)
  same => n,Hangup()
 ```

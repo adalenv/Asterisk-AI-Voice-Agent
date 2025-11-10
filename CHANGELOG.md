@@ -158,14 +158,226 @@ For new deployments:
 
 ---
 
+## [4.1.0] - 2025-11-10
+
+### 🎉 Tool Calling & Agent CLI Release
+
+Version 4.1 introduces **unified tool calling architecture** enabling AI agents to perform actions like call transfers and email management, plus production-ready **Agent CLI tools** for operations.
+
+### Added
+
+#### Tool Calling System
+- **Unified Tool Architecture**: Write tools once, use with any provider
+  - Base classes: `Tool`, `ToolDefinition`, `ToolRegistry` (`src/tools/base.py`, 231 lines)
+  - Execution context with session and ARI access (`src/tools/context.py`, 108 lines)
+  - Singleton registry for tool management (`src/tools/registry.py`, 198 lines)
+  - Provider adapters for Deepgram (202 lines) and OpenAI Realtime (215 lines)
+
+#### Telephony Tools
+- **Transfer Call Tool**: Warm and blind transfers with direct SIP origination
+  - `src/tools/telephony/transfer.py` (504 lines)
+  - Department name resolution (e.g., "support" → extension 6000)
+  - Warm transfer: AI stays on line until agent answers
+  - Blind transfer: Immediate redirect
+  - Production validated: <150ms execution time
+  - Call IDs: `1762731796.4233` (Deepgram), `1762734947.4251` (OpenAI)
+- **Cancel Transfer Tool**: Cancel in-progress transfer before agent answers
+  - `src/tools/telephony/cancel_transfer.py`
+  - Allows caller to change mind during ring
+- **Hangup Call Tool**: Graceful call termination with farewell message
+  - `src/tools/telephony/hangup.py`
+  - Customizable farewell message
+  - Works with all providers
+
+#### Email Tools
+- **Request Transcript Tool**: Caller-initiated transcript delivery
+  - `src/tools/business/request_transcript.py` (475 lines)
+  - Email parsing from speech ("john dot smith at gmail dot com")
+  - Domain validation via DNS MX record lookup
+  - Confirmation flow (AI reads back email for verification)
+  - Deduplication (prevents sending same email multiple times)
+  - Admin receives BCC on all transcript requests
+  - Resend API integration
+- **Send Email Summary Tool**: Auto-send call summaries to admin
+  - `src/tools/business/email_summary.py` (347 lines)
+  - Triggered automatically after every call
+  - Full conversation transcript with timestamps
+  - Call metadata (duration, caller ID, date/time)
+  - Professional HTML formatting
+  - Admin email configuration in YAML
+
+#### Agent CLI Tools
+- **Binary Distribution System**:
+  - Makefile build system for 5 platforms (Linux, macOS, Windows)
+  - GitHub Actions CI/CD for automated releases (`.github/workflows/release-cli.yml`)
+  - One-line installer: `curl -sSL ... | bash` (`scripts/install-cli.sh`, 223 lines)
+  - SHA256 checksums for security verification
+  - Automated binary uploads to GitHub releases
+- **CLI Commands**:
+  - `agent doctor`: System health checks and validation
+  - `agent troubleshoot`: Call analysis and debugging
+  - `agent demo`: Feature demonstrations
+  - `agent init`: Interactive setup wizard
+  - `agent version`: Build and version information
+- **Platform Support**:
+  - Linux AMD64/ARM64 (servers, Raspberry Pi, AWS Graviton)
+  - macOS AMD64/ARM64 (Intel Macs and Apple Silicon M1/M2/M3)
+  - Windows AMD64
+  - Pre-built binaries with automatic platform detection
+
+#### Conversation Tracking
+- **Real-time Tracking**: Both Deepgram and OpenAI Realtime track conversation turns
+  - `conversation_history` field in `CallSession` model
+  - Tracks role (user/assistant), content, and timestamps
+  - Enables email tools to include full transcripts
+  - Pattern identical across providers (46-51 lines each)
+
+### Improved
+
+#### Warm Transfer Implementation
+- **Direct SIP Endpoint Origination**: Eliminates Local channel complexity
+  - Previous: Used `Local/{ext}@{context}/n` → caused unidirectional audio
+  - Current: Direct SIP origination (e.g., `SIP/6000`)
+  - Result: Perfect bidirectional audio confirmed
+  - No Local channels created (verified in production)
+- **4-Step Cleanup Sequence**:
+  1. Remove AI channel from bridge (<50ms)
+  2. Stop provider session gracefully (<30ms)
+  3. Add agent SIP channel to bridge (<20ms)
+  4. Update session metadata (<10ms)
+  - Total: <150ms for complete transfer execution
+- **Production Validation**:
+  - Call duration: 38+ seconds after transfer (stable)
+  - Bridge type: simple_bridge (optimal, 2 channels only)
+  - Audio path: Direct (1 hop, minimal latency)
+  - Files: `src/tools/telephony/transfer.py`, `src/engine.py` (transfer handler)
+
+#### OpenAI Realtime Stability
+- **VAD Re-enable Timing Fix**: Correct event for greeting protection
+  - Issue: Used `response.audio.done` (fires per segment) → VAD enabled too early
+  - Fix: Changed to `response.done` (fires when complete response generated)
+  - Impact: Greeting now plays completely before accepting interruptions
+  - Lines: `src/providers/openai_realtime.py` (1206-1219)
+- **API Modality Constraints**: Documented OpenAI requirements
+  - Supported: `["text"]` or `["audio", "text"]`
+  - Not supported: `["audio"]` alone (API rejects)
+  - Known limitation: May occasionally generate text-only responses
+  - Mitigation: System handles gracefully with keepalive messages
+- **Race Condition Handling**: Handles variable event arrival order
+  - Sometimes: `response.done` arrives before audio deltas
+  - Other times: Audio deltas arrive first
+  - Solution: Check `had_audio_burst` flag, re-enable VAD regardless
+
+### Fixed
+
+- **AAVA-57**: Direct SIP endpoint origination for warm transfers
+  - Root cause: Local channels caused audio direction mismatch
+  - Solution: Direct `SIP/extension` origination
+  - Evidence: Call logs show no Local channels, perfect audio
+- **AAVA-58**: Local channel audio direction issue (RCA documented)
+  - Symptom: Caller heard agent, but agent couldn't hear caller
+  - Root cause: Audio path `caller → Local;2 → Local;1 → nowhere`
+  - Solution: Eliminated Local channels entirely
+- **AAVA-59**: AI provider cleanup during transfer
+  - Issue: AI stayed in bridge after agent answered
+  - Solution: Remove external media channel before adding agent
+  - Result: Clean 2-channel bridge (caller + agent only)
+- **AAVA-62**: OpenAI Realtime audio generation analysis and constraints
+  - Issue #1: Greeting interrupted (VAD enabled too early)
+  - Issue #2: 45-second silence (OpenAI generated text-only)
+  - Solution: Correct VAD timing + documented API limitation
+  - Commits: `85c4235`, `80efdcd`, `6dbd51e`
+- **AAVA-52**: Email tools race conditions and missing await
+  - Bug #1: `context.get_session()` called without `await`
+  - Bug #2: Auto-summary triggered async, session removed first
+  - Bug #3: Undefined `caller_id` variable
+  - Bug #4: No email confirmation flow
+  - Bug #5: Duplicate emails when caller corrected address
+  - Commits: `1deed05`, `700993f`, `5579ddd`, `a2d9409`, `835ac05`
+
+### Documentation
+
+- **New Guides**:
+  - `docs/TOOL_CALLING_GUIDE.md` - Comprehensive tool calling documentation
+    - Overview and supported providers
+    - All 5 tools with example conversations
+    - Configuration details with option explanations
+    - Dialplan setup requirements
+    - Testing procedures
+    - Production examples with evidence
+    - Troubleshooting section
+    - Architecture diagrams
+  - Tool sections added to `docs/FreePBX-Integration-Guide.md`
+  - Enhanced `docs/CLI_TOOLS_GUIDE.md` with binary installation
+- **Updated**:
+  - README with v4.1 features and tool examples
+  - Architecture.md with tool calling section
+  - Configuration comments in `config/ai-agent.yaml`
+  - SECURITY.md with v4.1 support
+
+### Known Limitations
+
+- **OpenAI Realtime**: May occasionally generate text-only responses
+  - Root cause: API limitation with `["audio", "text"]` modalities
+  - Frequency: Varies (test call had 2/4 responses without audio)
+  - Impact: Caller experiences brief silence
+  - Mitigation: System handles gracefully with keepalive messages
+  - Not fixable: Cannot force OpenAI to always generate audio
+- **Tool Calling**: Currently Deepgram and OpenAI Realtime only
+  - Custom Pipeline support planned for v4.3 (AAVA-56)
+  - Other providers: Anthropic Claude, Google Gemini (v4.3+)
+
+### Architecture Validation
+
+**Provider-Agnostic Design Confirmed**:
+- Same tool code (504 lines for transfer) works with both providers
+- Only adapters differ (202 lines Deepgram, 215 lines OpenAI)
+- Zero code duplication in tool logic
+- Adding new providers requires <250 lines of adapter code
+
+**Line Counts**:
+- Tool calling framework: 537 lines (base + context + registry)
+- Transfer call tool: 504 lines (shared by all providers)
+- Email summary tool: 347 lines (shared)
+- Request transcript tool: 475 lines (shared)
+- Deepgram adapter: 202 lines
+- OpenAI adapter: 215 lines
+- **Total duplication**: 0 lines ✅
+
+### Performance Metrics
+
+**Transfer Tool**:
+- Transfer execution: <150ms
+- AI cleanup time: <100ms
+- Bridge technology: simple_bridge (optimal)
+- Audio path: Direct (1 hop)
+- Call stability: 38+ seconds validated
+
+**Email Tools**:
+- Email validation: <100ms (DNS MX lookup)
+- Email delivery: ~200ms (Resend API)
+- Conversation tracking: Real-time (no performance impact)
+
+### Contributors
+
+- Haider Jarral (@hkjarral) - Tool architecture, transfers, email tools, CLI tools, documentation
+
+### Links
+
+- **Repository**: https://github.com/hkjarral/Asterisk-AI-Voice-Agent
+- **Tool Calling Guide**: [docs/TOOL_CALLING_GUIDE.md](docs/TOOL_CALLING_GUIDE.md)
+- **FreePBX Guide**: [docs/FreePBX-Integration-Guide.md](docs/FreePBX-Integration-Guide.md)
+- **CLI Tools Guide**: [docs/CLI_TOOLS_GUIDE.md](docs/CLI_TOOLS_GUIDE.md)
+
+---
+
 ## [Unreleased]
 
-### Planned for v4.1
+### Planned for v4.2
 - **Additional Provider Integrations**: Anthropic Claude, Google Gemini
-- **Advanced Call Routing**: Transfer capabilities and multi-leg calls
+- **Custom Pipeline Tool Support**: Tool calling for local pipelines (AAVA-56)
 - **WebRTC Support**: SIP client integration
 - **High Availability**: Clustering and load balancing
-- **Config Cleanup**: Remove deprecated settings (from v3.0)
 
 ---
 

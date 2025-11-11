@@ -514,9 +514,9 @@ tools:
     enabled: true                          # Set to true to enable auto-send after calls
     provider: "resend"
     api_key: "${RESEND_API_KEY}"            # Set in .env file
-    from_email: "agent@voiprnd.nemtclouddispatch.com"
+    from_email: "agent@myproject.com"
     from_name: "AI Voice Agent"
-    admin_email: "admin@voiprnd.nemtclouddispatch.com"  # Change to your admin email
+    admin_email: "admin@myproject.com"  # Change to your admin email
     include_transcript: true
     include_metadata: true
   
@@ -525,9 +525,9 @@ tools:
     enabled: true                          # Set to true to allow caller transcript requests
     provider: "resend"
     api_key: "${RESEND_API_KEY}"            # Set in .env file
-    from_email: "agent@voiprnd.nemtclouddispatch.com"
+    from_email: "agent@myproject.com"
     from_name: "AI Voice Agent"
-    admin_email: "admin@voiprnd.nemtclouddispatch.com"  # BCC on caller transcript requests
+    admin_email: "admin@myproject.com"  # BCC on caller transcript requests
     confirm_email: true                     # AI reads back email for confirmation
     validate_domain: true                   # Verify domain exists via DNS
     max_attempts: 2                         # Retry attempts for invalid email

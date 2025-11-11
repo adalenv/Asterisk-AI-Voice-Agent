@@ -458,7 +458,9 @@ configure_env() {
 
     # Prefill from existing .env if present
     local ASTERISK_HOST_DEFAULT="" ASTERISK_ARI_USERNAME_DEFAULT="" ASTERISK_ARI_PASSWORD_DEFAULT=""
-    local OPENAI_API_KEY_DEFAULT="" DEEPGRAM_API_KEY_DEFAULT=""
+    # API key defaults need to be GLOBAL so prompt_required_api_keys() can access them
+    OPENAI_API_KEY_DEFAULT=""
+    DEEPGRAM_API_KEY_DEFAULT=""
     if [ -f .env ]; then
         ASTERISK_HOST_DEFAULT=$(grep -E '^[# ]*ASTERISK_HOST=' .env | tail -n1 | sed -E 's/^[# ]*ASTERISK_HOST=//')
         ASTERISK_ARI_USERNAME_DEFAULT=$(grep -E '^[# ]*ASTERISK_ARI_USERNAME=' .env | tail -n1 | sed -E 's/^[# ]*ASTERISK_ARI_USERNAME=//')
@@ -634,6 +636,7 @@ prompt_required_api_keys() {
             read -p "Enter your OpenAI API Key (or leave blank to skip): " OPENAI_API_KEY_INPUT
             if [ -n "$OPENAI_API_KEY_INPUT" ]; then
                 upsert_env OPENAI_API_KEY "$OPENAI_API_KEY_INPUT"
+                OPENAI_API_KEY_DEFAULT="$OPENAI_API_KEY_INPUT"  # Update in-memory variable
                 print_success "✓ OpenAI API key configured"
             else
                 print_warning "⚠️  Skipped. Add OPENAI_API_KEY to .env file later"
@@ -653,6 +656,7 @@ prompt_required_api_keys() {
             read -p "Enter your Deepgram API Key (or leave blank to skip): " DEEPGRAM_API_KEY_INPUT
             if [ -n "$DEEPGRAM_API_KEY_INPUT" ]; then
                 upsert_env DEEPGRAM_API_KEY "$DEEPGRAM_API_KEY_INPUT"
+                DEEPGRAM_API_KEY_DEFAULT="$DEEPGRAM_API_KEY_INPUT"  # Update in-memory variable
                 print_success "✓ Deepgram API key configured"
             else
                 print_warning "⚠️  Skipped. Add DEEPGRAM_API_KEY to .env file later"

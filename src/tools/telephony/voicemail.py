@@ -78,6 +78,12 @@ class VoicemailTool(Tool):
             transfer_target=f"Voicemail {extension}"
         )
         
+        # CRITICAL: Wait briefly to allow AI audio to clear the RTP channel
+        # Without this delay, the channel leaves Stasis while AI is still streaming,
+        # causing the voicemail greeting to be blocked until caller speaks
+        import asyncio
+        await asyncio.sleep(0.8)  # Wait 800ms for Deepgram to finish speaking
+        
         try:
             # Transfer to FreePBX voicemail context using continue
             # Pattern: ext-local,vmu{extension},1

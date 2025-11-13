@@ -4632,6 +4632,8 @@ class Engine:
                 accumulation_timeout = float(
                     (pipeline.llm_options or {}).get("aggregation_timeout_sec", 2.0)
                 )
+                # Track conversation history to include prior messages
+                conversation_history: List[Dict[str, str]] = []
 
                 async def cancel_flush() -> None:
                     nonlocal flush_task
@@ -4642,29 +4644,22 @@ class Engine:
                     flush_task = None
 
                 async def run_turn(transcript_text: str) -> None:
+                    nonlocal conversation_history
                     response_text = ""
                     pipeline_label = getattr(session, 'pipeline_name', None) or 'none'
                     provider_label = getattr(session, 'provider_name', None) or 'unknown'
                     t_start = self._last_transcript_ts.get(call_id)
                     
-                    # Build context with system prompt from llm_options (injected from AI_CONTEXT)
-                    context_messages = []
-                    system_prompt = llm_options.get('system_prompt')
-                    if system_prompt:
-                        context_messages.append({"role": "system", "content": system_prompt})
-                        logger.debug(
-                            "Pipeline LLM context with system prompt",
-                            call_id=call_id,
-                            system_prompt_length=len(system_prompt),
-                        )
-                    context_messages.append({"role": "user", "content": transcript_text})
+                    # Build context with conversation history
+                    # System prompt only in first turn (when history is empty)
+                    context_for_llm = {"prior_messages": list(conversation_history)}
                     
                     try:
                         response_text = await pipeline.llm_adapter.generate(
                             call_id,
                             transcript_text,
-                            {"messages": context_messages},  # Include system prompt in messages
-                            llm_options,  # Use context-injected options
+                            context_for_llm,  # Include conversation history
+                            llm_options,  # Use context-injected options (includes system_prompt)
                         )
                     except Exception:
                         logger.debug("LLM generate failed", call_id=call_id, exc_info=True)
@@ -4672,6 +4667,10 @@ class Engine:
                     response_text = (response_text or "").strip()
                     if not response_text:
                         return
+                    
+                    # Update conversation history
+                    conversation_history.append({"role": "user", "content": transcript_text})
+                    conversation_history.append({"role": "assistant", "content": response_text})
                     tts_bytes = bytearray()
                     first_tts_ts: Optional[float] = None
                     try:

@@ -254,6 +254,18 @@ tools:
     farewell_message: "Thank you for calling. Goodbye!"
   
   # ----------------------------------------------------------------------------
+  # LEAVE_VOICEMAIL - Send caller to voicemail
+  # ----------------------------------------------------------------------------
+  leave_voicemail:
+    enabled: true
+    extension: "2765"                  # Voicemail box extension number
+  
+  # IMPORTANT: FreePBX VoiceMail app requires bidirectional RTP and voice activity
+  # before playing greeting. Tool asks "Are you ready to leave a message now?" to
+  # prompt caller response, which triggers voice activity and establishes RTP path.
+  # Without this, there's a 5-8 second delay until caller speaks or timeout occurs.
+  
+  # ----------------------------------------------------------------------------
   # SEND_EMAIL_SUMMARY - Auto-send call summaries to admin
   # ----------------------------------------------------------------------------
   send_email_summary:

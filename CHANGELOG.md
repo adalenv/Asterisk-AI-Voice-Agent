@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Production Verified**: All three transfer types validated on live production server
 - **Configuration**: Unified `tools.transfer.destinations` structure with type-based routing
 
+#### Voicemail Tool (AAVA-51)
+- **Voicemail Routing**: New `leave_voicemail` tool sends callers to voicemail
+  - Routes to FreePBX voicemail via `ext-local,vmu{extension},1` dialplan pattern
+  - Uses ARI `continue()` pattern consistent with queue/ring group transfers
+  - `transfer_active` flag prevents premature caller hangup
+  - Configurable voicemail box extension number
+- **Interactive Prompt Strategy**: Tool asks "Are you ready to leave a message now?" to work around FreePBX VoiceMail app behavior
+  - VoiceMail app requires bidirectional RTP and voice activity before playing greeting
+  - Without caller interaction, 5-8 second delay occurs before greeting plays
+  - Caller response establishes RTP path and triggers greeting immediately
+- **Comprehensive Documentation**: Detailed behavioral analysis and timeline evidence in module docstring
+- **Production Verified**: Tested and deployed on live production server
+
 ### Changed
 - **Breaking**: Removed `transfer_call` and `transfer_to_queue` tools in favor of unified `transfer` tool
 - **Configuration Migration**: Update from separate tool configs to unified `transfer.destinations` structure

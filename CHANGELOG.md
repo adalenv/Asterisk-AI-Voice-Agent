@@ -5,6 +5,24 @@ All notable changes to the Asterisk AI Voice Agent project will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### Unified Transfer Tool (AAVA-63, AAVA-74)
+- **Unified Transfer System**: Single `transfer` tool replaces separate `transfer_call` and `transfer_to_queue` tools
+  - **Extension Transfers**: Direct dial to specific agents (ARI `redirect`, channel stays in Stasis)
+  - **Queue Transfers**: Transfer to ACD queues for next available agent (ARI `continue` to `ext-queues`)
+  - **Ring Group Transfers**: Transfer to ring groups that ring multiple agents simultaneously (ARI `continue` to `ext-group`)
+- **Smart Routing**: Automatic routing based on destination type configuration
+- **Proper Cleanup Handling**: `transfer_active` flag prevents premature caller hangup for queue/ring group transfers
+- **Production Verified**: All three transfer types validated on live production server
+- **Configuration**: Unified `tools.transfer.destinations` structure with type-based routing
+
+### Changed
+- **Breaking**: Removed `transfer_call` and `transfer_to_queue` tools in favor of unified `transfer` tool
+- **Configuration Migration**: Update from separate tool configs to unified `transfer.destinations` structure
+
 ## [4.0.0] - 2025-10-29
 
 ### 🎉 Major Release: Modular Pipeline Architecture

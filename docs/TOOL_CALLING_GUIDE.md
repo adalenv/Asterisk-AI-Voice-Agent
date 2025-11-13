@@ -58,25 +58,49 @@ All tools work identically across supported providers—no code changes needed w
 
 ### Telephony Tools
 
-#### 1. Transfer Call
+#### 1. Unified Transfer Tool
 
-**Purpose**: Transfer caller to human agent or department
+**Purpose**: Transfer caller to extensions, queues, or ring groups with intelligent routing
 
-**Modes**:
-- **Warm Transfer**: AI stays on line until agent answers (recommended)
-- **Blind Transfer**: AI transfers immediately and hangs up
+**Transfer Types**:
 
-**Example Conversation**:
+- **Extension**: Direct dial to specific agent (uses ARI `redirect`)
+- **Queue**: Transfer to ACD queue for next available agent (uses ARI `continue` to `ext-queues`)
+- **Ring Group**: Transfer to ring group that rings multiple agents (uses ARI `continue` to `ext-group`)
+
+**Key Features**:
+- Single unified interface for all transfer types
+- Smart routing based on destination configuration
+- Proper cleanup handling for each transfer type
+- Caller remains connected after AI session ends
+
+**Example Conversations**:
 ```
-Caller: "I need to speak with a real person"
-AI: "I'll connect you to our support team right away."
-[Transfer executes → Agent answers → AI exits cleanly]
+# Extension Transfer
+Caller: "I need to speak with John in sales"
+AI: "Transferring you to Sales agent now."
+[Direct dial to extension 2765]
+
+# Queue Transfer
+Caller: "I need help from support"
+AI: "Transferring you to Technical support queue now."
+[Caller enters queue 300, hears MOH, next agent answers]
+
+# Ring Group Transfer
+Caller: "Can I talk to the sales team?"
+AI: "Transferring you to Sales team ring group now."
+[Ring group 600 rings all members simultaneously]
 ```
 
-**Production Evidence**: Call ID `1762731796.4233` (Deepgram) & `1762734947.4251` (OpenAI)
-- Transfer execution: <150ms
-- Bidirectional audio: ✅ Confirmed
-- Clean AI disconnection: ✅ Verified
+**Technical Implementation**:
+- Extension transfers use `redirect` (channel stays in Stasis)
+- Queue/Ring Group transfers use `continue` (channel leaves Stasis, `transfer_active` flag prevents premature hangup)
+- All transfer types verified in production
+
+**Production Evidence**: 
+- Extension: Call ID `1762734947.4251` (OpenAI) ✅
+- Queue: Call ID `1763002719.4744` ✅
+- Ring Group: Call ID `1763005247.4767` ✅
 
 #### 2. Cancel Transfer
 
@@ -170,17 +194,48 @@ AI: I'd be happy to help. Let me transfer you to support.
 
 tools:
   # ----------------------------------------------------------------------------
-  # TRANSFER_CALL - Transfer caller to another extension/department
+  # UNIFIED TRANSFER - Transfer to extensions, queues, or ring groups
   # ----------------------------------------------------------------------------
-  transfer_call:
-    enabled: true                       # Set to true to enable transfers
-    transfer_mode: warm                 # "warm" or "blind"
-    departments:
-      support: "SIP/6000"              # Map names to SIP endpoints
-      sales: "SIP/6001"
-      billing: "SIP/6002"
-    hold_music: "default"              # Music on hold class
-    max_ring_time: 30                  # Seconds before timeout
+  transfer:
+    enabled: true
+    destinations:
+      # Direct extension transfers (using redirect - stays in Stasis)
+      sales_agent:
+        type: extension
+        target: "2765"
+        description: "Sales agent"
+      
+      support_agent:
+        type: extension
+        target: "6000"
+        description: "Support agent"
+      
+      # Queue transfers (using continue to ext-queues)
+      sales_queue:
+        type: queue
+        target: "300"
+        description: "Sales team queue"
+      
+      support_queue:
+        type: queue
+        target: "301"
+        description: "Technical support queue"
+      
+      billing_queue:
+        type: queue
+        target: "302"
+        description: "Billing department queue"
+      
+      # Ring group transfers (using continue to ext-group)
+      sales_team:
+        type: ringgroup
+        target: "600"
+        description: "Sales team ring group"
+      
+      support_team:
+        type: ringgroup
+        target: "601"
+        description: "Support team ring group"
   
   # ----------------------------------------------------------------------------
   # CANCEL_TRANSFER - Cancel in-progress transfer

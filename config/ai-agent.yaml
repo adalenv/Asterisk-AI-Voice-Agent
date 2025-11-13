@@ -186,7 +186,6 @@ contexts:
   # Google Cloud AI Contexts
   demo_google:
     greeting: "Hi! I'm powered by Google Cloud AI - using Chirp 3 for speech, Gemini for intelligence, and Neural voices for natural responses. Ask me anything!"
-    provider: google_cloud_full
     profile: wideband_pcm_16k
     prompt: |
       You are Ava (Asterisk Voice Agent) demonstrating Google Cloud AI integration.
@@ -214,7 +213,6 @@ contexts:
   
   demo_google_cost:
     greeting: "Hello! I'm your cost-optimized Google Cloud assistant. How can I help you efficiently today?"
-    provider: google_cloud_cost_optimized
     profile: telephony_ulaw_8k
     prompt: |
       You are a cost-optimized voice assistant using Google Cloud's standard models.
@@ -233,7 +231,6 @@ contexts:
   
   demo_google_hybrid:
     greeting: "Hi! I'm using Google's speech technology with OpenAI's intelligence - the best of both worlds!"
-    provider: google_hybrid_openai
     profile: wideband_pcm_16k  
     prompt: |
       You are demonstrating a hybrid Google + OpenAI configuration.

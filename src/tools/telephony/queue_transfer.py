@@ -105,24 +105,15 @@ class TransferToQueueTool(Tool):
             # 2. Check queue status (if available)
             queue_status = await self._get_queue_status(asterisk_queue, context)
             
-            # 3. Set channel variable for dialplan
-            await context.ari_client.send_command(
-                method="POST",
-                resource=f"channels/{context.caller_channel_id}/variable",
-                params={
-                    "variable": "QUEUE_NAME",
-                    "value": asterisk_queue
-                }
-            )
-            
-            # 4. Continue to queue handling in dialplan
-            # This will execute the Asterisk dialplan queue logic
+            # 3. Continue to FreePBX ext-queues context
+            # This uses the same path as IVR queue transfers
+            # FreePBX handles all queue setup, macros, and member routing
             await context.ari_client.send_command(
                 method="POST",
                 resource=f"channels/{context.caller_channel_id}/continue",
                 params={
-                    "context": "agent-queue",  # Dialplan context for queues
-                    "extension": "s",
+                    "context": "ext-queues",
+                    "extension": asterisk_queue,  # Queue number as extension
                     "priority": 1
                 }
             )

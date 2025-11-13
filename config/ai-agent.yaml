@@ -507,6 +507,26 @@ tools:
     require_confirmation: false
     farewell_message: "Thank you for calling. Goodbye!"
   
+  # Queue transfer tool - transfer to ACD queues
+  transfer_to_queue:
+    enabled: true
+    queues:
+      sales:
+        asterisk_queue: "sales-queue"
+        description: "Sales team"
+        max_wait_time: 300
+        announce_position: true
+      support:
+        asterisk_queue: "tech-support-queue"
+        description: "Technical support"
+        max_wait_time: 600
+        announce_position: true
+      billing:
+        asterisk_queue: "billing-queue"
+        description: "Billing department"
+        max_wait_time: 180
+        announce_position: false
+  
   # Email summary tool - auto-send call summaries to admin
   send_email_summary:
     enabled: true                          # Set to true to enable auto-send after calls

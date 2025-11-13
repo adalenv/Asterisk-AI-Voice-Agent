@@ -164,6 +164,12 @@ class ToolRegistry:
         except ImportError as e:
             logger.warning(f"Could not import HangupCallTool: {e}")
         
+        try:
+            from src.tools.telephony.queue_transfer import TransferToQueueTool
+            self.register(TransferToQueueTool)
+        except ImportError as e:
+            logger.warning(f"Could not import TransferToQueueTool: {e}")
+        
         # Business tools
         try:
             from src.tools.business.email_summary import SendEmailSummaryTool

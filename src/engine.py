@@ -5245,9 +5245,12 @@ class Engine:
             await self._save_session(session)
             
             # Apply to streaming manager
+            # CRITICAL: Do NOT set global sample_rate - it's shared across all calls!
+            # Each call must pass target_sample_rate explicitly to start_streaming_playback()
             try:
                 self.streaming_playback_manager.audiosocket_format = transport.wire_encoding
-                self.streaming_playback_manager.sample_rate = transport.wire_sample_rate
+                # REMOVED: self.streaming_playback_manager.sample_rate = transport.wire_sample_rate
+                # Global sample_rate causes race condition when multiple calls use different rates
                 if hasattr(self.streaming_playback_manager, 'chunk_size_ms'):
                     self.streaming_playback_manager.chunk_size_ms = transport.chunk_ms
                 if hasattr(self.streaming_playback_manager, 'idle_cutoff_ms'):

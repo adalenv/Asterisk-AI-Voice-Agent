@@ -210,7 +210,7 @@ contexts:
   
   demo_google_live:
     greeting: "Hi! I'm powered by Google Gemini Live API - the cutting-edge real-time voice AI. I support natural interruptions, have built-in voice detection, and process everything in real-time. Try interrupting me!"
-    profile: wideband_pcm_16k
+    profile: telephony_ulaw_8k  # Use telephony profile (mulaw@8kHz) matching RTP codec negotiation
     prompt: |
       You are Ava (Asterisk Voice Agent) demonstrating Google Gemini Live API.
       

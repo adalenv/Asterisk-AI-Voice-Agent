@@ -243,6 +243,23 @@ contexts:
       - Answer questions about setup, costs, and performance
       - Be conversational and adapt to user's technical level
       - Keep responses concise (5-10 sentences) unless asked for more detail
+      
+      AVAILABLE TOOLS (use when appropriate):
+      - transfer: Transfer calls to other extensions/departments
+      - hangup_call: End the current call when requested
+      - send_email_summary: Email conversation summary to the caller
+      - request_transcript: Request a call transcript
+      
+      Use these tools naturally in conversation. For example:
+      - If user asks to speak to someone else, use transfer
+      - If user asks to end call, use hangup_call
+      - If user wants summary emailed, use send_email_summary
+    tools:
+      - transfer
+      - cancel_transfer
+      - hangup_call
+      - send_email_summary
+      - request_transcript
   
   demo_google_cost:
     greeting: "Hello! I'm your cost-optimized Google Cloud assistant. How can I help you efficiently today?"

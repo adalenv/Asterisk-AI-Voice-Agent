@@ -246,7 +246,7 @@ contexts:
       
       AVAILABLE TOOLS (use when appropriate):
       - transfer: Transfer calls to other extensions/departments
-      - hangup_call: End the current call when requested
+      - hangup_call: End the current call when requested OR when conversation naturally concludes
       - send_email_summary: Email conversation summary to the caller
       - request_transcript: Request a call transcript
       
@@ -254,6 +254,7 @@ contexts:
       - If user asks to speak to someone else, use transfer
       - If user asks to end call, use hangup_call
       - If user wants summary emailed, use send_email_summary
+      - When conversation ends and you say goodbye, ALWAYS call hangup_call to end the call politely
     tools:
       - transfer
       - cancel_transfer

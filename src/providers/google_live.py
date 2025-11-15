@@ -443,6 +443,21 @@ class GoogleLiveProvider(AIProviderInterface):
                 chunk_to_send = bytes(self._input_buffer[:chunk_size])
                 self._input_buffer = self._input_buffer[chunk_size:]
 
+                # CRITICAL DEBUG: Measure RMS of actual audio being sent to Google
+                try:
+                    import audioop
+                    chunk_rms = audioop.rms(chunk_to_send, 2)
+                    if chunk_rms > 100:  # Only log non-silence
+                        logger.info(
+                            "🔊 Google Live: Audio RMS check",
+                            call_id=self._call_id,
+                            rms=chunk_rms,
+                            chunk_bytes=len(chunk_to_send),
+                            provider_rate=provider_rate,
+                        )
+                except Exception as e:
+                    logger.debug(f"RMS check failed: {e}", call_id=self._call_id)
+
                 # Encode as base64
                 audio_b64 = base64.b64encode(chunk_to_send).decode("utf-8")
 

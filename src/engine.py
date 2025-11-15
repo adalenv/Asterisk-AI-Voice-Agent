@@ -2233,6 +2233,10 @@ class Engine:
 
     async def _audiosocket_handle_audio(self, conn_id: str, audio_bytes: bytes) -> None:
         """Forward inbound AudioSocket audio to the active provider for the bound call."""
+        # Track every frame for diagnostics
+        if not hasattr(self, '_audiosocket_frame_count'):
+            self._audiosocket_frame_count = {}
+        
         try:
             caller_channel_id = self.conn_to_channel.get(conn_id)
             if not caller_channel_id and self.audio_socket_server:
@@ -2249,6 +2253,20 @@ class Engine:
             if not caller_channel_id:
                 logger.debug("AudioSocket audio received for unknown connection", conn_id=conn_id, bytes=len(audio_bytes))
                 return
+
+            # Track frame count per call
+            self._audiosocket_frame_count[caller_channel_id] = self._audiosocket_frame_count.get(caller_channel_id, 0) + 1
+            frame_num = self._audiosocket_frame_count[caller_channel_id]
+            
+            # Log every 10th frame + first 5 frames
+            if frame_num <= 5 or frame_num % 10 == 0:
+                logger.info(
+                    "🎤 AUDIOSOCKET RX - Frame received",
+                    call_id=caller_channel_id,
+                    frame_num=frame_num,
+                    frame_bytes=len(audio_bytes),
+                    conn_id=conn_id,
+                )
 
             session = await self.session_store.get_by_call_id(caller_channel_id)
             if not session:
@@ -2464,6 +2482,13 @@ class Engine:
                 continuous_input = False
             if continuous_input and provider and hasattr(provider, 'send_audio'):
                 # Forward immediately, independent of audio_capture_enabled/VAD
+                logger.info(
+                    "📤 CONTINUOUS INPUT - Forwarding frame to provider",
+                    call_id=caller_channel_id,
+                    provider=provider_name,
+                    frame_bytes=len(audio_bytes),
+                    pcm_bytes=len(pcm_bytes),
+                )
                 try:
                     self._update_audio_diagnostics(session, "provider_in", pcm_bytes, "slin16", pcm_rate)
                 except Exception:
@@ -2475,6 +2500,14 @@ class Engine:
                         provider,
                         pcm_bytes,
                         pcm_rate,
+                    )
+                    logger.info(
+                        "📤 CONTINUOUS INPUT - Encoded for provider",
+                        call_id=caller_channel_id,
+                        provider=provider_name,
+                        prov_payload_bytes=len(prov_payload),
+                        prov_enc=prov_enc,
+                        prov_rate=prov_rate,
                     )
                     try:
                         self.audio_capture.append_encoded(
@@ -2491,12 +2524,37 @@ class Engine:
                     # Google Live needs to know audio is already at provider_rate to skip resampling
                     try:
                         await provider.send_audio(prov_payload, prov_rate, prov_enc)
+                        logger.info(
+                            "✅ CONTINUOUS INPUT - Frame sent to provider successfully",
+                            call_id=caller_channel_id,
+                            provider=provider_name,
+                        )
                     except TypeError:
                         # Fallback for providers with old signature (audio_chunk only)
                         await provider.send_audio(prov_payload)
-                except Exception:
-                    logger.debug("Provider continuous-input forward error (unconditional)", call_id=caller_channel_id, exc_info=True)
+                        logger.info(
+                            "✅ CONTINUOUS INPUT - Frame sent to provider (legacy signature)",
+                            call_id=caller_channel_id,
+                            provider=provider_name,
+                        )
+                except Exception as e:
+                    logger.error(
+                        "❌ CONTINUOUS INPUT - Provider forward error",
+                        call_id=caller_channel_id,
+                        provider=provider_name,
+                        error=str(e),
+                        exc_info=True,
+                    )
                 return
+            else:
+                logger.info(
+                    "⚠️ CONTINUOUS INPUT - Block skipped",
+                    call_id=caller_channel_id,
+                    continuous_input=continuous_input,
+                    provider_found=provider is not None,
+                    has_send_audio=hasattr(provider, 'send_audio') if provider else False,
+                    provider_name=provider_name,
+                )
 
             # Post-TTS end protection: drop inbound briefly after gating clears to avoid agent echo re-capture
             try:

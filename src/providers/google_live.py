@@ -330,11 +330,11 @@ class GoogleLiveProvider(AIProviderInterface):
         setup_msg["setup"]["realtimeInputConfig"] = {
             "automaticActivityDetection": {
                 "disabled": False  # Explicitly enable VAD
-            },
-            # CRITICAL: Language hints prevent misrecognition of distorted audio
-            # Without hints, poor audio quality causes Google to detect random languages
-            # (Arabic, Korean, Japanese) instead of intended English
-            "languageHints": ["en-US"]  # Expect English audio
+            }
+            # NOTE: languageHints is NOT supported by Google Live API
+            # Attempted to add for speech recognition quality but API rejects it
+            # Error: "Unknown name 'languageHints' at 'setup.realtime_input_config'"
+            # Language detection must be handled via system prompt instead
         }
 
         # Debug: Log setup message structure

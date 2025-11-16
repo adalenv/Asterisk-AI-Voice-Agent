@@ -320,10 +320,14 @@ class GoogleLiveProvider(AIProviderInterface):
         # Note: Using camelCase per Google Live API format
         # Use empty object {} to enable with default settings (no "model" field - API doesn't support it)
         if self.config.enable_input_transcription:
-            setup_msg["setup"]["inputAudioTranscription"] = {}
+            setup_msg["setup"]["inputAudioTranscription"] = {
+                "languageCode": "en-US"  # Force English-US language detection
+            }
         
         if self.config.enable_output_transcription:
-            setup_msg["setup"]["outputAudioTranscription"] = {}
+            setup_msg["setup"]["outputAudioTranscription"] = {
+                "languageCode": "en-US"  # Force English-US language detection
+            }
         
         # CRITICAL: Enable automatic Voice Activity Detection
         # This is required for Google Live to detect when user is speaking

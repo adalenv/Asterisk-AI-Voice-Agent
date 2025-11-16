@@ -102,13 +102,13 @@ CID=$(grep -oE '17[0-9]{8}\.[0-9]{4}' "$BASE/logs/ai-engine.log" | sort -u | hea
 echo -n "$CID" > "$BASE/call_id.txt"
 echo "[RCA] Active Call ID: ${CID:-unknown}"
 if [ -n "$CID" ]; then
-  # Check if taps exist and list them
-  TAP_COUNT=$(run_server_cmd "docker exec ai_engine sh -c 'ls -1 /tmp/ai-engine-taps/*${CID}*.wav 2>/dev/null | wc -l' 2>/dev/null" || echo "0")
+  # Check if taps exist and list them (check both flat and subdirectory structure)
+  TAP_COUNT=$(run_server_cmd "docker exec ai_engine sh -c 'ls -1 /tmp/ai-engine-taps/${CID}/*.wav 2>/dev/null | wc -l' 2>/dev/null" || echo "0")
   echo "[RCA] Found ${TAP_COUNT} tap files for call ${CID}"
   
   if [ "${TAP_COUNT}" -gt 0 ]; then
-    # Create tar archive of tap files
-    run_server_cmd "docker exec ai_engine sh -c 'cd /tmp/ai-engine-taps && tar czf /tmp/ai_taps_${CID}.tgz *${CID}*.wav 2>/dev/null'" || true
+    # Create tar archive of tap files from subdirectory
+    run_server_cmd "docker exec ai_engine sh -c 'cd /tmp/ai-engine-taps && tar czf /tmp/ai_taps_${CID}.tgz ${CID}/*.wav 2>/dev/null'" || true
     
     if [ "$SERVER_MODE" = "local" ]; then
       if run_server_cmd "docker cp ai_engine:/tmp/ai_taps_${CID}.tgz '$BASE/ai_taps_${CID}.tgz' 2>/dev/null"; then
@@ -176,10 +176,18 @@ fi
 TAPS=$(ls "$BASE"/taps/*.wav 2>/dev/null || true)
 RECS=$(ls "$BASE"/recordings/*.wav 2>/dev/null || true)
 if [ -n "$TAPS" ]; then
-  python3 archived/dev-scripts/wav_quality_analyzer.py "$BASE"/taps/*.wav --json "$BASE/metrics/wav_report_taps.json" --frame-ms "$FRAME_MS" || echo "[WARN] Tap analysis failed"
+  if [ -f "archived/dev-scripts/wav_quality_analyzer.py" ]; then
+    python3 archived/dev-scripts/wav_quality_analyzer.py "$BASE"/taps/*.wav --json "$BASE/metrics/wav_report_taps.json" --frame-ms "$FRAME_MS" || echo "[WARN] Tap analysis failed"
+  else
+    echo "[INFO] wav_quality_analyzer.py not found, skipping tap analysis"
+  fi
 fi
 if [ -n "$RECS" ]; then
-  python3 archived/dev-scripts/wav_quality_analyzer.py "$BASE"/recordings/*.wav --json "$BASE/metrics/wav_report_rec.json" --frame-ms "$FRAME_MS" || echo "[WARN] Recording analysis failed"
+  if [ -f "archived/dev-scripts/wav_quality_analyzer.py" ]; then
+    python3 archived/dev-scripts/wav_quality_analyzer.py "$BASE"/recordings/*.wav --json "$BASE/metrics/wav_report_rec.json" --frame-ms "$FRAME_MS" || echo "[WARN] Recording analysis failed"
+  else
+    echo "[INFO] wav_quality_analyzer.py not found, skipping recording analysis"
+  fi
 fi
 # Build call timeline with key events for the captured call
 if [ -n "$CID" ]; then
@@ -189,12 +197,20 @@ fi
 # Offline transcription of outbound audio when available
 OUT_WAVS=$(ls "$BASE"/recordings/out-*.wav 2>/dev/null | head -n 1 || true)
 if [ -n "$OUT_WAVS" ]; then
-  python3 archived/dev-scripts/transcribe_call.py "$BASE"/recordings/out-*.wav --json "$BASE/transcripts/out.json" || echo "[WARN] Outbound transcription failed"
+  if [ -f "archived/dev-scripts/transcribe_call.py" ]; then
+    python3 archived/dev-scripts/transcribe_call.py "$BASE"/recordings/out-*.wav --json "$BASE/transcripts/out.json" || echo "[WARN] Outbound transcription failed"
+  else
+    echo "[INFO] transcribe_call.py not found, skipping outbound transcription"
+  fi
 fi
 
 IN_WAVS=$(ls "$BASE"/recordings/in-*.wav 2>/dev/null | head -n 1 || true)
 if [ -n "$IN_WAVS" ]; then
-  python3 archived/dev-scripts/transcribe_call.py "$BASE"/recordings/in-*.wav --json "$BASE/transcripts/in.json" || echo "[WARN] Inbound transcription failed"
+  if [ -f "archived/dev-scripts/transcribe_call.py" ]; then
+    python3 archived/dev-scripts/transcribe_call.py "$BASE"/recordings/in-*.wav --json "$BASE/transcripts/in.json" || echo "[WARN] Inbound transcription failed"
+  else
+    echo "[INFO] transcribe_call.py not found, skipping inbound transcription"
+  fi
 fi
 
 if [ -n "$CID" ]; then
@@ -215,8 +231,12 @@ if [ -d "$BASE/captures" ]; then
 fi
 
 if [ ${#CAPTURE_FILES[@]} -gt 0 ]; then
-  python3 scripts/wav_quality_analyzer.py "${CAPTURE_FILES[@]}" --json "$BASE/metrics/wav_report_captures.json" --frame-ms "$FRAME_MS" || echo "[WARN] Capture analysis failed"
-  python3 scripts/transcribe_call.py "${CAPTURE_FILES[@]}" --json "$BASE/transcripts/captures.json" || echo "[WARN] Capture transcription failed"
+  if [ -f "archived/dev-scripts/wav_quality_analyzer.py" ]; then
+    python3 archived/dev-scripts/wav_quality_analyzer.py "${CAPTURE_FILES[@]}" --json "$BASE/metrics/wav_report_captures.json" --frame-ms "$FRAME_MS" || echo "[WARN] Capture analysis failed"
+  fi
+  if [ -f "archived/dev-scripts/transcribe_call.py" ]; then
+    python3 archived/dev-scripts/transcribe_call.py "${CAPTURE_FILES[@]}" --json "$BASE/transcripts/captures.json" || echo "[WARN] Capture transcription failed"
+  fi
 fi
 
 # Fetch server-side ai-agent.yaml for transport/provider troubleshooting

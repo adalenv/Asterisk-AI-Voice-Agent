@@ -1089,7 +1089,7 @@ class GoogleLiveProvider(AIProviderInterface):
         self._call_id = None
         self._session_id = None
         self._setup_complete = False
-        self._input_buffer.clear()
+        self._speech_buffer.clear()  # Clear VAD burst buffer
         self._conversation_history.clear()
 
         if self._session_start_time:

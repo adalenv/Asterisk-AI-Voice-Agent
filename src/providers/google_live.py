@@ -112,6 +112,11 @@ class GoogleLiveProvider(AIProviderInterface):
         # Conversation state
         self._conversation_history: List[Dict[str, Any]] = []
         
+        # Initialize tool adapter early (before start_session) so engine can inject context
+        # This ensures _session_store, _ari_client, etc. are available for tool execution
+        from src.tools.registry import tool_registry
+        self._tool_adapter = GoogleToolAdapter(tool_registry)
+        
         # Transcription buffering - hold latest partial until turnComplete
         self._input_transcription_buffer: str = ""
         self._output_transcription_buffer: str = ""
@@ -278,20 +283,25 @@ class GoogleLiveProvider(AIProviderInterface):
             response_modalities=generation_config.get("responseModalities"),
         )
 
-        # Build tools config (aligned with Deepgram/OpenAI pattern)
-        # Always initialize tool adapter and get all registered tools
+        # Build tools config using context tool list (filtered by engine)
+        # CRITICAL: Use context['tools'] to respect per-context tool configuration
+        # Don't call get_tools_config() which returns ALL tools - use context filtering
         tools = []
-        try:
-            self._tool_adapter = GoogleToolAdapter(tool_registry)
-            tools = self._tool_adapter.get_tools_config()
-            if tools:
-                logger.debug(
-                    "Google Live tools configured",
-                    call_id=self._call_id,
-                    tool_count=len(tools[0].get("functionDeclarations", [])) if tools else 0
-                )
-        except Exception as e:
-            logger.warning(f"Failed to configure tools: {e}", call_id=self._call_id, exc_info=True)
+        tool_names = context.get('tools', []) if context else []
+        if tool_names and self._tool_adapter:
+            try:
+                # Use format_tools() with filtered tool list from context
+                tools = self._tool_adapter.format_tools(tool_names)
+                if tools:
+                    tool_count = len(tools[0].get("functionDeclarations", [])) if tools else 0
+                    logger.debug(
+                        "Google Live tools configured from context",
+                        call_id=self._call_id,
+                        tool_count=tool_count,
+                        tool_names=tool_names
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to configure tools: {e}", call_id=self._call_id, exc_info=True)
 
         # Setup message
         setup_msg = {

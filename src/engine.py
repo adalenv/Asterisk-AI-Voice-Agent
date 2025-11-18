@@ -4982,6 +4982,8 @@ class Engine:
                 async def run_turn(transcript_text: str) -> None:
                     nonlocal conversation_history
                     response_text = ""
+                    tool_calls = []
+                    
                     pipeline_label = getattr(session, 'pipeline_name', None) or 'none'
                     provider_label = getattr(session, 'provider_name', None) or 'unknown'
                     t_start = self._last_transcript_ts.get(call_id)
@@ -4991,7 +4993,7 @@ class Engine:
                     context_for_llm = {"prior_messages": list(conversation_history)}
                     
                     try:
-                        response_text = await pipeline.llm_adapter.generate(
+                        llm_result = await pipeline.llm_adapter.generate(
                             call_id,
                             transcript_text,
                             context_for_llm,  # Include conversation history
@@ -5000,54 +5002,121 @@ class Engine:
                     except Exception:
                         logger.debug("LLM generate failed", call_id=call_id, exc_info=True)
                         return
-                    response_text = (response_text or "").strip()
-                    if not response_text:
+
+                    # Milestone7: Handle structured LLM response with tool calls
+                    from src.pipelines.base import LLMResponse
+                    if isinstance(llm_result, LLMResponse):
+                        response_text = (llm_result.text or "").strip()
+                        tool_calls = llm_result.tool_calls
+                    else:
+                        response_text = (str(llm_result) or "").strip()
+                        tool_calls = []
+
+                    if not response_text and not tool_calls:
                         return
                     
                     # Update conversation history
                     conversation_history.append({"role": "user", "content": transcript_text})
-                    conversation_history.append({"role": "assistant", "content": response_text})
-                    tts_bytes = bytearray()
-                    first_tts_ts: Optional[float] = None
-                    try:
-                        async for tts_chunk in pipeline.tts_adapter.synthesize(
-                            call_id,
-                            response_text,
-                            pipeline.tts_options,
-                        ):
-                            if tts_chunk:
-                                if first_tts_ts is None:
-                                    first_tts_ts = time.time()
-                                    try:
-                                        if t_start is not None:
-                                            _TURN_STT_TO_TTS.labels(pipeline_label, provider_label).observe(max(0.0, first_tts_ts - t_start))
-                                    except Exception:
-                                        pass
-                                tts_bytes.extend(tts_chunk)
-                    except Exception:
-                        logger.debug("TTS synth failed", call_id=call_id, exc_info=True)
-                        return
-                    if not tts_bytes:
-                        return
-                    try:
-                        playback_id = await self.playback_manager.play_audio(
-                            call_id,
-                            bytes(tts_bytes),
-                            "pipeline-tts",
-                        )
+                    if response_text:
+                        conversation_history.append({"role": "assistant", "content": response_text})
+                    elif tool_calls:
+                        # If only tools, append a placeholder or the tool call details
+                        # For now, just note that tools were called
+                        conversation_history.append({"role": "assistant", "content": "(tool execution)"})
+
+                    playback_id = None
+                    
+                    # 1. Synthesize and Play Text (if any)
+                    if response_text:
+                        tts_bytes = bytearray()
+                        first_tts_ts: Optional[float] = None
                         try:
-                            if playback_id and t_start is not None:
-                                _TURN_RESPONSE_SECONDS.labels(pipeline_label, provider_label).observe(max(0.0, time.time() - t_start))
+                            async for tts_chunk in pipeline.tts_adapter.synthesize(
+                                call_id,
+                                response_text,
+                                pipeline.tts_options,
+                            ):
+                                if tts_chunk:
+                                    if first_tts_ts is None:
+                                        first_tts_ts = time.time()
+                                        try:
+                                            if t_start is not None:
+                                                _TURN_STT_TO_TTS.labels(pipeline_label, provider_label).observe(max(0.0, first_tts_ts - t_start))
+                                        except Exception:
+                                            pass
+                                    tts_bytes.extend(tts_chunk)
                         except Exception:
-                            pass
-                        if not playback_id:
-                            logger.error(
-                                "Pipeline playback failed",
-                                call_id=call_id,
-                                size=len(tts_bytes),
-                            )
-                    except Exception:
-                        logger.error("Pipeline playback exception", call_id=call_id, exc_info=True)
+                            logger.debug("TTS synth failed", call_id=call_id, exc_info=True)
+                            # If TTS fails but we have tools, continue to tools
+                            if not tool_calls:
+                                return
+                        
+                        if tts_bytes:
+                            try:
+                                playback_id = await self.playback_manager.play_audio(
+                                    call_id,
+                                    bytes(tts_bytes),
+                                    "pipeline-tts",
+                                )
+                                try:
+                                    if playback_id and t_start is not None:
+                                        _TURN_RESPONSE_SECONDS.labels(pipeline_label, provider_label).observe(max(0.0, time.time() - t_start))
+                                except Exception:
+                                    pass
+                                if not playback_id:
+                                    logger.error(
+                                        "Pipeline playback failed",
+                                        call_id=call_id,
+                                        size=len(tts_bytes),
+                                    )
+                            except Exception:
+                                logger.error("Pipeline playback exception", call_id=call_id, exc_info=True)
+
+                    # 2. Execute Tools (if any)
+                    if tool_calls:
+                        # Wait for playback to finish before executing tools (especially transfer)
+                        if playback_id:
+                            try:
+                                # Simple wait - in future, improve with events
+                                # Currently play_audio waits for acceptance, not completion
+                                # We rely on the natural duration or provider handling
+                                pass 
+                            except Exception:
+                                pass
+
+                        from src.tools.context import ToolExecutionContext
+                        from src.tools.registry import tool_registry
+                        
+                        # Create execution context
+                        tool_ctx = ToolExecutionContext(
+                            call_id=call_id,
+                            caller_channel_id=getattr(session, 'channel_id', call_id),
+                            session_store=self.session_store,
+                            ari_client=self.ari_client,
+                            config=self.app_config.model_dump(),
+                            provider_name="pipeline"
+                        )
+
+                        for tool_call in tool_calls:
+                            try:
+                                name = tool_call.get("name")
+                                args = tool_call.get("parameters") or {}
+                                tool = tool_registry.get(name)
+                                
+                                if tool:
+                                    logger.info("Executing pipeline tool", tool=name, call_id=call_id)
+                                    result = await tool.execute(args, tool_ctx)
+                                    logger.info("Tool execution result", tool=name, result=result)
+                                    
+                                    # Handle terminal actions
+                                    if name in ["transfer", "hangup_call", "hangup"]:
+                                        if result.get("status") == "success":
+                                            logger.info("Terminal tool action successful, ending turn loop", tool=name)
+                                            return
+                                else:
+                                    logger.warning("Tool not found", tool=name)
+                            except Exception as e:
+                                logger.error("Tool execution failed", tool=name, error=str(e), exc_info=True)
 
                 async def maybe_respond(force: bool, from_flush: bool = False) -> None:
                     nonlocal pending_segments, flush_task

@@ -13,7 +13,8 @@ from __future__ import annotations
 import asyncio
 import os
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Dict, Any, Optional
+from dataclasses import dataclass, field
+from typing import AsyncIterator, Dict, Any, Optional, List, Union
 
 try:
     import aiohttp
@@ -24,6 +25,14 @@ try:
     import websockets
 except ImportError:
     websockets = None
+
+
+@dataclass
+class LLMResponse:
+    """Standard response from an LLM, containing text and/or tool calls."""
+    text: str = ""
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class Component(ABC):
@@ -264,7 +273,7 @@ class LLMComponent(Component):
         transcript: str,
         context: Dict[str, Any],
         options: Dict[str, Any],
-    ) -> str:
+    ) -> Union[str, LLMResponse]:
         """Generate a response given transcript + context."""
 
 

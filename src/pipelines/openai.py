@@ -24,7 +24,8 @@ from websockets.client import WebSocketClientProtocol
 from ..audio import convert_pcm16le_to_target_format, mulaw_to_pcm16le, resample_audio
 from ..config import AppConfig, OpenAIProviderConfig
 from ..logging_config import get_logger
-from .base import LLMComponent, STTComponent, TTSComponent
+from .base import LLMComponent, STTComponent, TTSComponent, LLMResponse
+from ..tools.registry import tool_registry
 
 logger = get_logger(__name__)
 
@@ -353,7 +354,7 @@ class OpenAILLMAdapter(LLMComponent):
         transcript: str,
         context: Dict[str, Any],
         options: Dict[str, Any],
-    ) -> str:
+    ) -> str | LLMResponse:
         merged = self._compose_options(options)
         if not merged["api_key"]:
             raise RuntimeError("OpenAI LLM requires an API key")
@@ -365,6 +366,22 @@ class OpenAILLMAdapter(LLMComponent):
         await self._ensure_session()
         assert self._session
         payload = self._build_chat_payload(transcript, context, merged)
+        
+        # Milestone7: Tool support
+        tools_list = merged.get("tools")
+        if tools_list and isinstance(tools_list, list):
+            tool_schemas = []
+            for tool_name in tools_list:
+                tool = tool_registry.get(tool_name)
+                if tool:
+                    tool_schemas.append(tool.definition.to_openai_schema())
+                else:
+                    logger.warning("Tool not found in registry", tool=tool_name)
+            
+            if tool_schemas:
+                payload["tools"] = tool_schemas
+                payload["tool_choice"] = "auto"
+
         headers = _make_http_headers(merged)
         url = merged["chat_base_url"].rstrip("/") + "/chat/completions"
 
@@ -373,6 +390,7 @@ class OpenAILLMAdapter(LLMComponent):
             call_id=call_id,
             model=payload.get("model"),
             temperature=payload.get("temperature"),
+            tools_count=len(payload.get("tools", [])),
         )
 
         retries = 1
@@ -397,12 +415,40 @@ class OpenAILLMAdapter(LLMComponent):
 
                     message = choices[0].get("message") or {}
                     content = message.get("content", "")
-                    logger.info(
-                        "OpenAI chat completion received",
-                        call_id=call_id,
-                        model=payload.get("model"),
-                        preview=content[:80],
-                    )
+                    tool_calls = message.get("tool_calls") or []
+                    
+                    # Log response
+                    log_ctx = {
+                        "call_id": call_id,
+                        "model": payload.get("model"),
+                        "preview": (content or "")[:80],
+                    }
+                    if tool_calls:
+                        log_ctx["tool_calls"] = len(tool_calls)
+                        # Parse tool calls into our standard dict format
+                        parsed_tool_calls = []
+                        for tc in tool_calls:
+                            try:
+                                func = tc.get("function", {})
+                                name = func.get("name")
+                                args = func.get("arguments", "{}")
+                                parsed_tool_calls.append({
+                                    "id": tc.get("id"),
+                                    "name": name,
+                                    "parameters": json.loads(args),
+                                    "type": tc.get("type", "function")
+                                })
+                            except Exception as e:
+                                logger.warning("Failed to parse tool call", error=str(e))
+                        
+                        logger.info("OpenAI chat completion received with tools", **log_ctx)
+                        return LLMResponse(
+                            text=content or "",
+                            tool_calls=parsed_tool_calls,
+                            metadata=data.get("usage", {})
+                        )
+                    
+                    logger.info("OpenAI chat completion received", **log_ctx)
                     return content
             except aiohttp.ClientError as e:
                 if self._session is None or self._session.closed:
@@ -414,7 +460,7 @@ class OpenAILLMAdapter(LLMComponent):
                     raise
 
                 logger.warning("OpenAI LLM connection error, retrying", call_id=call_id, error=str(e))
-
+    
     async def _generate_realtime(
         self,
         call_id: str,

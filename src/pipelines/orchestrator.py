@@ -874,6 +874,10 @@ class PipelineOrchestrator:
         llm_options = dict(options_map.get("llm", {}))
         tts_options = dict(options_map.get("tts", {}))
 
+        # Milestone7: Inject tools into LLM options if configured
+        if hasattr(entry, "tools") and entry.tools:
+            llm_options["tools"] = entry.tools
+
         stt_adapter = self._build_component(entry.stt, stt_options)
         llm_adapter = self._build_component(entry.llm, llm_options)
         tts_adapter = self._build_component(entry.tts, tts_options)

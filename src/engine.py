@@ -5131,7 +5131,7 @@ class Engine:
                                 caller_channel_id=getattr(session, 'channel_id', call_id),
                                 session_store=self.session_store,
                                 ari_client=self.ari_client,
-                                config=self.app_config.dict(),
+                                config=self.config.dict(),
                                 provider_name="pipeline"
                             )
                             logger.info("DEBUG: ToolExecutionContext created successfully", call_id=call_id)

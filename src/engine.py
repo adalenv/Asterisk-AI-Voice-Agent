@@ -5804,42 +5804,31 @@ class Engine:
                 )
                 return
             
-            # Create snoop channel on caller - whisper mode sends audio TO caller only
-            response = await self.ari_client.send_command(
-                "POST",
-                f"channels/{session.caller_channel_id}/snoop",
-                data={
-                    "app": self.config.asterisk.app_name,
-                    "spy": "none",       # Don't listen to caller
-                    "whisper": "out",    # Send audio TO caller only
-                    "appArgs": f"bgm,{session.call_id}"
-                }
-            )
-            
-            if not response or not response.get("id"):
+            # Use bridge's MOH - plays to all channels in bridge (including AI)
+            # Note: At low volume, this shouldn't significantly impact VAD
+            if not session.bridge_id:
                 logger.warning(
-                    "Failed to create snoop channel for background music",
+                    "Cannot start background music - no bridge yet",
                     call_id=session.call_id,
-                    moh_class=moh_class,
-                    response=response
+                    moh_class=moh_class
                 )
                 return
             
-            snoop_channel_id = response["id"]
-            session.music_snoop_channel_id = snoop_channel_id
-            await self._save_session(session)
-            
-            # Start MOH on the snoop channel (auto-loops)
-            moh_response = await self.ari_client.send_command(
+            # Start MOH on the bridge itself
+            response = await self.ari_client.send_command(
                 "POST",
-                f"channels/{snoop_channel_id}/moh",
+                f"bridges/{session.bridge_id}/moh",
                 data={"mohClass": moh_class}
             )
             
+            # Store that we're using bridge MOH (for cleanup)
+            session.music_snoop_channel_id = f"bridge-moh:{session.bridge_id}"
+            await self._save_session(session)
+            
             logger.info(
-                "🎵 Background music started",
+                "🎵 Background music started (bridge MOH)",
                 call_id=session.call_id,
-                snoop_channel_id=snoop_channel_id,
+                bridge_id=session.bridge_id,
                 moh_class=moh_class
             )
             
@@ -5854,28 +5843,41 @@ class Engine:
     
     async def _stop_background_music(self, session) -> None:
         """
-        Stop background music by hanging up the snoop channel.
+        Stop background music.
         
-        The snoop channel will also be auto-destroyed when the caller hangs up,
-        but explicit cleanup ensures we release resources promptly.
+        Handles both bridge MOH and snoop channel approaches.
         """
-        snoop_id = getattr(session, 'music_snoop_channel_id', None)
-        if not snoop_id:
+        music_id = getattr(session, 'music_snoop_channel_id', None)
+        if not music_id:
             return
         
         try:
-            await self.ari_client.hangup_channel(snoop_id)
-            logger.info(
-                "🎵 Background music stopped",
-                call_id=session.call_id,
-                snoop_channel_id=snoop_id
-            )
+            if music_id.startswith("bridge-moh:"):
+                # Bridge MOH - stop MOH on the bridge
+                bridge_id = music_id.replace("bridge-moh:", "")
+                await self.ari_client.send_command(
+                    "DELETE",
+                    f"bridges/{bridge_id}/moh"
+                )
+                logger.info(
+                    "🎵 Background music stopped (bridge MOH)",
+                    call_id=session.call_id,
+                    bridge_id=bridge_id
+                )
+            else:
+                # Snoop channel - hang up the channel
+                await self.ari_client.hangup_channel(music_id)
+                logger.info(
+                    "🎵 Background music stopped",
+                    call_id=session.call_id,
+                    snoop_channel_id=music_id
+                )
         except Exception:
-            # Channel may already be gone (caller hung up)
+            # Channel/bridge may already be gone
             logger.debug(
-                "Background music snoop channel already gone",
+                "Background music already stopped",
                 call_id=session.call_id,
-                snoop_channel_id=snoop_id
+                music_id=music_id
             )
         
         session.music_snoop_channel_id = None

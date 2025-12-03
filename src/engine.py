@@ -4159,29 +4159,33 @@ class Engine:
                     fmt_entry["sample_rate"] = sample_rate_int
                 if fmt_entry:
                     self._provider_stream_formats[call_id] = fmt_entry
+                # Initialize diag vars outside try block to avoid UnboundLocalError
+                diag_encoding = encoding or ""
+                diag_rate = sample_rate_int or 0
                 try:
-                    diag_encoding = fmt_entry.get("encoding") or encoding or session.transport_profile.format
-                    diag_rate = int(fmt_entry.get("sample_rate") or sample_rate_int or session.transport_profile.sample_rate)
+                    diag_encoding = fmt_entry.get("encoding") or encoding or (session.transport_profile.format if session.transport_profile else "")
+                    diag_rate = int(fmt_entry.get("sample_rate") or sample_rate_int or (session.transport_profile.sample_rate if session.transport_profile else 0))
                     self._update_audio_diagnostics(session, "provider_out", chunk, diag_encoding, diag_rate)
                 except Exception:
                     logger.debug("Provider audio diagnostics update failed", call_id=call_id, exc_info=True)
                 try:
-                    self.audio_capture.append_encoded(
-                        call_id,
-                        "agent_from_provider",
-                        chunk,
-                        diag_encoding,
-                        diag_rate,
-                    )
+                    if diag_encoding and diag_rate:
+                        self.audio_capture.append_encoded(
+                            call_id,
+                            "agent_from_provider",
+                            chunk,
+                            diag_encoding,
+                            diag_rate,
+                        )
                 except Exception:
                     logger.debug("Provider audio capture failed", call_id=call_id, exc_info=True)
                 # Log provider AgentAudio chunk metrics for RCA
                 try:
-                    rate = int(sample_rate_int or diag_rate or 0) if (locals().get('diag_rate') is not None) else int(sample_rate_int or 0)
+                    rate = int(sample_rate_int or diag_rate or 0)
                 except Exception:
                     rate = 0
                 try:
-                    enc = (encoding or diag_encoding or "").lower() if (locals().get('diag_encoding') is not None) else (encoding or "")
+                    enc = (encoding or diag_encoding or "").lower()
                 except Exception:
                     enc = encoding or ""
                 bps = 2 if enc in ("linear16", "pcm16", "slin", "slin16") else 1
@@ -4293,8 +4297,8 @@ class Engine:
                         if not source_sample_rate:
                             # Fallback: use provider's configured output rate (prevents 8kHz default)
                             try:
-                                provider = session.provider
-                                if hasattr(provider, '_dg_output_rate'):
+                                provider = self.providers.get(session.provider_name)
+                                if provider and hasattr(provider, '_dg_output_rate'):
                                     source_sample_rate = provider._dg_output_rate
                                     logger.debug(
                                         "Using provider configured output rate as source_sample_rate fallback",
@@ -4379,7 +4383,8 @@ class Engine:
                             if remediation:
                                 session.audio_diagnostics["codec_remediation"] = remediation
                             src_encoding = fmt_info.get("encoding") or encoding
-                            src_rate = fmt_info.get("sample_rate") or sample_rate_int or getattr(session.provider, "_dg_output_rate", None)
+                            provider_obj = self.providers.get(session.provider_name)
+                            src_rate = fmt_info.get("sample_rate") or sample_rate_int or (getattr(provider_obj, "_dg_output_rate", None) if provider_obj else None)
                             
                             # DOWNSTREAM_MODE GATING: Check if streaming playback is allowed
                             use_streaming = self.config.downstream_mode != "file"

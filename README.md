@@ -24,6 +24,11 @@ The most powerful, flexible open-source AI voice agent for Asterisk/FreePBX. Fea
   - Access at http://localhost:3003 after starting admin-ui container
   - See [Admin UI Setup Guide](admin_ui/UI_Setup_Guide.md) for details
 
+<div align="center">
+<img src="AVA-Admin-UI.jpg" alt="Asterisk AI Voice Agent Admin UI Dashboard" width="800"/>
+<p><em>Admin UI Dashboard - Real-time monitoring and configuration</em></p>
+</div>
+
 * **🎙️ ElevenLabs Conversational AI**: Premium voice quality provider
   - Full agent with WebSocket-based real-time conversations
   - Tool calling support (define in ElevenLabs dashboard, execute locally)

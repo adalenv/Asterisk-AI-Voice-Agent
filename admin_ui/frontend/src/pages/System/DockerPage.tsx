@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Container, RefreshCw, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Container, RefreshCw, AlertCircle, Clock, CheckCircle2, XCircle } from 'lucide-react';
 import { ConfigSection } from '../../components/ui/ConfigSection';
 import { ConfigCard } from '../../components/ui/ConfigCard';
 import axios from 'axios';
@@ -10,9 +10,15 @@ interface ContainerInfo {
     image: string;
     status: string;
     state: string;
-    cpu?: string;
-    memory?: string;
     uptime?: string;
+    started_at?: string;
+    ports?: string[];
+}
+
+interface Toast {
+    id: number;
+    message: string;
+    type: 'success' | 'error';
 }
 
 const DockerPage = () => {
@@ -20,6 +26,15 @@ const DockerPage = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
+    const [toasts, setToasts] = useState<Toast[]>([]);
+
+    const showToast = (message: string, type: 'success' | 'error') => {
+        const id = Date.now();
+        setToasts(prev => [...prev, { id, message, type }]);
+        setTimeout(() => {
+            setToasts(prev => prev.filter(t => t.id !== id));
+        }, 4000);
+    };
 
     const fetchContainers = async () => {
         setLoading(true);
@@ -39,13 +54,14 @@ const DockerPage = () => {
         fetchContainers();
     }, []);
 
-    const handleRestart = async (id: string) => {
+    const handleRestart = async (id: string, name: string) => {
         setActionLoading(id);
         try {
             await axios.post(`/api/system/containers/${id}/restart`);
+            showToast(`Container "${name}" restarted successfully`, 'success');
             await fetchContainers();
         } catch (err: any) {
-            alert('Failed to restart container: ' + (err.response?.data?.detail || err.message));
+            showToast('Failed to restart: ' + (err.response?.data?.detail || err.message), 'error');
         } finally {
             setActionLoading(null);
         }
@@ -90,38 +106,91 @@ const DockerPage = () => {
                     ) : containers.length === 0 && !error ? (
                         <div className="text-center p-8 text-muted-foreground">No containers found.</div>
                     ) : (
-                        containers.map(container => (
-                            <ConfigCard key={container.id} className="flex items-center justify-between p-4">
-                                <div className="flex items-center gap-4">
-                                    <div className="p-3 bg-primary/10 rounded-lg">
-                                        <Container className="w-6 h-6 text-primary" />
-                                    </div>
-                                    <div>
-                                        <h4 className="font-semibold text-lg">{container.name.replace(/^\//, '')}</h4>
-                                        <p className="text-sm text-muted-foreground font-mono">{container.image}</p>
-                                    </div>
-                                </div>
+                        containers.map(container => {
+                            const containerName = container.name.replace(/^\//, '');
+                            const isRestarting = actionLoading === containerName;
+                            
+                            return (
+                                <ConfigCard key={container.id} className="p-4">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-4">
+                                            <div className="p-3 bg-primary/10 rounded-lg">
+                                                <Container className="w-6 h-6 text-primary" />
+                                            </div>
+                                            <div>
+                                                <h4 className="font-semibold text-lg">{containerName}</h4>
+                                                <p className="text-xs text-muted-foreground font-mono truncate max-w-[200px]" title={container.image}>
+                                                    {container.image}
+                                                </p>
+                                            </div>
+                                        </div>
 
-                                <div className="flex items-center gap-8">
-                                    <div className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(container.status)}`}>
-                                        {container.status.toUpperCase()}
+                                        <div className="flex items-center gap-6">
+                                            {/* Uptime */}
+                                            {container.uptime && (
+                                                <div className="text-right hidden sm:block">
+                                                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                                        <Clock className="w-3 h-3" />
+                                                        <span>Uptime</span>
+                                                    </div>
+                                                    <div className="text-sm font-medium">{container.uptime}</div>
+                                                </div>
+                                            )}
+                                            
+                                            {/* Ports */}
+                                            {container.ports && container.ports.length > 0 && (
+                                                <div className="text-right hidden md:block">
+                                                    <div className="text-xs text-muted-foreground">Ports</div>
+                                                    <div className="text-xs font-mono">
+                                                        {container.ports.slice(0, 2).join(', ')}
+                                                        {container.ports.length > 2 && ` +${container.ports.length - 2}`}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Status Badge */}
+                                            <div className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(container.status)}`}>
+                                                {isRestarting ? 'RESTARTING' : container.status.toUpperCase()}
+                                            </div>
+                                            
+                                            {/* Restart Button */}
+                                            <button
+                                                onClick={() => handleRestart(containerName, containerName)}
+                                                disabled={isRestarting}
+                                                className="p-2 hover:bg-accent rounded-md text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                                title="Restart container"
+                                            >
+                                                <RefreshCw className={`w-4 h-4 ${isRestarting ? 'animate-spin' : ''}`} />
+                                            </button>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center gap-1">
-                                        <button
-                                            onClick={() => handleRestart(container.name.replace(/^\//, ''))}
-                                            disabled={actionLoading === container.id}
-                                            className="p-2 hover:bg-accent rounded-md text-muted-foreground hover:text-foreground disabled:opacity-50"
-                                            title="Restart"
-                                        >
-                                            <RefreshCw className={`w-4 h-4 ${actionLoading === container.id ? 'animate-spin' : ''}`} />
-                                        </button>
-                                    </div>
-                                </div>
-                            </ConfigCard>
-                        ))
+                                </ConfigCard>
+                            );
+                        })
                     )}
                 </div>
             </ConfigSection>
+
+            {/* Toast Notifications */}
+            <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+                {toasts.map(toast => (
+                    <div
+                        key={toast.id}
+                        className={`flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium animate-in slide-in-from-right ${
+                            toast.type === 'success' 
+                                ? 'bg-green-500 text-white' 
+                                : 'bg-red-500 text-white'
+                        }`}
+                    >
+                        {toast.type === 'success' ? (
+                            <CheckCircle2 className="w-4 h-4" />
+                        ) : (
+                            <XCircle className="w-4 h-4" />
+                        )}
+                        {toast.message}
+                    </div>
+                ))}
+            </div>
         </div>
     );
 };

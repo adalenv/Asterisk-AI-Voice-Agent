@@ -16,17 +16,64 @@ class ContainerInfo(BaseModel):
 @router.get("/containers")
 async def get_containers():
     try:
+        from datetime import datetime, timezone
+        
         client = docker.from_env()
         containers = client.containers.list(all=True)
         result = []
         for c in containers:
-            # Filter for project containers if needed, or return all
-            # We can filter by label or name prefix if we want to be specific
+            # Get image name
+            image_name = c.image.tags[0] if c.image.tags else c.image.short_id
+            
+            # Calculate uptime from StartedAt
+            uptime = None
+            started_at = None
+            if c.status == "running":
+                try:
+                    started_str = c.attrs['State'].get('StartedAt', '')
+                    if started_str and started_str != '0001-01-01T00:00:00Z':
+                        # Parse ISO format with timezone
+                        started_dt = datetime.fromisoformat(started_str.replace('Z', '+00:00'))
+                        started_at = started_str
+                        now = datetime.now(timezone.utc)
+                        delta = now - started_dt
+                        
+                        # Format uptime nicely
+                        days = delta.days
+                        hours, remainder = divmod(delta.seconds, 3600)
+                        minutes, _ = divmod(remainder, 60)
+                        
+                        if days > 0:
+                            uptime = f"{days}d {hours}h {minutes}m"
+                        elif hours > 0:
+                            uptime = f"{hours}h {minutes}m"
+                        else:
+                            uptime = f"{minutes}m"
+                except Exception as e:
+                    print(f"Error calculating uptime for {c.name}: {e}")
+            
+            # Get exposed ports
+            ports = []
+            try:
+                port_bindings = c.attrs.get('NetworkSettings', {}).get('Ports', {})
+                for container_port, host_bindings in (port_bindings or {}).items():
+                    if host_bindings:
+                        for binding in host_bindings:
+                            host_port = binding.get('HostPort', '')
+                            if host_port:
+                                ports.append(f"{host_port}:{container_port}")
+            except Exception:
+                pass
+            
             result.append({
                 "id": c.id,
                 "name": c.name,
+                "image": image_name,
                 "status": c.status,
-                "state": c.attrs['State']['Status']
+                "state": c.attrs['State']['Status'],
+                "uptime": uptime,
+                "started_at": started_at,
+                "ports": ports
             })
         return result
     except Exception as e:

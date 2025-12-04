@@ -4,6 +4,11 @@ FROM python:3.11-slim as builder
 
 WORKDIR /usr/src/app
 
+# Install build dependencies for packages like webrtcvad that need compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create virtual environment
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"

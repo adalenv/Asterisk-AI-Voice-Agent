@@ -1255,9 +1255,32 @@ class Engine:
                     )
                     pipeline_resolution = await self._assign_pipeline_to_session(session)
             else:
-                # Default behavior: only use active_pipeline if no valid provider already set
-                # Skip pipeline resolution if context already set a monolithic provider
-                if session.provider_name and session.provider_name in self.providers:
+                # Default behavior: check context pipeline first, then provider
+                # If context specifies a pipeline, use modular pipeline even if provider is set
+                context_pipeline = None
+                if session.context_name:
+                    ctx_config = self.transport_orchestrator.get_context_config(session.context_name)
+                    if ctx_config and getattr(ctx_config, 'pipeline', None):
+                        context_pipeline = ctx_config.pipeline
+                        logger.info(
+                            "Context specifies pipeline - using modular pipeline",
+                            call_id=caller_channel_id,
+                            context=session.context_name,
+                            pipeline=context_pipeline,
+                        )
+                
+                if context_pipeline:
+                    # Use the pipeline specified by context
+                    pipeline_resolution = await self._assign_pipeline_to_session(
+                        session, pipeline_name=context_pipeline
+                    )
+                    if pipeline_resolution:
+                        try:
+                            await self._ensure_pipeline_runner(session, forced=True)
+                        except Exception:
+                            logger.debug("Failed to start pipeline runner", call_id=caller_channel_id, exc_info=True)
+                elif session.provider_name and session.provider_name in self.providers:
+                    # Skip pipeline resolution if context already set a monolithic provider
                     logger.info(
                         "Skipping pipeline resolution - context already set valid provider",
                         call_id=caller_channel_id,

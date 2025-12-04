@@ -217,10 +217,7 @@ async def switch_model(request: SwitchModelRequest):
     from settings import PROJECT_ROOT, get_setting
     from api.config import update_yaml_provider_field
     
-    print(f"DEBUG switch_model: model_type={request.model_type}, backend={request.backend}, model_path={request.model_path}")
-    
     env_file = os.path.join(PROJECT_ROOT, ".env")
-    print(f"DEBUG switch_model: env_file={env_file}")
     env_updates = {}
     yaml_updates = {}  # Track YAML updates for sync
     requires_restart = False
@@ -292,16 +289,13 @@ async def switch_model(request: SwitchModelRequest):
                 requires_restart = True
     
     # 2. Update .env file AND YAML config
-    print(f"DEBUG switch_model: env_updates={env_updates}, requires_restart={requires_restart}")
     if env_updates:
         _update_env_file(env_file, env_updates)
-        print(f"DEBUG switch_model: .env file updated")
     
     # Sync to YAML config for consistency
     if yaml_updates:
         for field, value in yaml_updates.items():
             update_yaml_provider_field("local", field, value)
-        print(f"DEBUG switch_model: YAML config updated")
     
     # 3. Recreate container if needed (restart doesn't reload .env)
     if requires_restart:
@@ -310,7 +304,6 @@ async def switch_model(request: SwitchModelRequest):
             
             # Read new env values from .env file to pass to container
             new_env = _read_env_values(env_file, list(env_updates.keys()))
-            print(f"DEBUG: New env values to apply: {new_env}")
             
             # Use Docker SDK to recreate container with new environment
             client = docker.from_env()
@@ -333,7 +326,6 @@ async def switch_model(request: SwitchModelRequest):
                 old_env_dict[key] = value
             
             new_env_list = [f"{k}={v}" for k, v in old_env_dict.items()]
-            print(f"DEBUG: Recreating container with updated env")
             
             # Stop and remove old container
             container.stop(timeout=10)
@@ -354,8 +346,6 @@ async def switch_model(request: SwitchModelRequest):
                 restart_policy=host_config.get('RestartPolicy', {'Name': 'unless-stopped'}),
             )
             
-            print(f"DEBUG: New container created: {new_container.id[:12]}")
-            
             # Success - container recreated with new env
             # Skip verification as Docker SDK recreation may not preserve all network settings
             # User will see the actual status in the health widget
@@ -365,8 +355,6 @@ async def switch_model(request: SwitchModelRequest):
                 requires_restart=True
             )
         except Exception as e:
-            import traceback
-            print(f"DEBUG: Error during container recreation: {traceback.format_exc()}")
             # Attempt rollback on any error
             try:
                 _update_env_file(env_file, previous_env)
@@ -396,33 +384,22 @@ async def _verify_model_loaded(model_type: str, get_setting) -> bool:
     
     for ws_url in urls_to_try:
         try:
-            print(f"DEBUG _verify_model_loaded: trying {ws_url}")
             async with websockets.connect(ws_url, open_timeout=5) as ws:
                 await ws.send(json.dumps({"type": "status"}))
                 response = await asyncio.wait_for(ws.recv(), timeout=10)
                 data = json.loads(response)
                 
-                print(f"DEBUG _verify_model_loaded: response={data}")
-                
                 models = data.get("models", {})
                 if model_type == "stt":
-                    loaded = models.get("stt", {}).get("loaded", False)
-                    print(f"DEBUG _verify_model_loaded: stt loaded={loaded}")
-                    return loaded
+                    return models.get("stt", {}).get("loaded", False)
                 elif model_type == "tts":
-                    loaded = models.get("tts", {}).get("loaded", False)
-                    print(f"DEBUG _verify_model_loaded: tts loaded={loaded}")
-                    return loaded
+                    return models.get("tts", {}).get("loaded", False)
                 elif model_type == "llm":
-                    loaded = models.get("llm", {}).get("loaded", False)
-                    print(f"DEBUG _verify_model_loaded: llm loaded={loaded}")
-                    return loaded
+                    return models.get("llm", {}).get("loaded", False)
                 return True
-        except Exception as e:
-            print(f"DEBUG _verify_model_loaded: failed with {ws_url}: {e}")
+        except Exception:
             continue
     
-    print(f"DEBUG _verify_model_loaded: all URLs failed")
     return False
 
 
@@ -444,7 +421,6 @@ def _read_env_values(env_file: str, keys: list) -> Dict[str, str]:
 
 def _update_env_file(env_file: str, updates: Dict[str, str]):
     """Update environment variables in .env file."""
-    print(f"DEBUG _update_env_file: env_file={env_file}, updates={updates}")
     lines = []
     updated_keys = set()
     
@@ -452,9 +428,6 @@ def _update_env_file(env_file: str, updates: Dict[str, str]):
     if os.path.exists(env_file):
         with open(env_file, 'r') as f:
             lines = f.readlines()
-        print(f"DEBUG _update_env_file: read {len(lines)} lines from file")
-    else:
-        print(f"DEBUG _update_env_file: file does not exist!")
     
     # Update existing lines
     new_lines = []
@@ -466,7 +439,6 @@ def _update_env_file(env_file: str, updates: Dict[str, str]):
         if key and key in updates:
             new_lines.append(f"{key}={updates[key]}\n")
             updated_keys.add(key)
-            print(f"DEBUG _update_env_file: updated {key}={updates[key]}")
         else:
             new_lines.append(line)
     
@@ -474,13 +446,10 @@ def _update_env_file(env_file: str, updates: Dict[str, str]):
     for key, value in updates.items():
         if key not in updated_keys:
             new_lines.append(f"{key}={value}\n")
-            print(f"DEBUG _update_env_file: added new key {key}={value}")
     
     # Write back
-    print(f"DEBUG _update_env_file: writing {len(new_lines)} lines to {env_file}")
     with open(env_file, 'w') as f:
         f.writelines(new_lines)
-    print(f"DEBUG _update_env_file: write complete")
 
 
 # Import docker at module level for switch endpoint

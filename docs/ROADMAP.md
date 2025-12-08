@@ -541,20 +541,22 @@ Keep this roadmap updated after each milestone to help any collaborator—or fut
 - 🎯 Increase CI coverage threshold to 30% then 40% (currently 27%)
 - ⏳ Automated regression test suite (foundation in place)
 
-**Additional Tool Categories** (Planned):
+**Additional Tool Categories**:
 
-- 🔄 Queue management tools - Transfer to queue, queue status (AAVA-63)
+- ✅ Queue management tools - Transfer to queue (AAVA-63) - IMPLEMENTED
+- ✅ Voicemail tools - Leave voicemail - IMPLEMENTED
 - 🔄 Calendar appointment tool - Book/check availability (AAVA-66)
-- ⏳ Voicemail tools (leave message, retrieve messages)
+- ⏳ Voicemail retrieval - Retrieve messages
 - ⏳ Conference bridge tools (create, manage participants)
 - ⏳ SMS/MMS tools (send text messages to caller)
 
-**Additional Providers** (Planned):
+**Additional Providers**:
 
+- ✅ Google Gemini - google_live provider with Gemini 2.5 Flash - IMPLEMENTED
+- ✅ ElevenLabs - elevenlabs_agent provider - IMPLEMENTED (v4.4.1)
 - 🔄 Azure Speech Services for STT/TTS (AAVA-64)
 - 🔄 Google Cloud Speech for STT/TTS (AAVA-65)
 - ⏳ Anthropic Claude integration for LLM
-- ⏳ Google Gemini integration for LLM
 
 **Advanced Features**:
 

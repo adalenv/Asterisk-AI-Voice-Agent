@@ -838,17 +838,19 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         # Per community research (Dec 2024): The FIRST response MUST output audio,
         # otherwise all subsequent responses may also be text-only.
         # 
-        # Workaround: Include explicit audio-forcing instructions in the response.create
+        # Workaround: Include voice parameter and put "audio" FIRST in modalities
         response_payload: Dict[str, Any] = {
             "type": "response.create",
             "event_id": f"resp-{uuid.uuid4()}",
             "response": {
+                # CRITICAL: "audio" must be FIRST - this tells OpenAI to prioritize audio output
                 "modalities": ["audio", "text"],
+                # Include voice to ensure audio TTS is triggered
+                "voice": self.config.voice or "alloy",
                 # Explicit audio-forcing instruction - CRITICAL for modalities bug
                 "instructions": (
-                    "IMPORTANT: You MUST respond with spoken AUDIO output. "
-                    "Do NOT respond with text-only. Your response MUST include audio speech. "
-                    f'Now say exactly this greeting out loud: "{greeting}"'
+                    "You are a voice assistant. Respond by SPEAKING out loud using your voice. "
+                    f'Say this greeting: "{greeting}"'
                 ),
             },
         }

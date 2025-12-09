@@ -4722,7 +4722,29 @@ class Engine:
                         
                         # Handle terminal tools (hangup, transfer)
                         if result.get("will_hangup"):
-                            # Farewell already handled by _execute_provider_tool
+                            # For local provider, we need to synthesize farewell via TTS
+                            farewell = result.get("message") or parameters.get("farewell", "Goodbye!")
+                            if farewell and provider:
+                                logger.info(
+                                    "🎤 Playing farewell via local TTS",
+                                    call_id=call_id,
+                                    farewell=farewell[:50],
+                                )
+                                try:
+                                    # Request TTS from local-ai-server
+                                    tts_audio = await provider.text_to_speech(farewell)
+                                    if tts_audio:
+                                        # Play the farewell audio
+                                        await self.playback_manager.play_audio(
+                                            call_id, tts_audio, "local-farewell"
+                                        )
+                                        logger.info("✅ Farewell audio played", call_id=call_id)
+                                except Exception as tts_err:
+                                    logger.warning(
+                                        "Failed to play farewell TTS",
+                                        call_id=call_id,
+                                        error=str(tts_err),
+                                    )
                             break
                         elif result.get("transferred"):
                             # Transfer already handled

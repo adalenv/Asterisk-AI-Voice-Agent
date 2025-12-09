@@ -13,18 +13,20 @@ import LLMConfig from '../components/config/LLMConfig';
 import ToolsConfig from '../components/config/ToolsConfig';
 import ContextsConfig from '../components/config/ContextsConfig';
 import AudioSocketConfig from '../components/config/AudioSocketConfig';
-import PipelinesConfig from '../components/config/PipelinesConfig';
+import AudioSocketConfig from '../components/config/AudioSocketConfig';
+import DeepgramProviderForm from '../components/config/providers/DeepgramProviderForm';
+import OpenAIRealtimeProviderForm from '../components/config/providers/OpenAIRealtimeProviderForm';
+import GoogleLiveProviderForm from '../components/config/providers/GoogleLiveProviderForm';
+import LocalProviderForm from '../components/config/providers/LocalProviderForm';
+import OpenAIProviderForm from '../components/config/providers/OpenAIProviderForm';
+import ElevenLabsProviderForm from '../components/config/providers/ElevenLabsProviderForm';
 
 
 const ConfigEditor = () => {
     const [activeTab, setActiveTab] = useState<'general' | 'asterisk' | 'contexts' | 'providers' | 'pipelines' | 'vad' | 'streaming' | 'llm' | 'tools' | 'audiosocket' | 'yaml'>('general');
     const [yamlContent, setYamlContent] = useState('');
     const [parsedConfig, setParsedConfig] = useState<any>({});
-    const [loading, setLoading] = useState(false);
-    const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [success, setSuccess] = useState<string | null>(null);
-    const [yamlMode, setYamlMode] = useState(false);
+    const [parsingError, setParsingError] = useState<string | null>(null);
 
     // Provider Editing State
     const [editingProvider, setEditingProvider] = useState<string | null>(null);
@@ -185,6 +187,7 @@ const ConfigEditor = () => {
                             }}
                         >
                             <option value="deepgram">Deepgram</option>
+                            <option value="elevenlabs">ElevenLabs TTS / Agent</option>
                             <option value="openai_realtime">OpenAI Realtime</option>
                             <option value="google_live">Google Live</option>
                             <option value="local">Local</option>
@@ -196,6 +199,7 @@ const ConfigEditor = () => {
         );
 
         const guessType = (data: any) => {
+            if (data.type === 'elevenlabs' || data.type === 'elevenlabs_agent' || data.agent_id || data.voice_id) return 'elevenlabs';
             if (data.realtime_base_url || data.turn_detection) return 'openai_realtime';
             if (data.google_live || data.llm_model?.includes('gemini')) return 'google_live';
             if (data.ws_url) return 'local';
@@ -207,6 +211,9 @@ const ConfigEditor = () => {
 
         let FormComponent = DeepgramProviderForm;
         switch (currentType) {
+            case 'elevenlabs':
+                FormComponent = ElevenLabsProviderForm;
+                break;
             case 'openai_realtime':
                 FormComponent = OpenAIRealtimeProviderForm;
                 break;
@@ -251,7 +258,12 @@ const ConfigEditor = () => {
         <div className="h-full flex flex-col space-y-4">
             <div className="flex justify-between items-center">
                 <h1 className="text-2xl font-bold">Configuration</h1>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
+                    <div className="hidden xl:flex items-center text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-1.5 rounded-full border border-amber-200 dark:border-amber-900/50 mr-2">
+                        <AlertCircle className="w-3.5 h-3.5 mr-1.5" />
+                        <span className="font-medium">Warning:</span>
+                        <span className="ml-1">Saves overwrite the full config file</span>
+                    </div>
                     <button
                         onClick={async () => {
                             try {

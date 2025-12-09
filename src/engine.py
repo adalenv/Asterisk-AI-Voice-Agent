@@ -4723,16 +4723,17 @@ class Engine:
                         # Handle terminal tools (hangup, transfer)
                         if result.get("will_hangup"):
                             # For local provider, we need to synthesize farewell via TTS
-                            farewell = result.get("message") or parameters.get("farewell", "Goodbye!")
-                            if farewell and provider:
+                            farewell = "Goodbye"  # Keep it simple and short
+                            local_provider = self.providers.get(session.provider_name)
+                            if local_provider and hasattr(local_provider, 'text_to_speech'):
                                 logger.info(
                                     "🎤 Playing farewell via local TTS",
                                     call_id=call_id,
-                                    farewell=farewell[:50],
+                                    farewell=farewell,
                                 )
                                 try:
                                     # Request TTS from local-ai-server
-                                    tts_audio = await provider.text_to_speech(farewell)
+                                    tts_audio = await local_provider.text_to_speech(farewell)
                                     if tts_audio:
                                         # Play the farewell audio
                                         await self.playback_manager.play_audio(

@@ -1,21 +1,60 @@
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { AlertCircle } from 'lucide-react';
+
 interface LocalProviderFormProps {
     config: any;
     onChange: (newConfig: any) => void;
 }
 
 const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange }) => {
+    const [modelCatalog, setModelCatalog] = useState<any>({ stt: [], llm: [], tts: [] });
+    const [loading, setLoading] = useState(true);
+    const [fetchError, setFetchError] = useState<string | null>(null);
+
+    useEffect(() => {
+        const fetchModels = async () => {
+            try {
+                // Fetch catalog from the wizard endpoint which already exists
+                const res = await axios.get('/api/local/available-models');
+                setModelCatalog(res.data.catalog);
+            } catch (err) {
+                console.error("Failed to fetch local models", err);
+                setFetchError("Could not load model catalog. Options may be limited.");
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchModels();
+    }, []);
+
     const handleChange = (field: string, value: any) => {
+        // If changing model backend, also try to set a sane default model path if available
+        if (field === 'stt_backend') {
+            // Logic to auto-select recommended model could go here, but for now just change backend
+        }
         onChange({ ...config, [field]: value });
     };
 
     const name = (config?.name || '').toLowerCase();
     const caps = config?.capabilities || [];
-    const isFullAgent = config?.type === 'full' || (caps.includes('stt') && caps.includes('llm') && caps.includes('tts'));
-    
+    const isFullAgent = (caps.includes('stt') && caps.includes('llm') && caps.includes('tts'));
+
     // For modular providers, detect role by name or capability
     const isSTT = isFullAgent || name.includes('stt') || caps.includes('stt');
     const isTTS = isFullAgent || name.includes('tts') || caps.includes('tts');
     const isLLM = isFullAgent || name.includes('llm') || caps.includes('llm') || (!name.includes('stt') && !name.includes('tts'));
+
+    // Helpers to find model details
+    const getModelPathPlaceholder = (backend: string, type: 'stt' | 'tts') => {
+        if (loading) return "Loading...";
+        if (backend === 'vosk') return '/app/models/stt/vosk-model-en-us-0.22';
+        if (backend === 'sherpa') return '/app/models/stt/sherpa-onnx-streaming-zipformer-en-2023-06-26';
+        if (backend === 'piper') return '/app/models/tts/en_US-lessac-medium.onnx';
+        if (backend === 'kokoro') return '/app/models/tts/kokoro';
+        return '';
+    };
 
     return (
         <div className="space-y-6">
@@ -23,6 +62,14 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
             {isFullAgent && (
                 <div className="bg-green-50/50 dark:bg-green-900/10 p-3 rounded-md border border-green-200 dark:border-green-900/30 text-sm text-green-800 dark:text-green-300">
                     <strong>Full Agent Mode:</strong> This provider handles STT, LLM, and TTS together via Local AI Server.
+                </div>
+            )}
+
+            {/* Error Banner */}
+            {fetchError && (
+                <div className="bg-red-50 dark:bg-red-900/10 p-3 rounded-md border border-red-200 dark:border-red-900/30 text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4" />
+                    {fetchError}
                 </div>
             )}
 
@@ -56,7 +103,7 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                     <input
                         type="text"
                         className="w-full p-2 rounded border border-input bg-background"
-                        value={isFullAgent 
+                        value={isFullAgent
                             ? (config.base_url || '${LOCAL_WS_URL:-ws://local_ai_server:8765}')
                             : (config.ws_url || '${LOCAL_WS_URL:-ws://local_ai_server:8765}')}
                         onChange={(e) => handleChange(isFullAgent ? 'base_url' : 'ws_url', e.target.value)}
@@ -121,21 +168,67 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                 <option value="sherpa">Sherpa-ONNX (Local)</option>
                             </select>
                         </div>
-                        
+
                         {/* Vosk settings */}
-                        {(config.stt_backend || 'vosk') === 'vosk' && (
+                        {config.stt_backend === 'vosk' && (
                             <div className="space-y-2">
                                 <label className="text-sm font-medium">Vosk Model Path</label>
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        className="w-full p-2 rounded border border-input bg-background"
+                                        value={config.stt_model || ''}
+                                        onChange={(e) => handleChange('stt_model', e.target.value)}
+                                        placeholder={getModelPathPlaceholder('vosk', 'stt')}
+                                    />
+                                    {/* Quick Select for Vosk Models */}
+                                    {modelCatalog.stt.some((m: any) => m.id === 'vosk') && (
+                                        <div className="mt-1 text-xs text-muted-foreground">
+                                            Available: {modelCatalog.stt.filter((m: any) => m.id === 'vosk').map((m: any) => (
+                                                <button
+                                                    key={m.id}
+                                                    type="button"
+                                                    className="underline mr-2 text-primary"
+                                                    onClick={() => handleChange('stt_model', m.model_path)}
+                                                >
+                                                    {m.model_path}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Sherpa settings */}
+                        {config.stt_backend === 'sherpa' && (
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Sherpa Model Path</label>
                                 <input
                                     type="text"
                                     className="w-full p-2 rounded border border-input bg-background"
-                                    value={config.stt_model || '/app/models/stt/vosk-model-en-us-0.22'}
-                                    onChange={(e) => handleChange('stt_model', e.target.value)}
+                                    value={config.sherpa_model_path || ''}
+                                    onChange={(e) => handleChange('sherpa_model_path', e.target.value)}
+                                    placeholder={getModelPathPlaceholder('sherpa', 'stt')}
                                 />
+                                {modelCatalog.stt.some((m: any) => m.id.includes('sherpa')) && (
+                                    <div className="mt-1 text-xs text-muted-foreground">
+                                        Available: {modelCatalog.stt.filter((m: any) => m.id.includes('sherpa')).map((m: any) => (
+                                            <button
+                                                key={m.id}
+                                                type="button"
+                                                className="underline mr-2 text-primary"
+                                                onClick={() => handleChange('sherpa_model_path', m.model_path)}
+                                            >
+                                                {m.model_path}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         )}
-                        
-                        {/* Kroko settings */}
+
+                        {/* Kroko settings - Cloud, no local paths */}
                         {config.stt_backend === 'kroko' && (
                             <>
                                 <div className="space-y-2">
@@ -173,19 +266,6 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                 </div>
                             </>
                         )}
-                        
-                        {/* Sherpa settings */}
-                        {config.stt_backend === 'sherpa' && (
-                            <div className="space-y-2">
-                                <label className="text-sm font-medium">Sherpa Model Path</label>
-                                <input
-                                    type="text"
-                                    className="w-full p-2 rounded border border-input bg-background"
-                                    value={config.sherpa_model_path || '/app/models/stt/sherpa-onnx-streaming-zipformer-en-2023-06-26'}
-                                    onChange={(e) => handleChange('sherpa_model_path', e.target.value)}
-                                />
-                            </div>
-                        )}
                     </div>
                 </div>
             )}
@@ -206,7 +286,7 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                 <option value="kokoro">Kokoro (Local, Premium)</option>
                             </select>
                         </div>
-                        
+
                         {/* Piper settings */}
                         {(config.tts_backend || 'piper') === 'piper' && (
                             <div className="space-y-2">
@@ -214,12 +294,29 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                 <input
                                     type="text"
                                     className="w-full p-2 rounded border border-input bg-background"
-                                    value={config.tts_voice || '/app/models/tts/en_US-lessac-medium.onnx'}
+                                    value={config.tts_voice || ''}
                                     onChange={(e) => handleChange('tts_voice', e.target.value)}
+                                    placeholder={getModelPathPlaceholder('piper', 'tts')}
                                 />
+                                {modelCatalog.tts.some((m: any) => m.id.includes('piper')) && (
+                                    <div className="mt-1 text-xs text-muted-foreground flex flex-wrap gap-2">
+                                        <span>Use:</span>
+                                        {modelCatalog.tts.filter((m: any) => m.id.includes('piper')).map((m: any) => (
+                                            <button
+                                                key={m.id}
+                                                type="button"
+                                                className="underline text-primary"
+                                                onClick={() => handleChange('tts_voice', m.model_path)}
+                                                title={m.name}
+                                            >
+                                                {m.id.replace('piper_', '')}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         )}
-                        
+
                         {/* Kokoro settings */}
                         {config.tts_backend === 'kokoro' && (
                             <>
@@ -230,17 +327,27 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                         value={config.kokoro_voice || 'af_heart'}
                                         onChange={(e) => handleChange('kokoro_voice', e.target.value)}
                                     >
-                                        <option value="af_heart">Heart (Female, American)</option>
-                                        <option value="af_bella">Bella (Female, American)</option>
-                                        <option value="af_nicole">Nicole (Female, American)</option>
-                                        <option value="af_sarah">Sarah (Female, American)</option>
-                                        <option value="af_sky">Sky (Female, American)</option>
-                                        <option value="am_adam">Adam (Male, American)</option>
-                                        <option value="am_michael">Michael (Male, American)</option>
-                                        <option value="bf_emma">Emma (Female, British)</option>
-                                        <option value="bf_isabella">Isabella (Female, British)</option>
-                                        <option value="bm_george">George (Male, British)</option>
-                                        <option value="bm_lewis">Lewis (Male, British)</option>
+                                        {/* Use backend voice files list if available, else fallback */}
+                                        {modelCatalog.tts.find((m: any) => m.id === 'kokoro_82m')?.voice_files
+                                            ? Object.keys(modelCatalog.tts.find((m: any) => m.id === 'kokoro_82m').voice_files).map((v: string) => (
+                                                <option key={v} value={v}>{v}</option>
+                                            ))
+                                            : (
+                                                <>
+                                                    <option value="af_heart">Heart (Female, American)</option>
+                                                    <option value="af_bella">Bella (Female, American)</option>
+                                                    <option value="af_nicole">Nicole (Female, American)</option>
+                                                    <option value="af_sarah">Sarah (Female, American)</option>
+                                                    <option value="af_sky">Sky (Female, American)</option>
+                                                    <option value="am_adam">Adam (Male, American)</option>
+                                                    <option value="am_michael">Michael (Male, American)</option>
+                                                    <option value="bf_emma">Emma (Female, British)</option>
+                                                    <option value="bf_isabella">Isabella (Female, British)</option>
+                                                    <option value="bm_george">George (Male, British)</option>
+                                                    <option value="bm_lewis">Lewis (Male, British)</option>
+                                                </>
+                                            )
+                                        }
                                     </select>
                                 </div>
                                 <div className="space-y-2">
@@ -248,9 +355,24 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                     <input
                                         type="text"
                                         className="w-full p-2 rounded border border-input bg-background"
-                                        value={config.kokoro_model_path || '/app/models/tts/kokoro'}
+                                        value={config.kokoro_model_path || ''}
                                         onChange={(e) => handleChange('kokoro_model_path', e.target.value)}
+                                        placeholder={getModelPathPlaceholder('kokoro', 'tts')}
                                     />
+                                    {modelCatalog.tts.some((m: any) => m.id === 'kokoro_82m') && (
+                                        <div className="mt-1 text-xs text-muted-foreground">
+                                            Available: {modelCatalog.tts.filter((m: any) => m.id === 'kokoro_82m').map((m: any) => (
+                                                <button
+                                                    key={m.id}
+                                                    type="button"
+                                                    className="underline mr-2 text-primary"
+                                                    onClick={() => handleChange('kokoro_model_path', m.model_path)}
+                                                >
+                                                    {m.model_path}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             </>
                         )}
@@ -271,7 +393,7 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                             onChange={(e) => handleChange('max_tokens', parseInt(e.target.value))}
                         />
                         <p className="text-xs text-muted-foreground">
-                            Uses local model configured via Environment settings.
+                            Uses local model configured via Environment variables.
                         </p>
                     </div>
                 </div>

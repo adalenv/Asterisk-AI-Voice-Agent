@@ -4754,22 +4754,45 @@ class Engine:
                                         await local_provider.websocket.send(json.dumps(tts_message))
                                         logger.info("📢 Farewell TTS request sent", call_id=call_id)
                                         
-                                        # Wait for TTS to generate and play
-                                        # Use configurable timeout based on user's hardware speed
-                                        farewell_timeout = 30.0  # Default
+                                        # Wait for TTS response using event-based approach
+                                        farewell_timeout = 60.0  # Max wait (should arrive much sooner)
                                         try:
                                             local_config = self.config.providers.get("local")
                                             if local_config:
-                                                farewell_timeout = float(getattr(local_config, 'farewell_timeout_sec', 30.0) or 30.0)
+                                                farewell_timeout = float(getattr(local_config, 'farewell_timeout_sec', 60.0) or 60.0)
                                         except Exception:
                                             pass
                                         
+                                        # Create an event to signal when farewell TTS is received
+                                        farewell_event = asyncio.Event()
+                                        farewell_key = f"farewell_tts_{call_id}"
+                                        
+                                        # Register callback for farewell TTS
+                                        if not hasattr(self, '_farewell_events'):
+                                            self._farewell_events = {}
+                                        self._farewell_events[farewell_key] = farewell_event
+                                        
                                         logger.info(
-                                            "⏳ Waiting for farewell TTS",
+                                            "⏳ Waiting for farewell TTS response",
                                             call_id=call_id,
-                                            timeout_sec=farewell_timeout,
+                                            max_timeout_sec=farewell_timeout,
                                         )
-                                        await asyncio.sleep(farewell_timeout)
+                                        
+                                        try:
+                                            # Wait for either the event or timeout
+                                            await asyncio.wait_for(farewell_event.wait(), timeout=farewell_timeout)
+                                            logger.info("✅ Farewell TTS received", call_id=call_id)
+                                            # Wait for audio to play (12200 bytes at 8kHz = ~1.5s)
+                                            await asyncio.sleep(2.0)
+                                        except asyncio.TimeoutError:
+                                            logger.warning(
+                                                "⚠️ Farewell TTS timeout - proceeding with hangup",
+                                                call_id=call_id,
+                                                timeout_sec=farewell_timeout,
+                                            )
+                                        finally:
+                                            self._farewell_events.pop(farewell_key, None)
+                                        
                                         logger.info("✅ Farewell playback wait complete", call_id=call_id)
                                     else:
                                         logger.warning("WebSocket not connected for farewell TTS", call_id=call_id)
@@ -4805,6 +4828,15 @@ class Engine:
                             error=str(e),
                             exc_info=True,
                         )
+            
+            elif etype == "FarewellTTSReceived":
+                # Signal the farewell event for hangup coordination
+                farewell_key = f"farewell_tts_{call_id}"
+                if hasattr(self, '_farewell_events') and farewell_key in self._farewell_events:
+                    self._farewell_events[farewell_key].set()
+                    logger.info("✅ Farewell TTS event signaled", call_id=call_id)
+                else:
+                    logger.debug("FarewellTTSReceived but no waiting handler", call_id=call_id)
             
             elif etype == "transcript":
                 # User speech transcript from provider (ElevenLabs, etc.)

@@ -379,6 +379,14 @@ class LocalProvider(AIProviderInterface):
                                                 "type": "AgentAudioDone",
                                                 "call_id": target_call_id,
                                             })
+                                            # Signal farewell TTS received for hangup coordination
+                                            if text and text.lower() == "goodbye":
+                                                await self.on_event({
+                                                    "type": "FarewellTTSReceived",
+                                                    "call_id": target_call_id,
+                                                    "audio_size": len(audio_bytes),
+                                                })
+                                                logger.info("🎤 Farewell TTS audio emitted", call_id=target_call_id, audio_size=len(audio_bytes))
                                         except Exception:
                                             logger.error("Failed to emit AgentAudio(/Done) for tts_response", exc_info=True)
                                     else:

@@ -8,6 +8,9 @@ interface LocalProviderFormProps {
 }
 
 const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange }) => {
+    // Store raw data for backend discovery
+    const [rawModelData, setRawModelData] = useState<any>({ stt: {}, tts: {}, llm: [] });
+    // Flattened catalog for easy model lookup
     const [modelCatalog, setModelCatalog] = useState<any>({ stt: [], llm: [], tts: [] });
     const [loading, setLoading] = useState(true);
     const [fetchError, setFetchError] = useState<string | null>(null);
@@ -18,6 +21,7 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                 // Fetch installed models from local_ai API
                 const res = await axios.get('/api/local-ai/models');
                 const data = res.data;
+                setRawModelData(data);
 
                 // Flatten STT models (Dict[backend, List[Model]]) -> List[Model]
                 const sttModels = Object.values(data.stt || {}).flat();
@@ -203,9 +207,24 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                 value={config.stt_backend || 'vosk'}
                                 onChange={(e) => handleChange('stt_backend', e.target.value)}
                             >
-                                <option value="vosk">Vosk (Local)</option>
-                                <option value="kroko">Kroko</option>
-                                <option value="sherpa">Sherpa-ONNX (Local)</option>
+                                {/* Default option if loading */}
+                                {loading && <option>Loading...</option>}
+
+                                {/* Dynamic options based on available backends */}
+                                {!loading && Object.keys(rawModelData.stt).map(backend => (
+                                    <option key={backend} value={backend}>
+                                        {backend.charAt(0).toUpperCase() + backend.slice(1)}
+                                    </option>
+                                ))}
+
+                                {/* Fallback options if API fails or data empty */}
+                                {!loading && Object.keys(rawModelData.stt).length === 0 && (
+                                    <>
+                                        <option value="vosk">Vosk (Local)</option>
+                                        <option value="kroko">Kroko</option>
+                                        <option value="sherpa">Sherpa-ONNX (Local)</option>
+                                    </>
+                                )}
                             </select>
                         </div>
 
@@ -365,8 +384,20 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                 value={config.tts_backend || 'piper'}
                                 onChange={(e) => handleChange('tts_backend', e.target.value)}
                             >
-                                <option value="piper">Piper (Local)</option>
-                                <option value="kokoro">Kokoro (Local, Premium)</option>
+                                {/* Dynamic options based on available backends */}
+                                {!loading && Object.keys(rawModelData.tts).map(backend => (
+                                    <option key={backend} value={backend}>
+                                        {backend.charAt(0).toUpperCase() + backend.slice(1)}
+                                    </option>
+                                ))}
+
+                                {/* Fallback options */}
+                                {!loading && Object.keys(rawModelData.tts).length === 0 && (
+                                    <>
+                                        <option value="piper">Piper (Local)</option>
+                                        <option value="kokoro">Kokoro (Local, Premium)</option>
+                                    </>
+                                )}
                             </select>
                         </div>
 

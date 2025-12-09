@@ -48,6 +48,8 @@ services:
     build:
       context: ./local_ai_server
       dockerfile: Dockerfile
+      args:
+        - INCLUDE_KROKO_EMBEDDED=${INCLUDE_KROKO_EMBEDDED:-true}
     container_name: local_ai_server
     network_mode: host
     env_file:

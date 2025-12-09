@@ -189,7 +189,7 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                 onChange={(e) => handleChange('stt_backend', e.target.value)}
                             >
                                 <option value="vosk">Vosk (Local)</option>
-                                <option value="kroko">Kroko (Cloud)</option>
+                                <option value="kroko">Kroko</option>
                                 <option value="sherpa">Sherpa-ONNX (Local)</option>
                             </select>
                         </div>
@@ -253,28 +253,71 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                             </div>
                         )}
 
-                        {/* Kroko settings - Cloud, no local paths */}
+                        {/* Kroko settings - Cloud or Local */}
                         {config.stt_backend === 'kroko' && (
                             <>
                                 <div className="space-y-2">
-                                    <label className="text-sm font-medium">Kroko URL</label>
-                                    <input
-                                        type="text"
-                                        className="w-full p-2 rounded border border-input bg-background"
-                                        value={config.kroko_url || 'wss://app.kroko.ai/api/v1/transcripts/streaming'}
-                                        onChange={(e) => handleChange('kroko_url', e.target.value)}
-                                    />
+                                    <label className="text-sm font-medium">Kroko Model</label>
+                                    <div className="relative">
+                                        <input
+                                            type="text"
+                                            className="w-full p-2 rounded border border-input bg-background"
+                                            value={config.stt_model || ''}
+                                            onChange={(e) => handleChange('stt_model', e.target.value)}
+                                            placeholder="Leave empty for Cloud, or enter path for Embedded"
+                                        />
+                                        {/* Quick Select for Kroko Models */}
+                                        {modelCatalog.stt.some((m: any) => m.backend === 'kroko') && (
+                                            <div className="mt-1 text-xs text-muted-foreground">
+                                                Available: {modelCatalog.stt
+                                                    .filter((m: any) => m.backend === 'kroko')
+                                                    .map((m: any) => (
+                                                        <button
+                                                            key={m.id}
+                                                            type="button"
+                                                            className="underline mr-2 text-primary"
+                                                            onClick={() => {
+                                                                if (m.id === 'kroko_cloud') {
+                                                                    handleChange('stt_model', '');
+                                                                    handleChange('kroko_url', m.path);
+                                                                } else {
+                                                                    handleChange('stt_model', m.path);
+                                                                }
+                                                            }}
+                                                        >
+                                                            {m.name}
+                                                        </button>
+                                                    ))}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="text-sm font-medium">Kroko API Key</label>
-                                    <input
-                                        type="password"
-                                        className="w-full p-2 rounded border border-input bg-background"
-                                        value={config.kroko_api_key || ''}
-                                        onChange={(e) => handleChange('kroko_api_key', e.target.value)}
-                                        placeholder="Your Kroko API key"
-                                    />
-                                </div>
+
+                                {/* Only show URL/Key if NO local model path is set (Cloud Mode) */}
+                                {!config.stt_model && (
+                                    <>
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-medium">Kroko URL</label>
+                                            <input
+                                                type="text"
+                                                className="w-full p-2 rounded border border-input bg-background"
+                                                value={config.kroko_url || 'wss://app.kroko.ai/api/v1/transcripts/streaming'}
+                                                onChange={(e) => handleChange('kroko_url', e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-sm font-medium">Kroko API Key</label>
+                                            <input
+                                                type="password"
+                                                className="w-full p-2 rounded border border-input bg-background"
+                                                value={config.kroko_api_key || ''}
+                                                onChange={(e) => handleChange('kroko_api_key', e.target.value)}
+                                                placeholder="Your Kroko API key"
+                                            />
+                                        </div>
+                                    </>
+                                )}
+
                                 <div className="space-y-2">
                                     <label className="text-sm font-medium">Language</label>
                                     <select

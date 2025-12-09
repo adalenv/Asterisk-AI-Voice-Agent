@@ -264,6 +264,10 @@ async def switch_model(request: SwitchModelRequest):
                 if request.language:
                     env_updates["KROKO_LANGUAGE"] = request.language
                     yaml_updates["kroko_language"] = request.language
+                if request.model_path:
+                    # Support for local/embedded Kroko
+                    env_updates["LOCAL_STT_MODEL_PATH"] = request.model_path
+                    yaml_updates["stt_model"] = request.model_path
             elif request.backend == "sherpa" and request.model_path:
                 env_updates["SHERPA_MODEL_PATH"] = request.model_path
                 yaml_updates["sherpa_model_path"] = request.model_path

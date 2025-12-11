@@ -1653,8 +1653,9 @@ async def save_setup_config(config: SetupConfig):
                 yaml_config["providers"]["google_live"]["api_key"] = "${GOOGLE_API_KEY}"  # Reference env var
                 yaml_config["providers"]["google_live"]["instructions"] = f"You are {config.ai_name}, a {config.ai_role}. Be helpful and concise."
                 # CRITICAL: Set correct model for Google Live API
-                # Only models with "API Live" category support bidiGenerateContent
-                yaml_config["providers"]["google_live"]["llm_model"] = "gemini-2.0-flash-live"
+                # Only models with bidiGenerateContent support work with Live API
+                # gemini-2.0-flash-exp is widely available; gemini-2.0-flash-live may not be
+                yaml_config["providers"]["google_live"]["llm_model"] = "gemini-2.0-flash-exp"
                 # Audio format for telephony (matches server config)
                 yaml_config["providers"]["google_live"]["input_encoding"] = "ulaw"
                 yaml_config["providers"]["google_live"]["input_sample_rate_hz"] = 8000

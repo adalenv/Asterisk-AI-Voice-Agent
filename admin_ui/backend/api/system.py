@@ -231,6 +231,12 @@ async def restart_container(container_id: str):
         container_name = container_name_map[container_id]
     
     logger.info(f"Restarting container: {container_name}")
+
+    # NOTE: docker restart does NOT reload env_file changes.
+    # For ai_engine/local_ai_server, prefer force-recreate so updated .env keys apply.
+    if container_name in ("ai_engine", "local_ai_server"):
+        service_name = service_map.get(container_name, container_name)
+        return await _recreate_via_compose(service_name)
     
     try:
         # A5: Use Docker SDK for cleaner restart (no stop/rm/up)
@@ -292,6 +298,44 @@ async def _start_via_compose(container_id: str, service_map: dict):
         raise HTTPException(status_code=500, detail="docker-compose not found")
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="Timeout waiting for container start")
+
+
+async def _recreate_via_compose(service_name: str):
+    """Force-recreate a compose service so env_file changes (.env) are applied."""
+    import subprocess
+
+    project_root = os.getenv("PROJECT_ROOT", "/app/project")
+
+    try:
+        compose_cmd = get_docker_compose_cmd()
+        cmd = compose_cmd + [
+            "-p",
+            "asterisk-ai-voice-agent",
+            "up",
+            "-d",
+            "--no-build",
+            "--force-recreate",
+            service_name,
+        ]
+
+        result = subprocess.run(
+            cmd,
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+        if result.returncode == 0:
+            return {"status": "success", "method": "docker-compose", "output": result.stdout or "Service recreated"}
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to recreate via compose: {result.stderr or result.stdout}",
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="docker-compose not found")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="Timeout waiting for container recreate")
 
 @router.get("/metrics")
 async def get_system_metrics():

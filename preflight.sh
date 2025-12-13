@@ -306,6 +306,22 @@ check_compose() {
     if docker compose version &>/dev/null 2>&1; then
         COMPOSE_CMD="docker compose"
         COMPOSE_VER=$(docker compose version --short 2>/dev/null | sed 's/^v//')
+        
+        # Create docker-compose wrapper if it doesn't exist (needed for admin-ui)
+        if ! command -v docker-compose &>/dev/null; then
+            if [ "$APPLY_FIXES" = true ]; then
+                # Remove if it's a directory (broken state)
+                [ -d /usr/local/bin/docker-compose ] && rm -rf /usr/local/bin/docker-compose
+                
+                echo '#!/bin/bash
+docker compose "$@"' > /usr/local/bin/docker-compose
+                chmod +x /usr/local/bin/docker-compose
+                log_ok "Created docker-compose wrapper for compatibility"
+            else
+                log_warn "docker-compose command not found (admin-ui needs this)"
+                FIX_CMDS+=("echo '#!/bin/bash\ndocker compose \"\$@\"' > /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose")
+            fi
+        fi
     elif command -v docker-compose &>/dev/null; then
         COMPOSE_CMD="docker-compose"
         COMPOSE_VER=$(docker-compose version --short 2>/dev/null | sed 's/^v//')

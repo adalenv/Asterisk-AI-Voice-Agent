@@ -83,6 +83,10 @@ const Wizard = () => {
         checked: boolean;
     }>({ running: false, exists: false, checked: false });
     const [startingEngine, setStartingEngine] = useState(false);
+    const [engineProgress, setEngineProgress] = useState<{
+        steps: Array<{ name: string; status: string; message: string }>;
+        currentStep: string;
+    }>({ steps: [], currentStep: '' });
 
     // Model selection state
     const [selectedLanguage, setSelectedLanguage] = useState<string>('en-US');
@@ -1667,10 +1671,16 @@ const Wizard = () => {
                                             onClick={async () => {
                                                 setStartingEngine(true);
                                                 setError(null);
+                                                setEngineProgress({ steps: [], currentStep: 'Starting...' });
                                                 try {
                                                     const res = await axios.post('/api/wizard/start-engine');
+                                                    // Update progress from response
+                                                    if (res.data.steps) {
+                                                        setEngineProgress({ steps: res.data.steps, currentStep: '' });
+                                                    }
                                                     if (res.data.success) {
                                                         setEngineStatus({ ...engineStatus, running: true, exists: true });
+                                                        showToast('AI Engine started successfully!', 'success');
                                                         // Show media setup warnings if any
                                                         const mediaErrors = res.data.media_setup?.errors || [];
                                                         if (mediaErrors.length > 0) {
@@ -1679,7 +1689,7 @@ const Wizard = () => {
                                                                 '\n\nManual fix: Run on your host:\n  sudo ln -sfn /path/to/asterisk_media/ai-generated /var/lib/asterisk/sounds/ai-generated');
                                                         }
                                                     } else {
-                                                        setError(res.data.message);
+                                                        setError(res.data.message + (res.data.stderr ? `\n\nDetails: ${res.data.stderr.slice(0, 300)}` : ''));
                                                     }
                                                 } catch (err: any) {
                                                     setError(err.response?.data?.detail || err.message);
@@ -1702,6 +1712,23 @@ const Wizard = () => {
                                                 </>
                                             )}
                                         </button>
+                                        
+                                        {/* Progress Steps */}
+                                        {engineProgress.steps.length > 0 && (
+                                            <div className="mt-4 space-y-2">
+                                                {engineProgress.steps.map((step, idx) => (
+                                                    <div key={idx} className="flex items-center text-sm">
+                                                        {step.status === 'complete' && <CheckCircle className="w-4 h-4 mr-2 text-green-500" />}
+                                                        {step.status === 'running' && <Loader2 className="w-4 h-4 mr-2 animate-spin text-blue-500" />}
+                                                        {step.status === 'error' && <XCircle className="w-4 h-4 mr-2 text-red-500" />}
+                                                        {step.status === 'warning' && <AlertCircle className="w-4 h-4 mr-2 text-yellow-500" />}
+                                                        <span className={step.status === 'error' ? 'text-red-600' : step.status === 'complete' ? 'text-green-600' : ''}>
+                                                            {step.message || step.name}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 
@@ -1768,10 +1795,16 @@ exten => s,1,NoOp(AI Agent - Local Full)
                                     onClick={async () => {
                                         setStartingEngine(true);
                                         setError(null);
+                                        setEngineProgress({ steps: [], currentStep: 'Starting...' });
                                         try {
                                             const res = await axios.post('/api/wizard/start-engine');
+                                            // Update progress from response
+                                            if (res.data.steps) {
+                                                setEngineProgress({ steps: res.data.steps, currentStep: '' });
+                                            }
                                             if (res.data.success) {
                                                 setEngineStatus({ ...engineStatus, running: true, exists: true });
+                                                showToast('AI Engine started successfully!', 'success');
                                                 // Show media setup warnings if any
                                                 const mediaErrors = res.data.media_setup?.errors || [];
                                                 if (mediaErrors.length > 0) {
@@ -1780,7 +1813,7 @@ exten => s,1,NoOp(AI Agent - Local Full)
                                                         '\n\nManual fix: Run on your host:\n  sudo ln -sfn /path/to/asterisk_media/ai-generated /var/lib/asterisk/sounds/ai-generated');
                                                 }
                                             } else {
-                                                setError(res.data.message);
+                                                setError(res.data.message + (res.data.stderr ? `\n\nDetails: ${res.data.stderr.slice(0, 300)}` : ''));
                                             }
                                         } catch (err: any) {
                                             setError(err.response?.data?.detail || err.message);
@@ -1803,6 +1836,23 @@ exten => s,1,NoOp(AI Agent - Local Full)
                                         </>
                                     )}
                                 </button>
+                                
+                                {/* Progress Steps */}
+                                {engineProgress.steps.length > 0 && (
+                                    <div className="mt-4 space-y-2">
+                                        {engineProgress.steps.map((step, idx) => (
+                                            <div key={idx} className="flex items-center text-sm">
+                                                {step.status === 'complete' && <CheckCircle className="w-4 h-4 mr-2 text-green-500" />}
+                                                {step.status === 'running' && <Loader2 className="w-4 h-4 mr-2 animate-spin text-blue-500" />}
+                                                {step.status === 'error' && <XCircle className="w-4 h-4 mr-2 text-red-500" />}
+                                                {step.status === 'warning' && <AlertCircle className="w-4 h-4 mr-2 text-yellow-500" />}
+                                                <span className={step.status === 'error' ? 'text-red-600' : step.status === 'complete' ? 'text-green-600' : ''}>
+                                                    {step.message || step.name}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         )}
 

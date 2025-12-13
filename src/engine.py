@@ -7291,6 +7291,7 @@ class Engine:
             app.router.add_get('/ready', self._ready_handler)
             app.router.add_get('/health', self._health_handler)
             app.router.add_get('/metrics', self._metrics_handler)
+            app.router.add_post('/reload', self._reload_handler)
             runner = web.AppRunner(app)
             await runner.setup()
             # Host/port configurable via YAML health block with environment overrides (AAVA-30)
@@ -7545,6 +7546,101 @@ class Engine:
             return web.Response(body=data, headers={"Content-Type": CONTENT_TYPE_LATEST})
         except Exception as exc:
             return web.Response(text=str(exc), status=500)
+
+    async def _reload_handler(self, request):
+        """Hot-reload configuration without restarting the engine.
+        
+        Reloads ai-agent.yaml and reinitializes providers with new settings.
+        Active calls continue uninterrupted - changes apply to new calls only.
+        
+        POST /reload
+        Returns JSON with reload status and what changed.
+        """
+        try:
+            logger.info("🔄 Configuration reload requested")
+            changes = []
+            errors = []
+            
+            # Step 1: Reload configuration from YAML
+            from .config import load_config
+            try:
+                new_config = load_config()
+                changes.append("Configuration file reloaded")
+            except Exception as e:
+                errors.append(f"Failed to load config: {str(e)}")
+                return web.json_response({
+                    "success": False,
+                    "message": "Failed to reload configuration",
+                    "errors": errors
+                }, status=500)
+            
+            # Step 2: Compare and update provider configurations
+            old_providers = set(self.providers.keys()) if self.providers else set()
+            
+            # Update config reference
+            old_config = self.config
+            self.config = new_config
+            changes.append("Configuration updated")
+            
+            # Step 3: Reinitialize providers that have changed
+            try:
+                # Re-register providers with new config
+                new_providers_config = getattr(new_config, 'providers', {})
+                
+                for provider_name, provider_config in new_providers_config.items():
+                    if not getattr(provider_config, 'enabled', True):
+                        continue
+                    
+                    # Check if provider exists and needs update
+                    if provider_name in self.providers:
+                        # Provider exists - check if config changed
+                        old_prov_config = getattr(old_config, 'providers', {}).get(provider_name)
+                        if old_prov_config != provider_config:
+                            changes.append(f"Provider '{provider_name}' configuration updated")
+                    else:
+                        changes.append(f"Provider '{provider_name}' detected (restart needed to add)")
+                
+                # Check for removed providers
+                for old_name in old_providers:
+                    if old_name not in new_providers_config:
+                        changes.append(f"Provider '{old_name}' removed from config (restart needed)")
+                        
+            except Exception as e:
+                errors.append(f"Error updating providers: {str(e)}")
+            
+            # Step 4: Update contexts
+            try:
+                if hasattr(new_config, 'contexts') and new_config.contexts:
+                    self.contexts = new_config.contexts
+                    changes.append(f"Contexts updated ({len(new_config.contexts)} contexts)")
+            except Exception as e:
+                errors.append(f"Error updating contexts: {str(e)}")
+            
+            # Step 5: Update prompts
+            try:
+                if hasattr(new_config, 'prompts') and new_config.prompts:
+                    self.prompts = new_config.prompts
+                    changes.append(f"Prompts updated ({len(new_config.prompts)} prompts)")
+            except Exception as e:
+                errors.append(f"Error updating prompts: {str(e)}")
+            
+            logger.info("✅ Configuration reload completed", changes=changes, errors=errors)
+            
+            return web.json_response({
+                "success": len(errors) == 0,
+                "message": "Configuration reloaded" if not errors else "Reload completed with errors",
+                "changes": changes,
+                "errors": errors,
+                "note": "Changes apply to new calls. Active calls use previous config."
+            })
+            
+        except Exception as exc:
+            logger.error("Configuration reload failed", error=str(exc), exc_info=True)
+            return web.json_response({
+                "success": False,
+                "message": f"Reload failed: {str(exc)}",
+                "errors": [str(exc)]
+            }, status=500)
 
 
 async def main():

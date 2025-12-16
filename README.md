@@ -291,6 +291,7 @@ Experience our production-ready configurations with a single phone call:
 - **Press 7** → OpenAI Realtime API (Modern cloud AI, most natural)
 - **Press 8** → Local Hybrid Pipeline (Privacy-focused, audio stays local)
 - **Press 9** → ElevenLabs Agent (Santa voice with background music)
+- **Press 10** → Fully Local Pipeline (100% on-premises, CPU-based)
 
 ---
 

@@ -19,6 +19,7 @@
 services:
   ai-engine:
     image: asterisk-ai-voice-agent-ai-engine:latest
+    pull_policy: build
     build:
       context: .
       dockerfile: Dockerfile
@@ -49,6 +50,7 @@ services:
 
   local-ai-server:
     image: asterisk-ai-voice-agent-local-ai-server:latest
+    pull_policy: build
     build:
       context: ./local_ai_server
       dockerfile: Dockerfile

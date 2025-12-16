@@ -792,15 +792,24 @@ const Wizard = () => {
                                                     <label className="text-sm font-medium">Voice</label>
                                                     <select
                                                         className="w-full p-2 rounded-md border border-input bg-background mt-1"
-                                                        value={config.kokoro_voice}
+                                                        value={config.kokoro_voice || 'af_heart'}
                                                         onChange={e => setConfig({ ...config, kokoro_voice: e.target.value })}
                                                     >
                                                         <option value="af_heart">Heart (Female, US)</option>
                                                         <option value="af_bella">Bella (Female, US)</option>
                                                         <option value="af_nicole">Nicole (Female, US)</option>
+                                                        <option value="af_sarah">Sarah (Female, US)</option>
+                                                        <option value="af_sky">Sky (Female, US)</option>
                                                         <option value="am_adam">Adam (Male, US)</option>
+                                                        <option value="am_michael">Michael (Male, US)</option>
                                                         <option value="bf_emma">Emma (Female, UK)</option>
+                                                        <option value="bf_isabella">Isabella (Female, UK)</option>
+                                                        <option value="bm_george">George (Male, UK)</option>
+                                                        <option value="bm_lewis">Lewis (Male, UK)</option>
                                                     </select>
+                                                    <p className="text-xs text-muted-foreground mt-1">
+                                                        af=American Female, am=American Male, bf=British Female, bm=British Male
+                                                    </p>
                                                 </div>
                                             )}
                                         </div>
@@ -1291,6 +1300,31 @@ const Wizard = () => {
 	                                                        />
 	                                                        <span className="text-sm text-muted-foreground">Show advanced modes</span>
 	                                                    </label>
+	                                                </div>
+	                                            )}
+	                                            {config.local_tts_backend === 'kokoro' && ['local', 'hf'].includes((config.kokoro_mode || 'local').toLowerCase()) && (
+	                                                <div>
+	                                                    <label className="text-sm font-medium">Voice</label>
+	                                                    <select
+	                                                        className="w-full p-2 rounded-md border border-input bg-background mt-1"
+	                                                        value={config.kokoro_voice || 'af_heart'}
+	                                                        onChange={e => setConfig({ ...config, kokoro_voice: e.target.value })}
+	                                                    >
+	                                                        <option value="af_heart">Heart (Female, US)</option>
+	                                                        <option value="af_bella">Bella (Female, US)</option>
+	                                                        <option value="af_nicole">Nicole (Female, US)</option>
+	                                                        <option value="af_sarah">Sarah (Female, US)</option>
+	                                                        <option value="af_sky">Sky (Female, US)</option>
+	                                                        <option value="am_adam">Adam (Male, US)</option>
+	                                                        <option value="am_michael">Michael (Male, US)</option>
+	                                                        <option value="bf_emma">Emma (Female, UK)</option>
+	                                                        <option value="bf_isabella">Isabella (Female, UK)</option>
+	                                                        <option value="bm_george">George (Male, UK)</option>
+	                                                        <option value="bm_lewis">Lewis (Male, UK)</option>
+	                                                    </select>
+	                                                    <p className="text-xs text-muted-foreground mt-1">
+	                                                        af=American Female, am=American Male, bf=British Female, bm=British Male
+	                                                    </p>
 	                                                </div>
 	                                            )}
 	                                        </div>

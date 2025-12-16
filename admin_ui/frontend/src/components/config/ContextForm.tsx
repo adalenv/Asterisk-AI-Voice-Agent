@@ -4,16 +4,17 @@ import { FormInput, FormSelect, FormLabel } from '../ui/FormComponents';
 interface ContextFormProps {
     config: any;
     providers: any;
+    availableTools?: string[];
     onChange: (newConfig: any) => void;
     isNew?: boolean;
 }
 
-const ContextForm = ({ config, providers, onChange, isNew }: ContextFormProps) => {
+const ContextForm = ({ config, providers, availableTools, onChange, isNew }: ContextFormProps) => {
     const updateConfig = (field: string, value: any) => {
         onChange({ ...config, [field]: value });
     };
 
-    const availableTools = [
+    const fallbackTools = [
         'transfer',
         'cancel_transfer',
         'hangup_call',
@@ -21,6 +22,7 @@ const ContextForm = ({ config, providers, onChange, isNew }: ContextFormProps) =
         'send_email_summary',
         'request_transcript'
     ];
+    const toolOptions = (availableTools && availableTools.length > 0) ? availableTools : fallbackTools;
 
     const availableProfiles = [
         'default',
@@ -90,7 +92,7 @@ const ContextForm = ({ config, providers, onChange, isNew }: ContextFormProps) =
             <div className="space-y-3">
                 <FormLabel>Available Tools</FormLabel>
                 <div className="grid grid-cols-2 gap-3">
-                    {availableTools.map(tool => (
+                    {toolOptions.map(tool => (
                         <label key={tool} className="flex items-center space-x-3 p-3 rounded-md border border-border bg-card/50 hover:bg-accent cursor-pointer transition-colors">
                             <input
                                 type="checkbox"

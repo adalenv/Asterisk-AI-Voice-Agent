@@ -32,7 +32,10 @@ interface SetupConfig {
     kokoro_mode?: string;
     kokoro_voice?: string;
     kokoro_api_key?: string;
+    kokoro_api_base_url?: string;
     local_llm_model?: string;
+    local_llm_custom_url?: string;
+    local_llm_custom_filename?: string;
 }
 
 const Wizard = () => {
@@ -40,6 +43,7 @@ const Wizard = () => {
     const [step, setStep] = useState(1);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [showAdvancedKokoro, setShowAdvancedKokoro] = useState(false);
 
     const [config, setConfig] = useState<SetupConfig>({
         provider: 'openai_realtime',
@@ -65,8 +69,17 @@ const Wizard = () => {
         local_tts_model: '',
         kokoro_mode: 'local',
         kokoro_voice: 'af_heart',
-        local_llm_model: 'phi-3-mini'
+        kokoro_api_base_url: 'https://voice-generator.pages.dev/api/v1',
+        local_llm_model: 'phi3_mini',
+        local_llm_custom_url: '',
+        local_llm_custom_filename: ''
     });
+
+    useEffect(() => {
+        if ((config.kokoro_mode || '').toLowerCase() === 'hf') {
+            setShowAdvancedKokoro(true);
+        }
+    }, [config.kokoro_mode]);
 
 
 
@@ -209,6 +222,34 @@ const Wizard = () => {
             }
         }
     }, [selectedLanguage, modelCatalog]);
+
+    const pickRecommendedLlmId = () => {
+        const llms = (modelCatalog?.llm || []).filter((m: any) => !m.requires_api_key);
+        if (!llms.length) return 'phi3_mini';
+
+        const tier = (localAIStatus.tier || '').toUpperCase();
+        const hasGpu = !!localAIStatus.gpuDetected;
+
+        // Prefer explicitly system-recommended models first.
+        const recommended = llms.filter((m: any) => m.system_recommended || m.recommended);
+
+        // Lightweight tier: prefer smaller models for responsiveness.
+        if (tier.includes('LIGHT') || (!hasGpu && localAIStatus.ramGb > 0 && localAIStatus.ramGb < 12)) {
+            const tiny = llms.find((m: any) => m.id === 'tinyllama');
+            if (tiny) return tiny.id;
+        }
+
+        // CPU tiers: Phi-3 is the default.
+        const phi3 = llms.find((m: any) => m.id === 'phi3_mini');
+        if (!hasGpu && phi3) return phi3.id;
+
+        // GPU tiers: prefer a larger option if available, otherwise Phi-3.
+        const llama32 = llms.find((m: any) => m.id === 'llama32_3b');
+        if (hasGpu && llama32) return llama32.id;
+
+        if (phi3) return phi3.id;
+        return (recommended[0]?.id || llms[0]?.id || 'phi3_mini');
+    };
 
     const handleSkip = () => {
         setShowSkipConfirm(true);
@@ -751,15 +792,24 @@ const Wizard = () => {
                                                     <label className="text-sm font-medium">Voice</label>
                                                     <select
                                                         className="w-full p-2 rounded-md border border-input bg-background mt-1"
-                                                        value={config.kokoro_voice}
+                                                        value={config.kokoro_voice || 'af_heart'}
                                                         onChange={e => setConfig({ ...config, kokoro_voice: e.target.value })}
                                                     >
                                                         <option value="af_heart">Heart (Female, US)</option>
                                                         <option value="af_bella">Bella (Female, US)</option>
                                                         <option value="af_nicole">Nicole (Female, US)</option>
+                                                        <option value="af_sarah">Sarah (Female, US)</option>
+                                                        <option value="af_sky">Sky (Female, US)</option>
                                                         <option value="am_adam">Adam (Male, US)</option>
+                                                        <option value="am_michael">Michael (Male, US)</option>
                                                         <option value="bf_emma">Emma (Female, UK)</option>
+                                                        <option value="bf_isabella">Isabella (Female, UK)</option>
+                                                        <option value="bm_george">George (Male, UK)</option>
+                                                        <option value="bm_lewis">Lewis (Male, UK)</option>
                                                     </select>
+                                                    <p className="text-xs text-muted-foreground mt-1">
+                                                        af=American Female, am=American Male, bf=British Female, bm=British Male
+                                                    </p>
                                                 </div>
                                             )}
                                         </div>
@@ -1017,7 +1067,7 @@ const Wizard = () => {
                                                         ...prev,
                                                         local_stt_backend: 'vosk',
                                                         local_tts_backend: 'piper',
-                                                        local_llm_model: 'phi-3-mini'
+                                                        local_llm_model: pickRecommendedLlmId()
                                                     }));
                                                 } catch (err: any) {
                                                     setError('Failed to detect system: ' + err.message);
@@ -1140,7 +1190,7 @@ const Wizard = () => {
                                                                 ...config, 
                                                                 local_stt_backend: model.backend,
                                                                 local_stt_model: model.id,
-                                                                kroko_embedded: model.backend === 'kroko' && model.id.includes('embedded')
+                                                                kroko_embedded: model.backend === 'kroko' && model.embedded === true
                                                             });
                                                         } else if (val === 'kroko_cloud') {
                                                             setConfig({ ...config, local_stt_backend: 'kroko', local_stt_model: val, kroko_embedded: false });
@@ -1184,28 +1234,27 @@ const Wizard = () => {
                                         )}
                                     </div>
 
-                                    {/* TTS Config */}
-                                    <div className="space-y-3 p-4 bg-muted/30 rounded-lg border">
-                                        <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wider">Text-to-Speech (TTS)</h4>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div>
-                                                <label className="text-sm font-medium">Voice</label>
-                                                <select
-                                                    className="w-full p-2 rounded-md border border-input bg-background mt-1"
-                                                    value={config.local_tts_model || config.local_tts_backend}
-                                                    onChange={e => {
-                                                        const val = e.target.value;
-                                                        const model = modelCatalog?.tts?.find((m: any) => m.id === val);
-                                                        if (model) {
-                                                            setConfig({ 
-                                                                ...config, 
-                                                                local_tts_backend: model.backend,
-                                                                local_tts_model: model.id,
-                                                                kokoro_mode: model.backend === 'kokoro' ? 'local' : config.kokoro_mode
-                                                            });
-                                                        }
-                                                    }}
-                                                >
+	                                    {/* TTS Config */}
+	                                    <div className="space-y-3 p-4 bg-muted/30 rounded-lg border">
+	                                        <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wider">Text-to-Speech (TTS)</h4>
+	                                        <div className="grid grid-cols-2 gap-4">
+	                                            <div>
+	                                                <label className="text-sm font-medium">Voice / Model</label>
+	                                                <select
+	                                                    className="w-full p-2 rounded-md border border-input bg-background mt-1"
+	                                                    value={config.local_tts_model || config.local_tts_backend}
+	                                                    onChange={e => {
+	                                                        const val = e.target.value;
+	                                                        const model = modelCatalog?.tts?.find((m: any) => m.id === val);
+	                                                        if (model) {
+	                                                            setConfig({ 
+	                                                                ...config, 
+	                                                                local_tts_backend: model.backend,
+	                                                                local_tts_model: model.id,
+	                                                            });
+	                                                        }
+	                                                    }}
+	                                                >
                                                     {/* Language-specific voices */}
                                                     {modelCatalog?.tts?.filter((m: any) => 
                                                         m.language === selectedLanguage || m.language === 'multi'
@@ -1224,24 +1273,92 @@ const Wizard = () => {
                                                         </>
                                                     )}
                                                 </select>
-                                                <p className="text-xs text-muted-foreground mt-1">
-                                                    Voices filtered for {availableLanguages.language_names?.[selectedLanguage] || selectedLanguage}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        {config.local_tts_backend === 'kokoro' && config.kokoro_mode === 'api' && (
-                                            <div>
-                                                <label className="text-sm font-medium">Kokoro API Key</label>
+	                                                <p className="text-xs text-muted-foreground mt-1">
+	                                                    Voices filtered for {availableLanguages.language_names?.[selectedLanguage] || selectedLanguage}
+	                                                </p>
+	                                            </div>
+	                                            {config.local_tts_backend === 'kokoro' && (
+	                                                <div>
+	                                                    <label className="text-sm font-medium">Kokoro Mode</label>
+	                                                    <select
+	                                                        className="w-full p-2 rounded-md border border-input bg-background mt-1"
+	                                                        value={(config.kokoro_mode || 'local').toLowerCase()}
+	                                                        onChange={e => setConfig({ ...config, kokoro_mode: e.target.value })}
+	                                                    >
+	                                                        <option value="local">Local (downloaded files)</option>
+	                                                        <option value="api">Cloud/API (remote endpoint)</option>
+	                                                        {(showAdvancedKokoro || (config.kokoro_mode || '').toLowerCase() === 'hf') && (
+	                                                            <option value="hf">HuggingFace (auto-download, Advanced)</option>
+	                                                        )}
+	                                                    </select>
+	                                                    <label className="flex items-center space-x-2 cursor-pointer mt-2">
+	                                                        <input
+	                                                            type="checkbox"
+	                                                            checked={showAdvancedKokoro}
+	                                                            onChange={e => setShowAdvancedKokoro(e.target.checked)}
+	                                                            className="rounded border-gray-300"
+	                                                        />
+	                                                        <span className="text-sm text-muted-foreground">Show advanced modes</span>
+	                                                    </label>
+	                                                </div>
+	                                            )}
+	                                            {config.local_tts_backend === 'kokoro' && ['local', 'hf'].includes((config.kokoro_mode || 'local').toLowerCase()) && (
+	                                                <div>
+	                                                    <label className="text-sm font-medium">Voice</label>
+	                                                    <select
+	                                                        className="w-full p-2 rounded-md border border-input bg-background mt-1"
+	                                                        value={config.kokoro_voice || 'af_heart'}
+	                                                        onChange={e => setConfig({ ...config, kokoro_voice: e.target.value })}
+	                                                    >
+	                                                        <option value="af_heart">Heart (Female, US)</option>
+	                                                        <option value="af_bella">Bella (Female, US)</option>
+	                                                        <option value="af_nicole">Nicole (Female, US)</option>
+	                                                        <option value="af_sarah">Sarah (Female, US)</option>
+	                                                        <option value="af_sky">Sky (Female, US)</option>
+	                                                        <option value="am_adam">Adam (Male, US)</option>
+	                                                        <option value="am_michael">Michael (Male, US)</option>
+	                                                        <option value="bf_emma">Emma (Female, UK)</option>
+	                                                        <option value="bf_isabella">Isabella (Female, UK)</option>
+	                                                        <option value="bm_george">George (Male, UK)</option>
+	                                                        <option value="bm_lewis">Lewis (Male, UK)</option>
+	                                                    </select>
+	                                                    <p className="text-xs text-muted-foreground mt-1">
+	                                                        af=American Female, am=American Male, bf=British Female, bm=British Male
+	                                                    </p>
+	                                                </div>
+	                                            )}
+	                                        </div>
+	                                        {config.local_tts_backend === 'kokoro' && (config.kokoro_mode || '').toLowerCase() === 'api' && (
+	                                            <div>
+	                                                <label className="text-sm font-medium">Kokoro Web API</label>
+	                                                <input
+	                                                    type="text"
+	                                                    className="w-full p-2 rounded-md border border-input bg-background mt-1"
+	                                                    value={config.kokoro_api_base_url || ''}
+	                                                    onChange={e => setConfig({ ...config, kokoro_api_base_url: e.target.value })}
+	                                                    placeholder="https://voice-generator.pages.dev/api/v1"
+	                                                />
+	                                                <p className="text-xs text-muted-foreground mt-1">
+	                                                    Supports OpenAI-compatible `audio/speech` endpoint. Recommended to self-host for reliability.
+	                                                </p>
+	                                                <label className="text-sm font-medium mt-3 block">Token (optional)</label>
                                                 <input
                                                     type="password"
                                                     className="w-full p-2 rounded-md border border-input bg-background mt-1"
-                                                    value={config.kokoro_api_key || ''}
-                                                    onChange={e => setConfig({ ...config, kokoro_api_key: e.target.value })}
-                                                    placeholder="Kokoro API Key"
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
+	                                                    value={config.kokoro_api_key || ''}
+	                                                    onChange={e => setConfig({ ...config, kokoro_api_key: e.target.value })}
+	                                                    placeholder="Bearer token (optional; Dashboard requires a token to enable Cloud/API selection)"
+	                                                />
+	                                            </div>
+	                                        )}
+	                                        {config.local_tts_backend === 'kokoro' && (config.kokoro_mode || '').toLowerCase() === 'hf' && (
+	                                            <div className="text-xs text-muted-foreground">
+	                                                HuggingFace mode forces Kokoro to load via the HuggingFace cache inside the container and may
+	                                                download weights/voices on first use. Rebuilding the container can trigger re-downloads unless
+	                                                the cache is persisted; prefer Local mode for production.
+	                                            </div>
+	                                        )}
+	                                    </div>
 
                                     {/* LLM Config */}
                                     <div className="space-y-3 p-4 bg-muted/30 rounded-lg border">
@@ -1253,20 +1370,44 @@ const Wizard = () => {
                                                 value={config.local_llm_model}
                                                 onChange={e => setConfig({ ...config, local_llm_model: e.target.value })}
                                             >
-                                                <option value="phi-3-mini">Phi-3 Mini (3.8B) - Recommended</option>
-                                                <option value="llama-3-8b">Llama 3 (8B) - High VRAM</option>
-                                                <option value="mistral-7b">Mistral (7B)</option>
-                                                <option value="ollama">Ollama (Self-hosted) - No download needed</option>
+                                                {(modelCatalog?.llm || []).filter((m: any) => !m.requires_api_key).map((model: any) => (
+                                                    <option key={model.id} value={model.id}>
+                                                        {model.name}
+                                                        {model.system_recommended ? ' • Recommended' : ''}
+                                                        {model.size_display ? ` • ${model.size_display}` : ''}
+                                                        {model.description ? ` • ${model.description}` : ''}
+                                                    </option>
+                                                ))}
+                                                <option value="custom_gguf_url">Custom GGUF (URL)</option>
                                             </select>
-                                            {config.local_llm_model === 'ollama' && (
-                                                <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md border border-blue-200 dark:border-blue-800">
+                                            {config.local_llm_model === 'custom_gguf_url' && (
+                                                <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md border border-blue-200 dark:border-blue-800 space-y-3">
                                                     <p className="text-sm text-blue-800 dark:text-blue-300">
-                                                        <strong>Ollama:</strong> Use your own Ollama server running on a Mac, PC, or server.
+                                                        Provide a direct URL to a llama.cpp-compatible `.gguf` file. This will be downloaded into `models/llm/`.
                                                     </p>
-                                                    <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                                                        Configure the Ollama URL in Providers → ollama_llm after setup.
-                                                        See <a href="/docs/OLLAMA_SETUP.md" className="underline">OLLAMA_SETUP.md</a> for details.
-                                                    </p>
+                                                    <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-blue-700 dark:text-blue-300">GGUF URL</label>
+                                                        <input
+                                                            type="text"
+                                                            className="w-full p-2 rounded-md border border-input bg-background"
+                                                            value={config.local_llm_custom_url || ''}
+                                                            onChange={e => setConfig({ ...config, local_llm_custom_url: e.target.value })}
+                                                            placeholder="https://huggingface.co/.../resolve/main/model.Q4_K_M.gguf"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-blue-700 dark:text-blue-300">Filename (optional)</label>
+                                                        <input
+                                                            type="text"
+                                                            className="w-full p-2 rounded-md border border-input bg-background"
+                                                            value={config.local_llm_custom_filename || ''}
+                                                            onChange={e => setConfig({ ...config, local_llm_custom_filename: e.target.value })}
+                                                            placeholder="my-model.Q4_K_M.gguf"
+                                                        />
+                                                        <p className="text-xs text-blue-600 dark:text-blue-400">
+                                                            If blank, filename is inferred from the URL.
+                                                        </p>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
@@ -1296,7 +1437,11 @@ const Wizard = () => {
                                                             language: selectedLanguage,
                                                             // Send exact model IDs to download the specific model selected
                                                             stt_model_id: config.local_stt_model,
-                                                            tts_model_id: config.local_tts_model
+                                                            tts_model_id: config.local_tts_model,
+                                                            llm_download_url: config.local_llm_custom_url,
+                                                            llm_model_path: config.local_llm_custom_filename,
+                                                            kokoro_api_base_url: config.kokoro_api_base_url,
+                                                            kokoro_api_key: config.kokoro_api_key
                                                         });
                                                         const pollProgress = async () => {
                                                             try {

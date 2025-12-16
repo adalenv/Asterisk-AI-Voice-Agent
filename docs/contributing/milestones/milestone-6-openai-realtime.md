@@ -30,7 +30,7 @@ Add first-class support for OpenAI’s Realtime voice agents so users can swap b
 
 - Extend provider section in `config/ai-agent.yaml` with an `openai_realtime` block (API key env reference, voice preset, model name, sample rate, codec expectations); the block now ships in `config/ai-agent.yaml` while Deepgram and local defaults remain untouched.
 - Update `src/config.py` with Pydantic models and validation, including the new `OpenAIRealtimeProviderConfig` structure.
-- Document required env vars in `README.md` / `docs/Architecture.md` (e.g., `OPENAI_API_KEY`).
+- Document required env vars in `README.md` / `docs/Configuration-Reference.md` (e.g., `OPENAI_API_KEY`) and confirm architecture notes in `docs/contributing/architecture-deep-dive.md`.
 
 ### 6.3 Codec & Transport Alignment
 
@@ -40,9 +40,8 @@ Add first-class support for OpenAI’s Realtime voice agents so users can swap b
 
 ### 6.4 Regression & Documentation
 
-- Create `docs/regressions/openai-call-framework.md` mirroring the Deepgram guide (call steps, log snippets, metrics).
-- Update `call-framework.md` with an OpenAI regression section and checklist.
-- Update `docs/ROADMAP.md` and `docs/Architecture.md` to reflect OpenAI support.
+- Ensure regression evidence is recorded in `docs/resilience.md` (and keep the long-form walkthrough in `archived/regressions/openai-call-framework.md` if needed).
+- Update `docs/ROADMAP.md` and `docs/contributing/architecture-deep-dive.md` to reflect OpenAI support.
 
 ### 6.5 OpenAI Realtime Schema Alignment (Important)
 

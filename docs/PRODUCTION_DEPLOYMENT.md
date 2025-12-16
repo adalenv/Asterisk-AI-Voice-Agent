@@ -1,6 +1,6 @@
 # Production Deployment Guide
 
-Best practices and recommendations for deploying Asterisk AI Voice Agent v4.5.0 in production environments.
+Best practices and recommendations for deploying Asterisk AI Voice Agent v4.5.2 in production environments.
 
 ## Overview
 

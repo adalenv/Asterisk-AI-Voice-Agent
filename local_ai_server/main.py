@@ -8,13 +8,15 @@ import os
 import subprocess
 import tempfile
 import wave
+import urllib.request
+import urllib.error
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
-from websockets.server import serve
+from websockets.asyncio.server import serve
 import websockets.client as ws_client
 
 from constants import (
@@ -747,8 +749,16 @@ class LocalAIServer:
         self.kokoro_backend: Optional[KokoroTTSBackend] = None
         # Back-compat / docs alias: LOCAL_TTS_VOICE is treated as Kokoro voice.
         self.kokoro_voice = os.getenv("KOKORO_VOICE") or os.getenv("LOCAL_TTS_VOICE", "af_heart")
+        # Kokoro mode:
+        # - "local": prefer local files under KOKORO_MODEL_PATH (falls back to HF if missing)
+        # - "hf": force HuggingFace-backed loading (no local model files required)
+        # - "api": use a remote Kokoro Web API (OpenAI-compatible audio/speech)
+        self.kokoro_mode = (os.getenv("KOKORO_MODE", "local") or "local").strip().lower()
         self.kokoro_lang = os.getenv("KOKORO_LANG", "a")  # 'a' = American English
         self.kokoro_model_path = os.getenv("KOKORO_MODEL_PATH", "/app/models/tts/kokoro")
+        self.kokoro_api_base_url = (os.getenv("KOKORO_API_BASE_URL", "") or "").strip()
+        self.kokoro_api_key = (os.getenv("KOKORO_API_KEY", "") or "").strip()
+        self.kokoro_api_model = (os.getenv("KOKORO_API_MODEL", "model") or "model").strip()
 
         default_threads = max(1, min(16, os.cpu_count() or 1))
         self.llm_threads = int(os.getenv("LOCAL_LLM_THREADS", str(default_threads)))
@@ -1101,13 +1111,33 @@ class LocalAIServer:
     async def _load_kokoro_backend(self):
         """Initialize Kokoro TTS backend."""
         try:
-            logging.info("🎙️ TTS backend: Kokoro (voice=%s)", self.kokoro_voice)
+            logging.info(
+                "🎙️ TTS backend: Kokoro (voice=%s, mode=%s)", self.kokoro_voice, self.kokoro_mode
+            )
 
-            # Check if local model exists
+            # Check if local model exists (unless explicitly forcing HF mode)
             model_path = None
-            if os.path.isdir(self.kokoro_model_path):
-                logging.info("📁 KOKORO - Found local model at %s", self.kokoro_model_path)
+            if self.kokoro_mode == "api":
+                # API mode does not require local model files or kokoro package initialization.
+                if not self.kokoro_api_base_url:
+                    raise RuntimeError(
+                        "KOKORO_MODE=api requires KOKORO_API_BASE_URL (e.g. https://voice-generator.pages.dev/api/v1)"
+                    )
+                logging.info("🌐 KOKORO - Using remote Web API at %s", self.kokoro_api_base_url)
+                self.kokoro_backend = None
+                return
+            if self.kokoro_mode == "hf":
+                logging.info("🌐 KOKORO - Forcing HuggingFace-backed model loading")
+            elif os.path.isdir(self.kokoro_model_path):
+                logging.info(
+                    "📁 KOKORO - Found local model at %s", self.kokoro_model_path
+                )
                 model_path = self.kokoro_model_path
+            else:
+                logging.warning(
+                    "⚠️ KOKORO - Local mode requested but model directory not found at %s; falling back to HuggingFace",
+                    self.kokoro_model_path,
+                )
 
             self.kokoro_backend = KokoroTTSBackend(
                 voice=self.kokoro_voice,
@@ -1443,6 +1473,9 @@ class LocalAIServer:
     async def _process_tts_kokoro(self, text: str) -> bytes:
         """Process TTS using Kokoro backend (24kHz output)."""
         try:
+            if self.kokoro_mode == "api":
+                return await self._process_tts_kokoro_api(text)
+
             if not self.kokoro_backend:
                 logging.error("Kokoro TTS backend not initialized")
                 return b""
@@ -1480,6 +1513,79 @@ class LocalAIServer:
 
         except Exception as exc:
             logging.error("Kokoro TTS processing failed: %s", exc, exc_info=True)
+            return b""
+
+    def _kokoro_api_speech_request(self, text: str) -> bytes:
+        """Blocking HTTP request to Kokoro Web API (OpenAI-compatible audio/speech)."""
+        base_url = self.kokoro_api_base_url.rstrip("/")
+        url = f"{base_url}/audio/speech"
+
+        payload = {
+            "model": self.kokoro_api_model,
+            "voice": self.kokoro_voice,
+            "input": text,
+            # Request WAV so we can feed it directly into sox for ulaw conversion.
+            "response_format": "wav",
+            "speed": 1.0,
+        }
+
+        data = json.dumps(payload).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "audio/wav",
+        }
+
+        # OpenAPI shows bearerAuth but examples use "no-key"; treat token as optional.
+        token = self.kokoro_api_key.strip() if self.kokoro_api_key else ""
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        else:
+            headers["Authorization"] = "Bearer no-key"
+
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as e:
+            body = b""
+            try:
+                body = e.read()
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"Kokoro Web API HTTP {e.code}: {body[:500].decode('utf-8', errors='ignore')}"
+            ) from e
+        except Exception as e:
+            raise RuntimeError(f"Kokoro Web API request failed: {e}") from e
+
+    async def _process_tts_kokoro_api(self, text: str) -> bytes:
+        """Process TTS using Kokoro Web API, returning 8kHz µ-law bytes."""
+        try:
+            if not self.kokoro_api_base_url:
+                logging.error("Kokoro API mode selected but KOKORO_API_BASE_URL is empty")
+                return b""
+
+            logging.debug(
+                "🔊 TTS INPUT - Kokoro API (%s) voice=%s text='%s'",
+                self.kokoro_api_base_url,
+                self.kokoro_voice,
+                text,
+            )
+
+            wav_data = await asyncio.to_thread(self._kokoro_api_speech_request, text)
+            if not wav_data:
+                return b""
+
+            ulaw_data = await asyncio.to_thread(
+                self.audio_processor.convert_to_ulaw_8k, wav_data, 24000
+            )
+            logging.info(
+                "🔊 TTS RESULT - Kokoro API generated uLaw 8kHz audio: %s bytes",
+                len(ulaw_data),
+            )
+            return ulaw_data
+        except Exception as exc:
+            logging.error("Kokoro API TTS processing failed: %s", exc, exc_info=True)
             return b""
 
     def _cancel_idle_timer(self, session: SessionContext) -> None:
@@ -2472,6 +2578,9 @@ class LocalAIServer:
 
         if msg_type == "reload_llm":
             logging.info("🔄 LLM RELOAD REQUEST - Hot reloading LLM with optimizations...")
+            requested_path = data.get("llm_model_path") or data.get("model_path")
+            if requested_path:
+                self.llm_model_path = requested_path
             await self.reload_llm_only()
             response = {
                 "type": "reload_response",
@@ -2487,7 +2596,10 @@ class LocalAIServer:
 
         if msg_type == "switch_model":
             # Switch to a different model without container restart
-            # Supported: stt_model_path, llm_model_path, tts_model_path, stt_backend, tts_backend
+            # Supported:
+            # - STT: stt_backend, stt_model_path (vosk), sherpa_model_path, kroko_{embedded,port,language,url,model_path}
+            # - LLM: llm_model_path
+            # - TTS: tts_backend, tts_model_path (piper), kokoro_{voice,mode,model_path}
             logging.info("🔄 MODEL SWITCH REQUEST - Switching model configuration...")
             try:
                 changed = []
@@ -2501,8 +2613,53 @@ class LocalAIServer:
                 
                 # STT model path
                 if "stt_model_path" in data:
-                    self.stt_model_path = data["stt_model_path"]
-                    changed.append(f"stt_model_path={os.path.basename(data['stt_model_path'])}")
+                    stt_path = data["stt_model_path"]
+                    # Route model path based on backend (explicit or current)
+                    if self.stt_backend == "sherpa":
+                        self.sherpa_model_path = stt_path
+                        changed.append(f"sherpa_model_path={os.path.basename(stt_path)}")
+                    elif self.stt_backend == "kroko":
+                        self.kroko_model_path = stt_path
+                        changed.append(f"kroko_model_path={os.path.basename(stt_path)}")
+                    else:
+                        self.stt_model_path = stt_path
+                        changed.append(f"stt_model_path={os.path.basename(stt_path)}")
+
+                if "sherpa_model_path" in data:
+                    self.sherpa_model_path = data["sherpa_model_path"]
+                    changed.append(
+                        f"sherpa_model_path={os.path.basename(data['sherpa_model_path'])}"
+                    )
+
+                if "kroko_model_path" in data:
+                    self.kroko_model_path = data["kroko_model_path"]
+                    changed.append(
+                        f"kroko_model_path={os.path.basename(data['kroko_model_path'])}"
+                    )
+
+                if "kroko_language" in data:
+                    self.kroko_language = data["kroko_language"]
+                    changed.append(f"kroko_language={data['kroko_language']}")
+
+                if "kroko_url" in data:
+                    self.kroko_url = data["kroko_url"]
+                    changed.append("kroko_url=updated")
+
+                if "kroko_port" in data:
+                    try:
+                        self.kroko_port = int(data["kroko_port"])
+                        changed.append(f"kroko_port={self.kroko_port}")
+                    except Exception:
+                        pass
+
+                if "kroko_embedded" in data:
+                    raw = data["kroko_embedded"]
+                    if isinstance(raw, str):
+                        raw = raw.strip().lower() in ("1", "true", "yes", "y", "on")
+                    self.kroko_embedded = bool(raw)
+                    changed.append(
+                        f"kroko_embedded={'1' if self.kroko_embedded else '0'}"
+                    )
                 
                 # LLM model path
                 if "llm_model_path" in data:
@@ -2518,13 +2675,44 @@ class LocalAIServer:
                 
                 # TTS model path
                 if "tts_model_path" in data:
-                    self.tts_model_path = data["tts_model_path"]
-                    changed.append(f"tts_model_path={os.path.basename(data['tts_model_path'])}")
+                    if self.tts_backend == "piper":
+                        self.tts_model_path = data["tts_model_path"]
+                        changed.append(
+                            f"tts_model_path={os.path.basename(data['tts_model_path'])}"
+                        )
+                    else:
+                        # Back-compat: if someone sends tts_model_path while using kokoro, treat it as kokoro_model_path.
+                        self.kokoro_model_path = data["tts_model_path"]
+                        changed.append(
+                            f"kokoro_model_path={os.path.basename(data['tts_model_path'])}"
+                        )
                 
                 # Kokoro settings
                 if "kokoro_voice" in data:
                     self.kokoro_voice = data["kokoro_voice"]
                     changed.append(f"kokoro_voice={data['kokoro_voice']}")
+
+                if "kokoro_mode" in data:
+                    self.kokoro_mode = (data["kokoro_mode"] or "local").strip().lower()
+                    changed.append(f"kokoro_mode={self.kokoro_mode}")
+
+                if "kokoro_model_path" in data:
+                    self.kokoro_model_path = data["kokoro_model_path"]
+                    changed.append(
+                        f"kokoro_model_path={os.path.basename(data['kokoro_model_path'])}"
+                    )
+
+                if "kokoro_api_base_url" in data:
+                    self.kokoro_api_base_url = (data["kokoro_api_base_url"] or "").strip()
+                    changed.append("kokoro_api_base_url=updated")
+
+                if "kokoro_api_key" in data:
+                    self.kokoro_api_key = (data["kokoro_api_key"] or "").strip()
+                    changed.append("kokoro_api_key=updated")
+
+                if "kokoro_api_model" in data:
+                    self.kokoro_api_model = (data["kokoro_api_model"] or "model").strip()
+                    changed.append(f"kokoro_api_model={self.kokoro_api_model}")
                 
                 if changed:
                     logging.info("📝 Configuration updated: %s", ", ".join(changed))
@@ -2555,33 +2743,48 @@ class LocalAIServer:
         if msg_type == "status":
             # Determine STT loaded state based on active backend
             stt_loaded = False
-            stt_model_info = self.stt_model_path
+            stt_path = None
+            stt_display = None
             if self.stt_backend == "vosk":
                 stt_loaded = self.stt_model is not None
-                # Extract model name from path (e.g., vosk-model-en-us-0.22)
-                stt_model_info = os.path.basename(self.stt_model_path)
+                stt_path = self.stt_model_path
+                stt_display = os.path.basename(self.stt_model_path)
             elif self.stt_backend == "kroko":
                 stt_loaded = self.kroko_backend is not None
-                # Show friendly name instead of URL
-                if self.kroko_embedded:
-                    stt_model_info = f"Kroko (embedded, port {self.kroko_port})"
-                else:
-                    stt_model_info = f"Kroko ({self.kroko_language})"
+                stt_path = self.kroko_model_path if self.kroko_embedded else self.kroko_url
+                stt_display = (
+                    f"Kroko (embedded, port {self.kroko_port})"
+                    if self.kroko_embedded
+                    else f"Kroko ({self.kroko_language})"
+                )
             elif self.stt_backend == "sherpa":
                 stt_loaded = self.sherpa_backend is not None
-                # Extract model name from path
-                stt_model_info = os.path.basename(self.sherpa_model_path)
+                stt_path = self.sherpa_model_path
+                stt_display = os.path.basename(self.sherpa_model_path)
             
             # Determine TTS loaded state based on active backend
             tts_loaded = False
-            tts_model_info = self.tts_model_path
+            tts_path = None
+            tts_display = None
             if self.tts_backend == "piper":
                 tts_loaded = self.tts_model is not None
-                # Extract model name from path
-                tts_model_info = os.path.basename(self.tts_model_path)
+                tts_path = self.tts_model_path
+                tts_display = os.path.basename(self.tts_model_path)
             elif self.tts_backend == "kokoro":
-                tts_loaded = self.kokoro_backend is not None
-                tts_model_info = f"Kokoro ({self.kokoro_voice})"
+                if self.kokoro_mode == "api":
+                    tts_loaded = bool(self.kokoro_api_base_url)
+                    tts_path = self.kokoro_api_base_url
+                    tts_display = f"Kokoro Web API ({self.kokoro_voice})"
+                else:
+                    tts_loaded = self.kokoro_backend is not None
+                    tts_path = (
+                        self.kokoro_model_path
+                        if self.kokoro_mode != "hf"
+                        else "hf://hexgrad/Kokoro-82M"
+                    )
+                    tts_display = f"Kokoro ({self.kokoro_voice})"
+
+            llm_display = os.path.basename(self.llm_model_path)
             
             response = {
                 "type": "status_response",
@@ -2592,11 +2795,13 @@ class LocalAIServer:
                     "stt": {
                         "backend": self.stt_backend,
                         "loaded": stt_loaded,
-                        "path": stt_model_info,
+                        "path": stt_path,
+                        "display": stt_display,
                     },
                     "llm": {
                         "loaded": self.llm_model is not None,
-                        "path": os.path.basename(self.llm_model_path),
+                        "path": self.llm_model_path,
+                        "display": llm_display,
                         "config": {
                             "context": self.llm_context,
                             "threads": self.llm_threads,
@@ -2606,13 +2811,75 @@ class LocalAIServer:
                     "tts": {
                         "backend": self.tts_backend,
                         "loaded": tts_loaded,
-                        "path": tts_model_info,
+                        "path": tts_path,
+                        "display": tts_display,
                     }
+                },
+                "kroko": {
+                    "embedded": self.kroko_embedded,
+                    "port": self.kroko_port,
+                    "language": self.kroko_language,
+                    "url": self.kroko_url,
+                    "model_path": self.kroko_model_path,
+                },
+                "kokoro": {
+                    "mode": self.kokoro_mode,
+                    "voice": self.kokoro_voice,
+                    "model_path": self.kokoro_model_path,
+                    "api_base_url": self.kokoro_api_base_url,
+                    "api_key_set": bool(self.kokoro_api_key),
                 },
                 "config": {
                     "log_level": _level_name,
                     "debug_audio": DEBUG_AUDIO_FLOW,
                 }
+            }
+            await self._send_json(websocket, response)
+            return
+
+        if msg_type == "capabilities":
+            # Report what backends are available in this container
+            capabilities = {
+                "vosk": True,  # Always available (pure Python via vosk package)
+                "sherpa": False,
+                "kroko_embedded": False,
+                "piper": True,  # Always available via piper-tts
+                "kokoro": False,
+                "llama": True,  # Always available via llama-cpp-python
+            }
+            
+            # Check if sherpa-onnx is available
+            try:
+                import sherpa_onnx
+                capabilities["sherpa"] = True
+            except ImportError:
+                pass
+            
+            # Check if Kroko binary is installed
+            kroko_binary = "/usr/local/bin/kroko-server"
+            if os.path.exists(kroko_binary):
+                capabilities["kroko_embedded"] = True
+            
+            # Check if Kokoro is available
+            try:
+                import kokoro  # noqa: F401
+                capabilities["kokoro"] = True
+            except ImportError:
+                # Kokoro can also be "available" in API mode (no local package needed)
+                kokoro_mode = (os.environ.get("KOKORO_MODE", "local") or "local").strip().lower()
+                if kokoro_mode == "api" and (os.environ.get("KOKORO_API_BASE_URL") or "").strip():
+                    capabilities["kokoro"] = True
+                else:
+                    # As a fallback, treat an on-disk Kokoro model directory as "available"
+                    kokoro_model_path = os.environ.get(
+                        "KOKORO_MODEL_PATH", "/app/models/tts/kokoro"
+                    )
+                    if os.path.exists(kokoro_model_path):
+                        capabilities["kokoro"] = True
+            
+            response = {
+                "type": "capabilities_response",
+                "capabilities": capabilities
             }
             await self._send_json(websocket, response)
             return
@@ -2645,7 +2912,7 @@ class LocalAIServer:
 
     async def handler(self, websocket):
         """Enhanced WebSocket handler with MVP pipeline and hot reloading"""
-        logging.info("🔌 New connection established: %s", websocket.remote_address)
+        logging.debug("🔌 New connection established: %s", websocket.remote_address)
         session = SessionContext()
         try:
             async for message in websocket:
@@ -2663,7 +2930,7 @@ class LocalAIServer:
             logging.error("❌ WebSocket handler error: %s", exc, exc_info=True)
         finally:
             self._reset_stt_session(session)
-            logging.info("🔌 Connection closed: %s", websocket.remote_address)
+            logging.debug("🔌 Connection closed: %s", websocket.remote_address)
 
 
 async def main():
@@ -2686,8 +2953,8 @@ async def main():
         ):
             logging.info("🚀 Enhanced Local AI Server started on ws://%s:%s", host, port)
             logging.info(
-                "📋 Pipeline: ExternalMedia (8kHz) → STT (16kHz) → LLM → TTS (8kHz uLaw) "
-                "- now with #Milestone7 selective mode support"
+                "📋 Pipeline: ExternalMedia (8kHz) → STT (16kHz) → LLM → TTS (8kHz µ-law) "
+                "| Supports selective STT/TTS modes"
             )
             await asyncio.Future()  # Run forever
     finally:

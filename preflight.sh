@@ -44,6 +44,96 @@ ASTERISK_DIR=""
 ASTERISK_FOUND=false
 COMPOSE_CMD=""
 
+# Docs and platform config (best-effort; script still works without them)
+AAVA_DOCS_BASE_URL="${AAVA_DOCS_BASE_URL:-https://github.com/hkjarral/Asterisk-AI-Voice-Agent/blob/main/}"
+PLATFORMS_YAML="$SCRIPT_DIR/config/platforms.yaml"
+
+github_docs_url() {
+    local path_or_url="$1"
+    [ -z "$path_or_url" ] && return 1
+    if [[ "$path_or_url" == http://* || "$path_or_url" == https://* ]]; then
+        echo "$path_or_url"
+        return 0
+    fi
+    echo "${AAVA_DOCS_BASE_URL%/}/$(echo "$path_or_url" | sed 's#^/##')"
+}
+
+platform_yaml_get() {
+    local dotted_key="$1"
+    [ -z "$dotted_key" ] && return 1
+    command -v python3 &>/dev/null || return 1
+    [ -f "$PLATFORMS_YAML" ] || return 1
+
+    python3 - "$PLATFORMS_YAML" "$OS_ID" "$OS_FAMILY" "$dotted_key" <<'PY' 2>/dev/null
+import sys, yaml
+
+path, os_id, os_family, dotted_key = sys.argv[1:5]
+with open(path, "r") as f:
+    data = yaml.safe_load(f) or {}
+
+def deep_merge(base, override):
+    out = dict(base or {})
+    for k, v in (override or {}).items():
+        if k == "inherit":
+            continue
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge(out.get(k), v)
+        else:
+            out[k] = v
+    return out
+
+def resolve_platform(key):
+    node = data.get(key)
+    if not isinstance(node, dict):
+        return {}
+    parent = node.get("inherit")
+    if isinstance(parent, str) and parent:
+        return deep_merge(resolve_platform(parent), node)
+    return deep_merge({}, node)
+
+def select_key():
+    if os_id in data and isinstance(data.get(os_id), dict):
+        return os_id
+    for k, node in data.items():
+        if not isinstance(node, dict):
+            continue
+        ids = node.get("os_ids") or []
+        if isinstance(ids, list) and os_id in ids:
+            return k
+    if os_family in data and isinstance(data.get(os_family), dict):
+        return os_family
+    return None
+
+platform_key = select_key()
+platform = resolve_platform(platform_key) if platform_key else {}
+
+cur = platform
+for k in dotted_key.split("."):
+    if not isinstance(cur, dict) or k not in cur:
+        sys.exit(1)
+    cur = cur[k]
+
+if isinstance(cur, (dict, list)):
+    sys.exit(1)
+print(cur)
+PY
+}
+
+print_fix_and_docs() {
+    local cmd="$1"
+    local docs="$2"
+    if [ -n "$cmd" ]; then
+        log_info "  Fix command:"
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            echo "      $line"
+        done <<< "$cmd"
+    fi
+    if [ -n "$docs" ]; then
+        log_info "  Docs: $docs"
+    fi
+}
+
 # Parse args
 for arg in "$@"; do
     case $arg in
@@ -114,6 +204,7 @@ detect_os() {
         log_fail "Unsupported architecture: $ARCH"
         log_info "  AAVA requires x86_64 (64-bit Intel/AMD) architecture"
         log_info "  ARM64/aarch64 support is planned for a future release"
+        log_info "  Docs: https://github.com/hkjarral/Asterisk-AI-Voice-Agent/blob/main/docs/SUPPORTED_PLATFORMS.md"
     else
         log_ok "Architecture: $ARCH"
     fi
@@ -122,17 +213,20 @@ detect_os() {
     if [ "$OS_FAMILY" = "unknown" ]; then
         log_fail "Unsupported Linux distribution: $OS_ID"
         log_info ""
-        log_info "  AAVA officially supports:"
-        log_info "    - Ubuntu 20.04, 22.04, 24.04"
-        log_info "    - Debian 11, 12"
-        log_info "    - CentOS 7 (including Sangoma/FreePBX Distro)"
-        log_info "    - RHEL 8, 9 / Rocky Linux / AlmaLinux"
-        log_info "    - Fedora (latest)"
+        log_info "  Verified (maintainer-tested):"
+        log_info "    - PBX Distro 12.7.8-2306-1.sng7 (Sangoma/FreePBX)"
+        log_info ""
+        log_info "  Best-effort (community-supported):"
+        log_info "    - Ubuntu/Debian"
+        log_info "    - RHEL/Rocky/Alma/Fedora"
         log_info ""
         log_info "  For other distributions, you can still run AAVA if you:"
         log_info "    1. Install Docker manually: https://docs.docker.com/engine/install/"
         log_info "    2. Install Docker Compose v2"
         log_info "    3. Ensure systemd is available"
+        log_info ""
+        log_info "  Supported platforms matrix:"
+        log_info "    https://github.com/hkjarral/Asterisk-AI-Voice-Agent/blob/main/docs/SUPPORTED_PLATFORMS.md"
         log_info ""
         log_info "  Then re-run this script to verify the setup."
     fi
@@ -349,6 +443,11 @@ install_docker_debian() {
 check_docker() {
     if ! command -v docker &>/dev/null; then
         log_fail "Docker not installed"
+
+        local DOCKER_AAVA_DOCS_PATH
+        DOCKER_AAVA_DOCS_PATH="$(platform_yaml_get docker.aava_docs || echo "docs/INSTALLATION.md")"
+        local DOCKER_AAVA_DOCS_URL
+        DOCKER_AAVA_DOCS_URL="$(github_docs_url "$DOCKER_AAVA_DOCS_PATH" 2>/dev/null || echo "https://github.com/hkjarral/Asterisk-AI-Voice-Agent/blob/main/docs/INSTALLATION.md")"
         
         # Offer to install based on OS family
         if [ "$APPLY_FIXES" = true ]; then
@@ -364,21 +463,17 @@ check_docker() {
                     ;;
             esac
         else
-            case "$OS_FAMILY" in
-                rhel)
-                    log_info "  Fix: Run with --apply-fixes to auto-install Docker"
-                    log_info "  Or manually: yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
-                    FIX_CMDS+=("# Docker will be installed automatically with --apply-fixes")
-                    ;;
-                debian)
-                    log_info "  Fix: Run with --apply-fixes to auto-install Docker"
-                    log_info "  Or manually: apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
-                    FIX_CMDS+=("# Docker will be installed automatically with --apply-fixes")
-                    ;;
-                *)
-                    log_info "  Install: https://docs.docker.com/engine/install/"
-                    ;;
-            esac
+            log_info "  Recommended: sudo ./preflight.sh --apply-fixes"
+
+            local DOCKER_INSTALL_CMD
+            DOCKER_INSTALL_CMD="$(platform_yaml_get docker.install_cmd || true)"
+            if [ -n "$DOCKER_INSTALL_CMD" ]; then
+                print_fix_and_docs "$DOCKER_INSTALL_CMD" "$DOCKER_AAVA_DOCS_URL"
+            else
+                log_info "  Install manually: https://docs.docker.com/engine/install/"
+                print_fix_and_docs "" "$DOCKER_AAVA_DOCS_URL"
+            fi
+            FIX_CMDS+=("# Docker will be installed automatically with --apply-fixes")
         fi
         return 1
     fi
@@ -394,17 +489,28 @@ check_docker() {
     if ! docker ps &>/dev/null 2>&1; then
         # NOTE: We do NOT auto-start docker - that's a side effect
         if [ "$DOCKER_ROOTLESS" = true ]; then
-            log_warn "Rootless Docker not running"
-            MANUAL_CMDS+=("systemctl --user start docker")
+            log_fail "Rootless Docker not running"
+            local ROOTLESS_START_CMD
+            ROOTLESS_START_CMD="$(platform_yaml_get docker.rootless_start_cmd || echo "systemctl --user start docker")"
+            local ROOTLESS_DOCS
+            ROOTLESS_DOCS="$(github_docs_url "$(platform_yaml_get docker.rootless_docs || echo "docs/CROSS_PLATFORM_PLAN.md")" 2>/dev/null || echo "https://github.com/hkjarral/Asterisk-AI-Voice-Agent/blob/main/docs/CROSS_PLATFORM_PLAN.md")"
+            MANUAL_CMDS+=("$ROOTLESS_START_CMD")
+            print_fix_and_docs "$ROOTLESS_START_CMD" "$ROOTLESS_DOCS"
         else
             # Check if it's a permission issue vs not running
             if sudo docker ps &>/dev/null 2>&1; then
-                log_warn "Cannot access Docker daemon (permission denied)"
-                MANUAL_CMDS+=("sudo usermod -aG docker \$USER")
+                log_fail "Cannot access Docker daemon (permission denied)"
+                local DOCKER_GROUP_CMD
+                DOCKER_GROUP_CMD="$(platform_yaml_get docker.user_group_cmd || echo "sudo usermod -aG docker \$USER")"
+                MANUAL_CMDS+=("$DOCKER_GROUP_CMD")
                 MANUAL_CMDS+=("# Then log out and back in, or run: newgrp docker")
+                print_fix_and_docs "$DOCKER_GROUP_CMD" "$(github_docs_url "$(platform_yaml_get docker.aava_docs || echo "docs/INSTALLATION.md")" 2>/dev/null || true)"
             else
-                log_warn "Docker daemon not running"
-                MANUAL_CMDS+=("sudo systemctl start docker")
+                log_fail "Docker daemon not running"
+                local DOCKER_START_CMD
+                DOCKER_START_CMD="$(platform_yaml_get docker.start_cmd || echo "sudo systemctl start docker")"
+                MANUAL_CMDS+=("$DOCKER_START_CMD")
+                print_fix_and_docs "$DOCKER_START_CMD" "$(github_docs_url "$(platform_yaml_get docker.aava_docs || echo "docs/INSTALLATION.md")" 2>/dev/null || true)"
             fi
         fi
         return 1
@@ -416,6 +522,9 @@ check_docker() {
     
     if [ "$DOCKER_MAJOR" -lt 20 ]; then
         log_fail "Docker $DOCKER_VERSION too old (minimum: 20.10) - upgrade required"
+        local DOCKER_INSTALL_CMD
+        DOCKER_INSTALL_CMD="$(platform_yaml_get docker.install_cmd || true)"
+        print_fix_and_docs "$DOCKER_INSTALL_CMD" "$(github_docs_url "$(platform_yaml_get docker.aava_docs || echo "docs/INSTALLATION.md")" 2>/dev/null || echo "https://github.com/hkjarral/Asterisk-AI-Voice-Agent/blob/main/docs/INSTALLATION.md")"
     elif [ "$DOCKER_MAJOR" -lt 25 ]; then
         log_warn "Docker $DOCKER_VERSION supported but upgrade to 25.x+ recommended"
     else
@@ -424,6 +533,13 @@ check_docker() {
     
     if [ "$DOCKER_ROOTLESS" = true ]; then
         log_ok "Docker mode: rootless"
+        local ROOTLESS_SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock"
+        local ROOTLESS_DOCS
+        ROOTLESS_DOCS="$(github_docs_url "$(platform_yaml_get docker.rootless_docs || echo "docs/CROSS_PLATFORM_PLAN.md")" 2>/dev/null || true)"
+        log_info "  Admin UI (rootless) tip:"
+        log_info "    export DOCKER_SOCK=$ROOTLESS_SOCKET"
+        log_info "    ${COMPOSE_CMD:-docker compose} up -d --force-recreate admin-ui"
+        [ -n "$ROOTLESS_DOCS" ] && log_info "    Docs: $ROOTLESS_DOCS"
     fi
 }
 
@@ -433,6 +549,8 @@ check_docker() {
 check_compose() {
     COMPOSE_CMD=""
     COMPOSE_VER=""
+    local COMPOSE_AAVA_DOCS_URL
+    COMPOSE_AAVA_DOCS_URL="$(github_docs_url "$(platform_yaml_get compose.aava_docs || echo "docs/INSTALLATION.md")" 2>/dev/null || echo "https://github.com/hkjarral/Asterisk-AI-Voice-Agent/blob/main/docs/INSTALLATION.md")"
     
     if docker compose version &>/dev/null 2>&1; then
         COMPOSE_CMD="docker compose"
@@ -451,6 +569,7 @@ docker compose "$@"' > /usr/local/bin/docker-compose
             else
                 log_warn "docker-compose command not found (admin-ui needs this)"
                 FIX_CMDS+=("echo '#!/bin/bash\ndocker compose \"\$@\"' > /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose")
+                log_info "  Docs: $COMPOSE_AAVA_DOCS_URL"
             fi
         fi
     elif command -v docker-compose &>/dev/null; then
@@ -460,11 +579,9 @@ docker compose "$@"' > /usr/local/bin/docker-compose
         log_fail "Docker Compose v1 detected - EOL July 2023, security risk"
         
         # Manual install works on all distros (including Sangoma/FreePBX)
-        log_info "  Fix: Install Docker Compose v2 manually:"
-        log_info "    sudo curl -L 'https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64' -o /usr/local/bin/docker-compose"
-        log_info "    sudo chmod +x /usr/local/bin/docker-compose"
-        log_info "    sudo mkdir -p /usr/local/lib/docker/cli-plugins"
-        log_info "    sudo ln -sf /usr/local/bin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose"
+        local MANUAL_COMPOSE_V2_CMD
+        MANUAL_COMPOSE_V2_CMD=$'sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64\" -o /usr/local/bin/docker-compose\nsudo chmod +x /usr/local/bin/docker-compose\nsudo mkdir -p /usr/local/lib/docker/cli-plugins\nsudo ln -sf /usr/local/bin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose'
+        print_fix_and_docs "$MANUAL_COMPOSE_V2_CMD" "$COMPOSE_AAVA_DOCS_URL"
         
         # Add to FIX_CMDS for --apply-fixes
         FIX_CMDS+=("sudo curl -L 'https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64' -o /usr/local/bin/docker-compose && sudo chmod +x /usr/local/bin/docker-compose && sudo mkdir -p /usr/local/lib/docker/cli-plugins && sudo ln -sf /usr/local/bin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose")
@@ -473,11 +590,9 @@ docker compose "$@"' > /usr/local/bin/docker-compose
     
     if [ -z "$COMPOSE_CMD" ]; then
         log_fail "Docker Compose not found"
-        log_info "  Fix: Install Docker Compose v2 manually:"
-        log_info "    sudo curl -L 'https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64' -o /usr/local/bin/docker-compose"
-        log_info "    sudo chmod +x /usr/local/bin/docker-compose"
-        log_info "    sudo mkdir -p /usr/local/lib/docker/cli-plugins"
-        log_info "    sudo ln -sf /usr/local/bin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose"
+        local MANUAL_COMPOSE_V2_CMD
+        MANUAL_COMPOSE_V2_CMD=$'sudo curl -L \"https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64\" -o /usr/local/bin/docker-compose\nsudo chmod +x /usr/local/bin/docker-compose\nsudo mkdir -p /usr/local/lib/docker/cli-plugins\nsudo ln -sf /usr/local/bin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose'
+        print_fix_and_docs "$MANUAL_COMPOSE_V2_CMD" "$COMPOSE_AAVA_DOCS_URL"
         
         FIX_CMDS+=("sudo curl -L 'https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64' -o /usr/local/bin/docker-compose && sudo chmod +x /usr/local/bin/docker-compose && sudo mkdir -p /usr/local/lib/docker/cli-plugins && sudo ln -sf /usr/local/bin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose")
         return 1
@@ -489,6 +604,7 @@ docker compose "$@"' > /usr/local/bin/docker-compose
     
     if [ "$COMPOSE_MAJOR" -eq 2 ] && [ "$COMPOSE_MINOR" -lt 20 ]; then
         log_warn "Compose $COMPOSE_VER - upgrade to 2.20+ recommended (missing profiles, watch)"
+        log_info "  Docs: $COMPOSE_AAVA_DOCS_URL"
     else
         log_ok "Docker Compose: $COMPOSE_VER"
     fi
@@ -502,6 +618,7 @@ docker compose "$@"' > /usr/local/bin/docker-compose
         if [ "$BUILDX_MAJOR" -eq 0 ] && [ "$BUILDX_MINOR" -lt 17 ]; then
             log_warn "Docker Buildx $BUILDX_VER - requires 0.17+ for compose build"
             log_info "  Fix: curl -L https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx"
+            log_info "  Docs: $COMPOSE_AAVA_DOCS_URL"
             FIX_CMDS+=("curl -L https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx")
         else
             log_ok "Docker Buildx: $BUILDX_VER"
@@ -552,17 +669,30 @@ check_selinux() {
         # Check if semanage is available
         if ! command -v semanage &>/dev/null; then
             log_warn "SELinux: Enforcing but semanage not installed"
-            # Use dnf or yum based on availability
-            if command -v dnf &>/dev/null; then
-                FIX_CMDS+=("dnf install -y policycoreutils-python-utils")
-            else
-                FIX_CMDS+=("yum install -y policycoreutils-python-utils")
+            local SELINUX_TOOLS_CMD
+            SELINUX_TOOLS_CMD="$(platform_yaml_get selinux.tools_install_cmd || true)"
+            if [ -z "$SELINUX_TOOLS_CMD" ]; then
+                # Use dnf or yum based on availability
+                if command -v dnf &>/dev/null; then
+                    SELINUX_TOOLS_CMD="dnf install -y policycoreutils-python-utils"
+                else
+                    SELINUX_TOOLS_CMD="yum install -y policycoreutils-python-utils"
+                fi
             fi
+            FIX_CMDS+=("$SELINUX_TOOLS_CMD")
+            print_fix_and_docs "$SELINUX_TOOLS_CMD" "$(github_docs_url "$(platform_yaml_get selinux.aava_docs || echo "docs/INSTALLATION.md")" 2>/dev/null || true)"
         fi
         
         log_warn "SELinux: Enforcing (context fix may be needed for media directory)"
-        FIX_CMDS+=("sudo semanage fcontext -a -t container_file_t '${MEDIA_DIR}(/.*)?'")
-        FIX_CMDS+=("sudo restorecon -Rv ${MEDIA_DIR}")
+        local SELINUX_CONTEXT_CMD
+        local SELINUX_RESTORE_CMD
+        SELINUX_CONTEXT_CMD="$(platform_yaml_get selinux.context_cmd || echo "sudo semanage fcontext -a -t container_file_t '{path}(/.*)?'")"
+        SELINUX_RESTORE_CMD="$(platform_yaml_get selinux.restore_cmd || echo "sudo restorecon -Rv {path}")"
+        SELINUX_CONTEXT_CMD="${SELINUX_CONTEXT_CMD//\{path\}/$MEDIA_DIR}"
+        SELINUX_RESTORE_CMD="${SELINUX_RESTORE_CMD//\{path\}/$MEDIA_DIR}"
+        FIX_CMDS+=("$SELINUX_CONTEXT_CMD")
+        FIX_CMDS+=("$SELINUX_RESTORE_CMD")
+        print_fix_and_docs "$SELINUX_CONTEXT_CMD"$'\n'"$SELINUX_RESTORE_CMD" "$(github_docs_url "$(platform_yaml_get selinux.aava_docs || echo "docs/INSTALLATION.md")" 2>/dev/null || true)"
     else
         log_ok "SELinux: $SELINUX_MODE"
     fi
@@ -695,6 +825,7 @@ check_asterisk_uid_gid() {
     
     # Set up media directory with setgid bit for group permission inheritance
     MEDIA_DIR="$SCRIPT_DIR/asterisk_media/ai-generated"
+    ASTERISK_SOUNDS_LINK="/var/lib/asterisk/sounds/ai-generated"
     if [ "$APPLY_FIXES" = true ]; then
         # Create directory if it doesn't exist
         mkdir -p "$MEDIA_DIR" 2>/dev/null
@@ -719,6 +850,22 @@ check_asterisk_uid_gid() {
         MEDIA_PARENT="$SCRIPT_DIR/asterisk_media"
         sudo chgrp "$AST_GID" "$MEDIA_PARENT" 2>/dev/null
         sudo chmod 2775 "$MEDIA_PARENT" 2>/dev/null
+
+        # Create the Asterisk sounds symlink so Asterisk can serve generated audio.
+        # Only do this when Asterisk sounds directory exists on host.
+        if [ -d "/var/lib/asterisk/sounds" ]; then
+            if [ -e "$ASTERISK_SOUNDS_LINK" ] && [ ! -L "$ASTERISK_SOUNDS_LINK" ]; then
+                log_warn "Asterisk sounds path exists but is not a symlink: $ASTERISK_SOUNDS_LINK"
+                log_info "  Fix manually: sudo mv $ASTERISK_SOUNDS_LINK ${ASTERISK_SOUNDS_LINK}.bak && sudo ln -sf $MEDIA_DIR $ASTERISK_SOUNDS_LINK"
+            else
+                if ln -sf "$MEDIA_DIR" "$ASTERISK_SOUNDS_LINK" 2>/dev/null; then
+                    log_ok "Asterisk sounds symlink: $ASTERISK_SOUNDS_LINK → $MEDIA_DIR"
+                else
+                    log_warn "Could not create Asterisk sounds symlink (may need sudo)"
+                    FIX_CMDS+=("sudo ln -sf $MEDIA_DIR $ASTERISK_SOUNDS_LINK")
+                fi
+            fi
+        fi
     else
         # Check if directory setup is needed
         if [ ! -d "$MEDIA_DIR" ]; then
@@ -726,6 +873,9 @@ check_asterisk_uid_gid() {
         fi
         FIX_CMDS+=("sudo chgrp $AST_GID $MEDIA_DIR")
         FIX_CMDS+=("sudo chmod 2775 $MEDIA_DIR  # setgid for group inheritance")
+        if [ -d "/var/lib/asterisk/sounds" ]; then
+            FIX_CMDS+=("sudo ln -sf $MEDIA_DIR $ASTERISK_SOUNDS_LINK  # allow Asterisk to serve generated audio")
+        fi
     fi
     
     # Check if .env exists and update if needed
@@ -901,6 +1051,9 @@ print_summary() {
         echo "  3. For local_only pipeline, also start:"
         echo "     ${COMPOSE_CMD:-docker compose} up -d local-ai-server"
         echo ""
+        echo "  4. Deeper diagnostics:"
+        echo "     agent doctor --json   # or: agent doctor"
+        echo ""
     elif [ ${#FAILURES[@]} -eq 0 ]; then
         touch "$SCRIPT_DIR/.preflight-ok"
         echo -e "${YELLOW}Checks passed with warnings.${NC}"
@@ -917,8 +1070,15 @@ print_summary() {
         echo "  3. For local_only pipeline, also start:"
         echo "     ${COMPOSE_CMD:-docker compose} up -d local-ai-server"
         echo ""
+        echo "  4. Deeper diagnostics:"
+        echo "     agent doctor --json   # or: agent doctor"
+        echo ""
     else
         echo -e "${RED}Cannot proceed - fix failures above first.${NC}"
+        echo ""
+        echo "After fixing failures:"
+        echo "  1. Re-run: ./preflight.sh"
+        echo "  2. Then run: agent doctor"
     fi
 }
 

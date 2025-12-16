@@ -203,6 +203,18 @@ SHERPA_STT_MODELS = [
 ]
 
 KROKO_STT_MODELS = [
+    # === Kroko Embedded ONNX Models (requires INCLUDE_KROKO_EMBEDDED=true in Docker build) ===
+    {"id": "kroko_en_community_64l", "name": "Kroko English Community 64L (Embedded)", "language": "en-US", "region": "global", "backend": "kroko",
+     "size_mb": 250, "size_display": "250 MB", "model_path": "Kroko-EN-Community-64-L-Streaming-001.onnx",
+     "download_url": "https://huggingface.co/Kroko-AI/Kroko-EN-Community-64-L-Streaming-001/resolve/main/Kroko-EN-Community-64-L-Streaming-001.onnx",
+     "recommended": True, "embedded": True,
+     "note": "Requires Docker image built with INCLUDE_KROKO_EMBEDDED=true"},
+    {"id": "kroko_nl_community_64l", "name": "Kroko Dutch Community 64L (Embedded)", "language": "nl-NL", "region": "europe", "backend": "kroko",
+     "size_mb": 250, "size_display": "250 MB", "model_path": "Kroko-NL-Community-64-L-Streaming-001.onnx",
+     "download_url": "https://huggingface.co/Kroko-AI/Kroko-NL-Community-64-L-Streaming-001/resolve/main/Kroko-NL-Community-64-L-Streaming-001.onnx",
+     "embedded": True,
+     "note": "Requires Docker image built with INCLUDE_KROKO_EMBEDDED=true"},
+    # === Kroko Cloud API ===
     {"id": "kroko_cloud", "name": "Kroko Cloud API (12 languages)", "language": "multi", "region": "global", "backend": "kroko",
      "size_mb": 0, "size_display": "0 (Cloud)", "model_path": None,
      "download_url": None, "requires_api_key": True, "api_key_name": "KROKO_API_KEY",
@@ -397,6 +409,14 @@ LLM_MODELS = [
      "description": "Balanced performance and quality",
      "download_url": "https://huggingface.co/lmstudio-community/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
      "model_path": "Llama-3.2-3B-Instruct-Q4_K_M.gguf", "recommended_ram_gb": 8},
+    {"id": "mistral_7b_instruct", "name": "Mistral-7B-Instruct v0.2", "size_mb": 4200, "size_display": "4.2 GB",
+     "description": "Higher quality; slower on CPU (best on GPU/fast CPUs)",
+     "download_url": "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+     "model_path": "mistral-7b-instruct-v0.2.Q4_K_M.gguf", "recommended_ram_gb": 16},
+    {"id": "llama3_8b_instruct", "name": "Meta-Llama-3-8B-Instruct", "size_mb": 4700, "size_display": "4.7 GB",
+     "description": "High quality; requires strong CPU/GPU and more RAM",
+     "download_url": "https://huggingface.co/lmstudio-community/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf",
+     "model_path": "Meta-Llama-3-8B-Instruct-Q4_K_M.gguf", "recommended_ram_gb": 24},
     {"id": "openai_cloud", "name": "OpenAI Cloud", "size_mb": 0, "size_display": "0 (Cloud)",
      "description": "Best quality, requires API key",
      "download_url": None, "model_path": None, "requires_api_key": True, "api_key_name": "OPENAI_API_KEY"},

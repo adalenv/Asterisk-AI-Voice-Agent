@@ -40,9 +40,22 @@ jobs:
     - name: Build ai-engine image
       run: docker build -t ai-engine:${{ github.sha }} .
 
-    - name: Build local-ai-server image
-      run: docker build -t local-ai-server:${{ github.sha }} ./local_ai_server
-      
+    # PR/branch scanning uses a minimal local-ai-server build to keep scans fast and
+    # avoid exceeding GitHub runner disk limits. A fuller scan runs on the schedule.
+    - name: Build local-ai-server image (ci-min)
+      run: |
+        docker build -t local-ai-server:${{ github.sha }} ./local_ai_server \
+          --build-arg INCLUDE_VOSK=true \
+          --build-arg INCLUDE_SHERPA=false \
+          --build-arg INCLUDE_PIPER=true \
+          --build-arg INCLUDE_KOKORO=false \
+          --build-arg INCLUDE_LLAMA=true \
+          --build-arg INCLUDE_KROKO_EMBEDDED=false
+
+    - name: Build local-ai-server image (full, scheduled)
+      if: github.event_name == 'schedule'
+      run: docker build -t local-ai-server-full:${{ github.sha }} ./local_ai_server
+
     - name: Scan ai-engine image
       uses: aquasecurity/trivy-action@master
       with:
@@ -69,6 +82,20 @@ jobs:
         ignore-unfixed: true
         timeout: '15m'
 
+    - name: Scan local-ai-server image (full, scheduled)
+      if: github.event_name == 'schedule'
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'local-ai-server-full:${{ github.sha }}'
+        format: 'sarif'
+        output: 'trivy-local-ai-server-full.sarif'
+        severity: 'CRITICAL,HIGH,MEDIUM'
+        vuln-type: 'os,library'
+        scanners: 'vuln,secret,config'
+        exit-code: '0'
+        ignore-unfixed: true
+        timeout: '30m'
+
     - name: Upload ai-engine results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
       if: always()
@@ -83,6 +110,13 @@ jobs:
         sarif_file: 'trivy-local-ai-server.sarif'
         category: 'trivy-local-ai-server'
 
+    - name: Upload local-ai-server full results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: github.event_name == 'schedule'
+      with:
+        sarif_file: 'trivy-local-ai-server-full.sarif'
+        category: 'trivy-local-ai-server-full'
+
     - name: Upload Trivy results as artifact
       uses: actions/upload-artifact@v4
       if: always()
@@ -91,4 +125,5 @@ jobs:
         path: |
           trivy-ai-engine.sarif
           trivy-local-ai-server.sarif
+          trivy-local-ai-server-full.sarif
         retention-days: 30

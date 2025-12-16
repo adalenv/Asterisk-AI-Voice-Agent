@@ -53,7 +53,7 @@ services:
       context: ./local_ai_server
       dockerfile: Dockerfile
       args:
-        - INCLUDE_KROKO_EMBEDDED=${INCLUDE_KROKO_EMBEDDED:-true}
+        - INCLUDE_KROKO_EMBEDDED=${INCLUDE_KROKO_EMBEDDED:-false}
     container_name: local_ai_server
     network_mode: host
     env_file:
@@ -84,6 +84,10 @@ services:
       # TTS Configuration
       - LOCAL_TTS_BACKEND=${LOCAL_TTS_BACKEND:-piper}
       - LOCAL_TTS_MODEL_PATH=${LOCAL_TTS_MODEL_PATH:-/app/models/tts/en_US-lessac-medium.onnx}
+      - KOKORO_MODE=${KOKORO_MODE:-local}
+      - KOKORO_API_BASE_URL=${KOKORO_API_BASE_URL:-https://voice-generator.pages.dev/api/v1}
+      - KOKORO_API_KEY=${KOKORO_API_KEY:-}
+      - KOKORO_API_MODEL=${KOKORO_API_MODEL:-model}
       - KOKORO_VOICE=${KOKORO_VOICE:-af_heart}
       - LOCAL_LLM_SYSTEM_PROMPT=${LOCAL_LLM_SYSTEM_PROMPT:-You are a helpful AI voice assistant. When the caller wants to end the call or says goodbye, output <tool_call>{"name":"hangup_call","arguments":{"farewell":"Goodbye, have a great day!"}}</tool_call> and say a brief farewell. When the caller asks to email the transcript, output <tool_call>{"name":"request_transcript","arguments":{"email":"caller@example.com"}}</tool_call>. Always provide a spoken response.}
     tty: true
@@ -148,6 +152,7 @@ services:
 
   admin-ui:
     image: asterisk-ai-voice-agent-admin-ui:latest
+    pull_policy: build
     build:
       context: ./admin_ui
       dockerfile: Dockerfile
@@ -155,7 +160,7 @@ services:
     network_mode: host
     volumes:
       - ./:/app/project
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       # The admin-ui image installs Docker CLI + Compose plugin internally.
       # Optional fallback (host binaries): use `docker compose -f docker-compose.yml -f docker-compose.admin-ui-host-binaries.yml up -d admin-ui`
       - /etc/os-release:/host/etc/os-release:ro

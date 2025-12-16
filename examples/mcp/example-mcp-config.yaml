@@ -1,0 +1,32 @@
+# Example: MCP tool configuration (stdio transport)
+#
+# Merge this into your `config/ai-agent.yaml` and add the `demo_mcp` context
+# to your dialplan via `Set(AI_CONTEXT=demo_mcp)`.
+
+mcp:
+  enabled: true
+  servers:
+    example_server:
+      transport: stdio
+      command: ["python3", "-m", "example_mcp_server"]
+      # cwd: "/app/mcp_servers/example_server"
+      env: {}
+      defaults:
+        timeout_ms: 10000
+        slow_response_threshold_ms: 2000
+        slow_response_message: "Let me look that up for you, one moment..."
+      # If `tools:` is omitted or empty, all discovered MCP tools will be registered.
+      tools:
+        - name: get_example_data
+          expose_as: mcp_example_server_get_example_data
+          speech_field: text
+
+contexts:
+  demo_mcp:
+    greeting: "Hi! I can use MCP-backed tools. What would you like to look up?"
+    profile: telephony_ulaw_8k
+    provider: openai_realtime
+    tools:
+      - hangup_call
+      - mcp_example_server_get_example_data
+

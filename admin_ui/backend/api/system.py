@@ -6,6 +6,7 @@ import psutil
 import os
 import shutil
 import logging
+import yaml
 from services.fs import upsert_env_vars
 
 logger = logging.getLogger(__name__)
@@ -330,10 +331,13 @@ async def _recreate_via_compose(service_name: str):
             logger.warning(f"Error stopping container: {e}")
         
         compose_cmd = get_docker_compose_cmd()
+        # Use --force-recreate instead of --build for faster restarts
+        # Rebuild only happens on explicit build request, not restart
         cmd = compose_cmd + [
             "up",
             "-d",
-            "--build",
+            "--force-recreate",
+            "--no-build",
             service_name,
         ]
 
@@ -367,38 +371,67 @@ async def reload_ai_engine():
     """
     try:
         import httpx
-        url = os.getenv("HEALTH_CHECK_AI_ENGINE_URL", "http://127.0.0.1:15000/health").replace("/health", "/reload")
-        logger.info(f"Sending reload request to AI Engine at {url}")
+        env = os.getenv("HEALTH_CHECK_AI_ENGINE_URL")
+        candidates = []
+        if env:
+            candidates.append(env.replace("/health", "/reload"))
+        candidates.extend(
+            [
+                "http://127.0.0.1:15000/reload",
+                "http://ai-engine:15000/reload",
+                "http://ai_engine:15000/reload",
+            ]
+        )
+        # Dedupe
+        seen = set()
+        urls = []
+        for u in candidates:
+            u = (u or "").strip()
+            if u and u not in seen:
+                seen.add(u)
+                urls.append(u)
         
+        resp = None
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url)
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                changes = data.get("changes", [])
+            for url in urls:
+                try:
+                    logger.info(f"Sending reload request to AI Engine at {url}")
+                    resp = await client.post(url)
+                    break
+                except httpx.ConnectError:
+                    continue
+        if resp is None:
+            raise HTTPException(status_code=503, detail="AI Engine is not reachable")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            changes = data.get("changes", [])
                 
-                # Check if any change requires a restart (new providers, removed providers)
-                restart_required = any("restart needed" in str(c).lower() for c in changes)
+            # Check if any change requires a restart (new providers, removed providers, deferred reload)
+            restart_required = any(
+                any(marker in str(c).lower() for marker in ("restart needed", "reload deferred"))
+                for c in changes
+            )
                 
-                if restart_required:
-                    return {
-                        "status": "partial",
-                        "message": "Config updated but new providers require a restart to load",
-                        "changes": changes,
-                        "restart_required": True
-                    }
-                
+            if restart_required:
                 return {
-                    "status": "success",
-                    "message": data.get("message", "Configuration reloaded"),
+                    "status": "partial",
+                    "message": "Config updated but some changes require a restart to fully apply",
                     "changes": changes,
-                    "restart_required": False
+                    "restart_required": True
                 }
-            else:
-                raise HTTPException(
-                    status_code=resp.status_code,
-                    detail=f"AI Engine reload failed: {resp.text}"
-                )
+                
+            return {
+                "status": "success",
+                "message": data.get("message", "Configuration reloaded"),
+                "changes": changes,
+                "restart_required": False
+            }
+        
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail=f"AI Engine reload failed: {resp.text}"
+        )
     except httpx.ConnectError:
         raise HTTPException(
             status_code=503,
@@ -458,27 +491,22 @@ async def get_system_health():
                 print(f"DEBUG: Local AI response: {response[:100]}...")
                 data = json.loads(response)
                 if data.get("type") == "status_response":
-                    # Parse embedded/local mode from path strings
-                    stt_path = data.get("models", {}).get("stt", {}).get("path", "")
-                    tts_path = data.get("models", {}).get("tts", {}).get("path", "")
-                    
-                    # Detect Kroko embedded mode from path containing "embedded"
-                    kroko_embedded = "embedded" in stt_path.lower()
-                    kroko_port = None
-                    if kroko_embedded and "port" in stt_path.lower():
-                        import re
-                        port_match = re.search(r'port\s*(\d+)', stt_path, re.IGNORECASE)
-                        if port_match:
-                            kroko_port = int(port_match.group(1))
-                    
-                    # Detect Kokoro mode - local if model path exists
-                    kokoro_mode = "local" if "/app/models" in str(data.get("models", {}).get("tts", {}).get("path", "")) or "af_" in tts_path else "api"
-                    # Extract Kokoro voice from path like "Kokoro (af_heart)"
-                    kokoro_voice = None
-                    if "(" in tts_path and ")" in tts_path:
-                        kokoro_voice = tts_path.split("(")[1].rstrip(")")
-                    
-                    # Add parsed fields to response
+                    # Prefer explicit fields from local-ai-server (v2 protocol), fallback to heuristics.
+                    kroko = data.get("kroko") or {}
+                    kokoro = data.get("kokoro") or {}
+
+                    kroko_embedded = bool(kroko.get("embedded", False))
+                    kroko_port = kroko.get("port")
+
+                    kokoro_mode = (kokoro.get("mode") or "local").lower()
+                    kokoro_voice = kokoro.get("voice")
+
+                    # Back-compat for older payloads that didn't include structured metadata
+                    if not kokoro_voice:
+                        tts_display = data.get("models", {}).get("tts", {}).get("display") or ""
+                        if "(" in tts_display and ")" in tts_display:
+                            kokoro_voice = tts_display.split("(")[1].rstrip(")")
+
                     data["kroko_embedded"] = kroko_embedded
                     data["kroko_port"] = kroko_port
                     data["kokoro_mode"] = kokoro_mode
@@ -697,7 +725,7 @@ async def fix_directory_issues():
         # Check if symlink already exists on host via mounted path
         # The symlink is on the host at /var/lib/asterisk/sounds which isn't mounted
         manual_steps.append(
-            f"Run on host: sudo ln -sf /mnt/asterisk_media/ai-generated {asterisk_sounds_link}"
+            f"Run on host: sudo ln -sf {host_media_dir} {asterisk_sounds_link}"
         )
         manual_steps.append(
             f"Or run: ./preflight.sh --apply-fixes"
@@ -780,6 +808,96 @@ class PlatformResponse(BaseModel):
     summary: dict
 
 
+_PLATFORMS_CACHE = None
+_PLATFORMS_CACHE_MTIME = None
+
+
+def _github_docs_url(path_or_url: Optional[str]) -> Optional[str]:
+    if not path_or_url:
+        return None
+    if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
+        return path_or_url
+    base = os.getenv(
+        "AAVA_DOCS_BASE_URL",
+        "https://github.com/hkjarral/Asterisk-AI-Voice-Agent/blob/main/",
+    )
+    return base.rstrip("/") + "/" + path_or_url.lstrip("/")
+
+
+def _load_platforms_yaml() -> Optional[dict]:
+    global _PLATFORMS_CACHE, _PLATFORMS_CACHE_MTIME
+
+    project_root = os.getenv("PROJECT_ROOT", "/app/project")
+    path = os.path.join(project_root, "config", "platforms.yaml")
+    if not os.path.exists(path):
+        return None
+
+    try:
+        mtime = os.path.getmtime(path)
+        if _PLATFORMS_CACHE is not None and _PLATFORMS_CACHE_MTIME == mtime:
+            return _PLATFORMS_CACHE
+    except Exception:
+        mtime = None
+
+    try:
+        with open(path, "r") as f:
+            data = yaml.safe_load(f) or {}
+        _PLATFORMS_CACHE = data
+        _PLATFORMS_CACHE_MTIME = mtime
+        return data
+    except Exception:
+        return None
+
+
+def _deep_merge_dict(base: dict, override: dict) -> dict:
+    out = dict(base or {})
+    for k, v in (override or {}).items():
+        if k == "inherit":
+            continue
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge_dict(out.get(k), v)
+        else:
+            out[k] = v
+    return out
+
+
+def _resolve_platform(platforms: dict, platform_key: str) -> Optional[dict]:
+    if not platforms or not platform_key:
+        return None
+    node = platforms.get(platform_key)
+    if not isinstance(node, dict):
+        return None
+
+    parent_key = node.get("inherit")
+    if parent_key:
+        parent = _resolve_platform(platforms, parent_key) or {}
+        return _deep_merge_dict(parent, node)
+    return dict(node)
+
+
+def _select_platform_key(platforms: Optional[dict], os_id: str, os_family: str) -> Optional[str]:
+    if not platforms:
+        return None
+
+    if os_id and os_id in platforms and isinstance(platforms.get(os_id), dict):
+        if platforms[os_id].get("name") or platforms[os_id].get("docker"):
+            return os_id
+
+    # Find by os_ids membership.
+    for key, node in platforms.items():
+        if not isinstance(node, dict):
+            continue
+        ids = node.get("os_ids") or []
+        if isinstance(ids, list) and os_id in ids:
+            return key
+
+    # Fallback to family base.
+    if os_family and os_family in platforms and isinstance(platforms.get(os_family), dict):
+        return os_family
+
+    return None
+
+
 def _detect_os():
     """Detect OS from /etc/os-release or container environment."""
     os_info = {
@@ -837,7 +955,9 @@ def _detect_docker():
         "version": None,
         "mode": "unknown",
         "status": "error",
-        "message": "Docker not detected"
+        "message": "Docker not detected",
+        "socket_present": os.path.exists("/var/run/docker.sock"),
+        "cli_present": shutil.which("docker") is not None,
     }
     
     try:
@@ -983,6 +1103,16 @@ def _detect_selinux():
     # Check if SELinux is present
     if os.path.exists("/sys/fs/selinux"):
         selinux_info["present"] = True
+
+        # Prefer kernel-provided status (works even if getenforce isn't installed).
+        try:
+            enforce_path = "/sys/fs/selinux/enforce"
+            if os.path.exists(enforce_path):
+                with open(enforce_path, "r") as f:
+                    val = f.read().strip()
+                selinux_info["mode"] = "enforcing" if val == "1" else "permissive"
+        except Exception:
+            pass
         
         # Get mode
         try:
@@ -1129,9 +1259,13 @@ def _check_port(port: int, is_own_port: bool = False) -> dict:
     return result
 
 
-def _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, asterisk_info) -> List[dict]:
+def _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, asterisk_info, platform_cfg: Optional[dict]) -> List[dict]:
     """Build list of checks with status and actions."""
     checks = []
+    docker_cfg = (platform_cfg or {}).get("docker", {}) if isinstance(platform_cfg, dict) else {}
+    compose_cfg = (platform_cfg or {}).get("compose", {}) if isinstance(platform_cfg, dict) else {}
+    selinux_cfg = (platform_cfg or {}).get("selinux", {}) if isinstance(platform_cfg, dict) else {}
+    firewall_cfg = (platform_cfg or {}).get("firewall", {}) if isinstance(platform_cfg, dict) else {}
     
     # Architecture check
     if os_info["arch"] != "x86_64":
@@ -1167,27 +1301,53 @@ def _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, as
     
     # Docker check
     if not docker_info["installed"]:
-        checks.append({
-            "id": "docker_installed",
-            "status": "error",
-            "message": "Docker not installed",
-            "blocking": True,
-            "action": {
-                "type": "link",
-                "label": "Install Docker",
-                "value": "https://docs.docker.com/engine/install/"
-            }
-        })
+        docs_url = _github_docs_url(docker_cfg.get("aava_docs")) or "https://docs.docker.com/engine/install/"
+        # Distinguish "not installed" vs "not reachable from Admin UI" (rootless socket mount is a common cause).
+        if not docker_info.get("socket_present", True):
+            checks.append({
+                "id": "docker_socket",
+                "status": "error",
+                "message": "Docker socket not accessible to Admin UI (rootless Docker likely)",
+                "blocking": True,
+                "action": {
+                    "type": "command",
+                    "label": "Set DOCKER_SOCK and restart admin-ui",
+                    "value": "export DOCKER_SOCK=/run/user/$(id -u)/docker.sock && docker compose up -d --force-recreate admin-ui",
+                    "docs_url": _github_docs_url(docker_cfg.get("rootless_docs")) or _github_docs_url("docs/CROSS_PLATFORM_PLAN.md"),
+                    "docs_label": "Rootless Docker docs",
+                }
+            })
+        else:
+            install_cmd = (docker_cfg.get("install_cmd") or "curl -fsSL https://get.docker.com | sh").strip()
+            checks.append({
+                "id": "docker_installed",
+                "status": "error",
+                "message": "Docker not detected by Admin UI",
+                "blocking": True,
+                "action": {
+                    "type": "command",
+                    "label": "Install Docker",
+                    "value": install_cmd,
+                    "docs_url": docs_url,
+                    "docs_label": "AAVA installation docs",
+                }
+            })
     elif docker_info["status"] == "error":
+        docs_url = _github_docs_url(docker_cfg.get("aava_docs")) or "https://docs.docker.com/engine/install/"
+        start_cmd = docker_cfg.get("start_cmd") or "sudo systemctl start docker"
+        rootless_start_cmd = docker_cfg.get("rootless_start_cmd")
         checks.append({
             "id": "docker_version",
             "status": "error",
             "message": docker_info["message"],
             "blocking": True,
             "action": {
-                "type": "link",
-                "label": "Upgrade Docker",
-                "value": "https://docs.docker.com/engine/install/"
+                "type": "command",
+                "label": "Start Docker (or upgrade if needed)",
+                "value": start_cmd,
+                "rootless_value": rootless_start_cmd,
+                "docs_url": docs_url,
+                "docs_label": "AAVA installation docs",
             }
         })
     elif docker_info["status"] == "warning":
@@ -1209,27 +1369,35 @@ def _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, as
     
     # Compose check
     if not compose_info["installed"]:
+        docs_url = _github_docs_url(compose_cfg.get("aava_docs")) or "https://docs.docker.com/compose/install/"
+        install_cmd = (compose_cfg.get("install_cmd") or "sudo apt-get install -y docker-compose-plugin").strip()
         checks.append({
             "id": "compose_installed",
             "status": "error",
             "message": "Docker Compose not installed",
             "blocking": True,
             "action": {
-                "type": "link",
-                "label": "Install Compose",
-                "value": "https://docs.docker.com/compose/install/"
+                "type": "command",
+                "label": "Install Docker Compose",
+                "value": install_cmd,
+                "docs_url": docs_url,
+                "docs_label": "AAVA installation docs",
             }
         })
     elif compose_info["status"] == "error":
+        docs_url = _github_docs_url(compose_cfg.get("aava_docs")) or "https://docs.docker.com/compose/install/"
+        upgrade_cmd = (compose_cfg.get("upgrade_cmd") or compose_cfg.get("install_cmd") or "").strip()
         checks.append({
             "id": "compose_version",
             "status": "error",
             "message": compose_info["message"],
             "blocking": True,
             "action": {
-                "type": "link",
-                "label": "Upgrade Compose",
-                "value": "https://docs.docker.com/compose/install/"
+                "type": "command",
+                "label": "Upgrade Docker Compose",
+                "value": upgrade_cmd or "sudo apt-get update && sudo apt-get install -y docker-compose-plugin",
+                "docs_url": docs_url,
+                "docs_label": "AAVA installation docs",
             }
         })
     elif compose_info["status"] == "warning":
@@ -1261,7 +1429,9 @@ def _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, as
                 "type": "command",
                 "label": "Create Directory",
                 "value": f"sudo mkdir -p {media['path']} && sudo chown -R $(id -u):$(id -g) {media['path']}",
-                "rootless_value": f"mkdir -p {media['path']}"
+                "rootless_value": f"mkdir -p {media['path']}",
+                "docs_url": _github_docs_url((platform_cfg or {}).get("docker", {}).get("aava_docs")) or _github_docs_url("docs/INSTALLATION.md"),
+                "docs_label": "Media directory docs",
             }
         })
     elif not media["writable"]:
@@ -1274,7 +1444,9 @@ def _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, as
                 "type": "command",
                 "label": "Fix Permissions",
                 "value": f"sudo chown -R $(id -u):$(id -g) {media['path']}",
-                "rootless_value": None
+                "rootless_value": None,
+                "docs_url": _github_docs_url((platform_cfg or {}).get("docker", {}).get("aava_docs")) or _github_docs_url("docs/INSTALLATION.md"),
+                "docs_label": "Media directory docs",
             }
         })
     else:
@@ -1289,6 +1461,8 @@ def _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, as
     # SELinux check
     if selinux_info["present"] and selinux_info["mode"] == "enforcing":
         if not selinux_info["tools_installed"]:
+            docs_url = _github_docs_url(selinux_cfg.get("aava_docs")) or _github_docs_url("docs/INSTALLATION.md")
+            install_cmd = (selinux_cfg.get("tools_install_cmd") or "sudo dnf install -y policycoreutils-python-utils").strip()
             checks.append({
                 "id": "selinux",
                 "status": "warning",
@@ -1297,10 +1471,17 @@ def _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, as
                 "action": {
                     "type": "command",
                     "label": "Install SELinux Tools",
-                    "value": "sudo dnf install -y policycoreutils-python-utils"
+                    "value": install_cmd,
+                    "docs_url": docs_url,
+                    "docs_label": "SELinux docs",
                 }
             })
         else:
+            docs_url = _github_docs_url(selinux_cfg.get("aava_docs")) or _github_docs_url("docs/INSTALLATION.md")
+            context_cmd_tmpl = selinux_cfg.get("context_cmd") or "sudo semanage fcontext -a -t container_file_t '{path}(/.*)?'"
+            restore_cmd_tmpl = selinux_cfg.get("restore_cmd") or "sudo restorecon -Rv {path}"
+            ctx_cmd = context_cmd_tmpl.format(path=media["path"])
+            restore_cmd = restore_cmd_tmpl.format(path=media["path"])
             checks.append({
                 "id": "selinux",
                 "status": "warning",
@@ -1309,7 +1490,9 @@ def _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, as
                 "action": {
                     "type": "command",
                     "label": "Fix SELinux Context",
-                    "value": f"sudo semanage fcontext -a -t container_file_t '{media['path']}(/.*)?'"
+                    "value": f"{ctx_cmd} && {restore_cmd}",
+                    "docs_url": docs_url,
+                    "docs_label": "SELinux docs",
                 }
             })
     elif selinux_info["present"]:
@@ -1367,8 +1550,14 @@ async def get_platform():
     selinux_info = _detect_selinux()
     dir_info = _detect_directories()
     asterisk_info = _detect_asterisk()
-    
-    checks = _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, asterisk_info)
+
+    platforms = _load_platforms_yaml()
+    platform_key = _select_platform_key(platforms, os_info.get("id"), os_info.get("family"))
+    platform_cfg = _resolve_platform(platforms or {}, platform_key) if platform_key else None
+    if isinstance(platform_cfg, dict):
+        platform_cfg["_key"] = platform_key
+
+    checks = _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, asterisk_info, platform_cfg)
     
     # Build summary
     passed = sum(1 for c in checks if c["status"] == "ok")
@@ -1383,7 +1572,8 @@ async def get_platform():
             "compose": compose_info,
             "selinux": selinux_info,
             "directories": dir_info,
-            "asterisk": asterisk_info
+            "asterisk": asterisk_info,
+            "platform_key": platform_key,
         },
         "checks": checks,
         "summary": {

@@ -1,6 +1,6 @@
-# Asterisk AI Voice Agent - Installation Guide (v4.5.0)
+# Asterisk AI Voice Agent - Installation Guide (v4.5.2)
 
-This guide provides detailed instructions for setting up the Asterisk AI Voice Agent v4.5.0 on your server.
+This guide provides detailed instructions for setting up the Asterisk AI Voice Agent v4.5.2 on your server.
 
 ## Three Setup Paths
 
@@ -14,6 +14,9 @@ Choose the path that best fits your experience level:
 git clone https://github.com/hkjarral/Asterisk-AI-Voice-Agent.git
 cd Asterisk-AI-Voice-Agent
 cp .env.example .env
+
+# Preflight (recommended)
+./preflight.sh
 
 # Start services
 docker compose up -d admin-ui ai-engine
@@ -78,6 +81,10 @@ The installer will:
 
 **Best for:** Advanced users, custom configurations, specific requirements
 
+**Local note:** This project does **not** bundle models in images. For recommended local build/run profiles (including a smaller `local-core` build), see `docs/LOCAL_PROFILES.md`.
+
+**Kroko note:** `INCLUDE_KROKO_EMBEDDED` is off by default to keep the local-ai-server image lighter. Enable it only if you need embedded Kroko (see `docs/LOCAL_PROFILES.md`).
+
 ---
 
 ## Detailed Installation
@@ -133,7 +140,7 @@ Before you begin, ensure your system meets the following requirements:
     docker --version && docker compose version
     ```
 
-  - CentOS/Rocky/Alma:
+- CentOS/Rocky/Alma:
 
     ```bash
     sudo dnf -y install dnf-plugins-core
@@ -142,6 +149,17 @@ Before you begin, ensure your system meets the following requirements:
     sudo systemctl enable --now docker
     docker --version && docker compose version
     ```
+
+### Rootless Docker (best-effort)
+
+If your host uses **rootless Docker**, the Admin UI needs the rootless socket mounted. Set `DOCKER_SOCK` before starting `admin-ui`:
+
+```bash
+export DOCKER_SOCK=/run/user/$(id -u)/docker.sock
+docker compose up -d --force-recreate admin-ui
+```
+
+`./preflight.sh` prints the exact command for your system when it detects rootless Docker.
 
 ## 2. Installation Steps
 
@@ -254,7 +272,7 @@ Add to `/etc/asterisk/extensions_custom.conf`:
 
 ```asterisk
 [from-ai-agent]
-exten => s,1,NoOp(Asterisk AI Voice Agent v4.5.0)
+exten => s,1,NoOp(Asterisk AI Voice Agent v4.5.2)
  same => n,Stasis(asterisk-ai-voice-agent)
  same => n,Hangup()
 ```

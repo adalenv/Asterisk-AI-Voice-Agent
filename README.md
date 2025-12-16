@@ -2,7 +2,7 @@
 
 # Asterisk AI Voice Agent
 
-![Version](https://img.shields.io/badge/version-4.5.0-blue.svg)
+![Version](https://img.shields.io/badge/version-4.5.2-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-compose-blue.svg)
@@ -21,7 +21,7 @@ The most powerful, flexible open-source AI voice agent for Asterisk/FreePBX. Fea
 ## 📖 Table of Contents
 
 - [🚀 Quick Start](#-quick-start)
-- [🎉 What's New](#-whats-new-in-v443)
+- [🎉 What's New](#-whats-new-in-v452)
 - [🌟 Why Asterisk AI Voice Agent?](#-why-asterisk-ai-voice-agent)
 - [✨ Features](#-features)
 - [🎥 Demo](#-demo)
@@ -51,9 +51,11 @@ cd Asterisk-AI-Voice-Agent
 # Check system compatibility
 ./preflight.sh
 
-# Auto-fix issues (optional)
-./preflight.sh --apply-fixes
+# Auto-fix issues (requires root for system changes)
+sudo ./preflight.sh --apply-fixes
 ```
+
+> **Note:** The `--apply-fixes` flag requires root/sudo to install packages, set permissions, and configure system settings. Running without sudo will show what needs fixing but won't apply changes.
 
 ### 2. Start the Admin UI
 
@@ -99,7 +101,7 @@ docker compose up -d
 Add this to your FreePBX (`extensions_custom.conf`):
 ```asterisk
 [from-ai-agent]
-exten => s,1,NoOp(Asterisk AI Voice Agent v4.5.0)
+exten => s,1,NoOp(Asterisk AI Voice Agent v4.5.2)
  same => n,Stasis(asterisk-ai-voice-agent)
  same => n,Hangup()
 ```
@@ -117,7 +119,7 @@ docker compose logs -f ai-engine
 
 ---
 
-## 🎉 What's New in v4.5.0
+## 🎉 What's New in v4.5.2
 
 <details open>
 <summary><b>Latest Updates</b></summary>
@@ -378,7 +380,7 @@ docker compose -f docker-compose.monitoring.yml up -d
 Two-container architecture for performance and scalability:
 
 1. **`ai-engine`** (Lightweight orchestrator): Connects to Asterisk via ARI, manages call lifecycle.
-2. **`local-ai-server`** (Optional): Runs local STT/TTS models (Vosk, Piper).
+2. **`local-ai-server`** (Optional): Runs local STT/LLM/TTS models (Vosk, Sherpa, Kroko, Piper, Kokoro, llama.cpp).
 
 ```mermaid
 graph LR
@@ -394,7 +396,17 @@ graph LR
 
 ---
 
-## 📊 Requirements
+## � Requirements
+
+### Platform Requirements
+
+| Requirement | Details |
+|-------------|---------|
+| **Architecture** | x86_64 (AMD64) only |
+| **OS** | Linux with systemd |
+| **Supported Distros** | Ubuntu 20.04+, Debian 11+, RHEL/Rocky/Alma 8+, Fedora 38+, Sangoma Linux |
+
+> **Note:** ARM64 (Apple Silicon, Raspberry Pi) is not currently supported. See [Supported Platforms](docs/SUPPORTED_PLATFORMS.md) for the full compatibility matrix.
 
 ### Minimum System Requirements
 
@@ -404,13 +416,22 @@ graph LR
 | **Local Hybrid** | 4+ cores | 8GB+ | 2GB |
 
 ### Software Requirements
-- Docker + Docker Compose
+
+- Docker + Docker Compose v2
 - Asterisk 18+ with ARI enabled
 - FreePBX (recommended) or vanilla Asterisk
 
+### Preflight Automation
+
+The `preflight.sh` script handles initial setup:
+- Seeds `.env` from `.env.example` with your settings
+- Prompts for Asterisk config directory location
+- Sets `ASTERISK_UID`/`ASTERISK_GID` to match host permissions (fixes media access issues)
+- Re-running preflight often resolves permission problems
+
 ---
 
-## 🗺️ Documentation
+## �🗺️ Documentation
 
 ### Getting Started
 - **[FreePBX Integration Guide](docs/FreePBX-Integration-Guide.md)**
@@ -420,6 +441,8 @@ graph LR
 - **[Configuration Reference](docs/Configuration-Reference.md)**
 - **[Transport Compatibility](docs/Transport-Mode-Compatibility.md)**
 - **[Tuning Recipes](docs/Tuning-Recipes.md)**
+- **[Supported Platforms](docs/SUPPORTED_PLATFORMS.md)**
+- **[Local Profiles](docs/LOCAL_PROFILES.md)**
 - **[Monitoring Guide](docs/MONITORING_GUIDE.md)**
 
 ### Development

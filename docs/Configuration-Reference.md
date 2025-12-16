@@ -301,3 +301,9 @@ Other provider configs should use environment variables directly via Python's `o
   - `barge_in.energy_threshold=2200`, `barge_in.min_ms=450`, `vad.webrtc_aggressiveness=1`.
 - For lowest latency, start with:
   - `streaming.min_start_ms=250`, `streaming.jitter_buffer_ms=80`, `barge_in.min_ms=300` (expect more sensitivity to jitter).
+
+## MCP (Experimental)
+
+MCP-backed tools (Model Context Protocol) can be exposed through the existing tool calling system.
+
+- Design + configuration guide: `docs/MCP_INTEGRATION.md`

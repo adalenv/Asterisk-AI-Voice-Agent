@@ -26,6 +26,8 @@ interface PlatformCheck {
     label: string;
     value: string;
     rootless_value?: string;
+    docs_url?: string;
+    docs_label?: string;
   };
 }
 
@@ -137,6 +139,9 @@ const CheckRow = ({ check, isRootless }: { check: PlatformCheck; isRootless: boo
     ? check.action.rootless_value 
     : check.action?.value;
 
+  const docsUrl = check.action?.docs_url;
+  const docsLabel = check.action?.docs_label || 'Docs';
+
   return (
     <div className={`border-b border-border last:border-0 ${check.blocking ? 'bg-destructive/10' : ''}`}>
       <div 
@@ -164,11 +169,24 @@ const CheckRow = ({ check, isRootless }: { check: PlatformCheck; isRootless: boo
       {expanded && check.action && (
         <div className="px-3 pb-3 bg-muted/30">
           {check.action.type === 'command' && (
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 text-xs bg-muted text-primary rounded font-mono overflow-x-auto">
-                {actionValue}
-              </code>
-              <CopyButton text={actionValue || ''} />
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <code className="flex-1 px-3 py-2 text-xs bg-muted text-primary rounded font-mono overflow-x-auto whitespace-pre-wrap">
+                  {actionValue}
+                </code>
+                <CopyButton text={actionValue || ''} />
+              </div>
+              {docsUrl && (
+                <a
+                  href={docsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-primary hover:text-primary/80 text-sm"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  {docsLabel}
+                </a>
+              )}
             </div>
           )}
           {check.action.type === 'link' && (

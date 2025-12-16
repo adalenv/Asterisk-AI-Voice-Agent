@@ -35,6 +35,15 @@ assignees: ''
 docker logs ai_engine --tail=100
 ```
 
+## Diagnostics (Recommended)
+
+These make issues actionable and help us update the Supported Platforms matrix:
+
+```bash
+./preflight.sh
+agent doctor --json
+```
+
 ## Configuration
 <!-- If relevant, share your config (REMOVE SECRETS!) -->
 ```yaml

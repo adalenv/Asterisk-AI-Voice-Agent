@@ -18,7 +18,7 @@ import structlog
 from urllib.parse import quote
 
 from websockets.exceptions import ConnectionClosed
-from websockets.legacy.client import WebSocketClientProtocol
+from websockets.asyncio.client import ClientConnection
 
 from .config import AsteriskConfig
 from .logging_config import get_logger
@@ -37,7 +37,7 @@ class ARIClient:
         safe_username = quote(username)
         safe_password = quote(password)
         self.ws_url = f"ws://{ws_host}/ari/events?api_key={safe_username}:{safe_password}&app={app_name}&subscribeAll=true&subscribe=ChannelAudioFrame"
-        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
+        self.websocket: Optional[ClientConnection] = None
         self.http_session: Optional[aiohttp.ClientSession] = None
         self.running = False
         self.event_handlers: Dict[str, List[Callable]] = {}

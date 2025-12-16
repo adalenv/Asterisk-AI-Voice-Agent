@@ -44,7 +44,7 @@ Each milestone includes scope, implementation details, and verification criteria
 
 ## Milestone 5 — Streaming Transport Production Readiness (✅ Completed)
 
-- **Goal**: Promote the AudioSocket streaming path to production quality with adaptive pacing, configurable defaults, and telemetry. Details and task breakdown live in `docs/milestones/milestone-5-streaming-transport.md`.
+- **Goal**: Promote the AudioSocket streaming path to production quality with adaptive pacing, configurable defaults, and telemetry. Details and task breakdown live in `docs/contributing/milestones/milestone-5-streaming-transport.md`.
 - **What We Shipped**:
   - Configurable streaming defaults in `config/ai-agent.yaml` (`min_start_ms`, `low_watermark_ms`, `fallback_timeout_ms`, `provider_grace_ms`, `jitter_buffer_ms`).
   - Post‑TTS end protection window (`barge_in.post_tts_end_protection_ms`) to prevent agent self‑echo when capture resumes.
@@ -60,11 +60,11 @@ Each milestone includes scope, implementation details, and verification criteria
 
 ## Milestone 6 — OpenAI Realtime Voice Agent (✅ Completed)
 
-- **Goal**: Add an OpenAI Realtime provider so Deepgram ↔️ OpenAI switching happens via configuration alone. Milestone instructions: `docs/milestones/milestone-6-openai-realtime.md`.
+- **Goal**: Add an OpenAI Realtime provider so Deepgram ↔️ OpenAI switching happens via configuration alone. Milestone instructions: `docs/contributing/milestones/milestone-6-openai-realtime.md`.
 - **Dependencies**: Milestone 5 complete; OpenAI API credentials configured.
 - **Primary Tasks**:
   - Implement `src/providers/openai_realtime.py` with streaming audio events.
-  - Extend configuration schema and env documentation (`README.md`, `docs/Architecture.md`).
+  - Extend configuration schema and env documentation (`README.md`, `docs/contributing/architecture-deep-dive.md`).
   - Align provider payloads with the latest OpenAI Realtime guide:
     - Use `session.update` with nested `audio` schema and `output_modalities` (e.g., `session.audio.input.format`, `session.audio.input.turn_detection`, `session.audio.output.format`, `session.audio.output.voice`).
     - Remove deprecated/unknown fields (e.g., `session.input_audio_sample_rate_hz`).
@@ -95,7 +95,7 @@ Each milestone includes scope, implementation details, and verification criteria
 
 ## Milestone 7 — Configurable Pipelines & Hot Reload (✅ Completed)
 
-- **Goal**: Support multiple named pipelines (STT/LLM/TTS) defined in YAML, with hot reload for rapid iteration. See `docs/milestones/milestone-7-configurable-pipelines.md`.
+- **Goal**: Support multiple named pipelines (STT/LLM/TTS) defined in YAML, with hot reload for rapid iteration. See `docs/contributing/milestones/milestone-7-configurable-pipelines.md`.
 - **What We Shipped**:
   - YAML pipelines with `active_pipeline` switching and safe hot reload.
   - Pipeline adapters for Local, OpenAI (Realtime + Chat), Deepgram (STT/TTS), and Google (REST) with option merging.
@@ -105,7 +105,7 @@ Each milestone includes scope, implementation details, and verification criteria
   - Local‑only pipeline (TinyLlama) 2‑minute regression passed: greeting, STT finals, LLM replies (6–13 s), local TTS playback.
   - Hybrid pipeline A: local STT + OpenAI LLM + local TTS passed (two‑way conversation, stable gating).
   - Hybrid pipeline B: local STT + OpenAI LLM + Deepgram TTS passed (fast greeting/turns, clean playback).
-  - Evidence captured in `docs/regressions/local-call-framework.md` with timestamps, byte sizes, and latency notes.
+  - Evidence captured in `archived/regressions/local-call-framework.md` with timestamps, byte sizes, and latency notes.
 - **Acceptance**:
   - Swapping `active_pipeline` applies on the next call after reload.
   - Custom pipeline regressions succeed using YAML only.
@@ -113,7 +113,7 @@ Each milestone includes scope, implementation details, and verification criteria
 
 ## Milestone 8 — Transport Stabilization (✅ Completed Oct 25, 2025)
 
-- **Goal**: Eliminate audio garble and pacing issues by enforcing AudioSocket invariants and proper format handling. Details in `docs/milestones/milestone-8-transport-stabilization.md`.
+- **Goal**: Eliminate audio garble and pacing issues by enforcing AudioSocket invariants and proper format handling. Details in `docs/contributing/milestones/milestone-8-transport-stabilization.md`.
 - **Tag**: `v1.0-p0-transport-stable`
 - **What We Shipped**:
   - Fixed critical AudioSocket format override bug (commit `1a049ce`) preventing caller codec from overriding YAML wire format settings.
@@ -243,7 +243,7 @@ Each milestone includes scope, implementation details, and verification criteria
 
 ## Milestone 14 — Tool Calling System (✅ Completed Nov 10, 2025)
 
-- **Goal**: Implement unified, provider-agnostic tool calling architecture enabling AI agents to perform real-world actions. Detailed specifications in `docs/milestones/milestone-16-tool-calling-system.md`.
+- **Goal**: Implement unified, provider-agnostic tool calling architecture enabling AI agents to perform real-world actions. Detailed specifications in `docs/contributing/milestones/milestone-16-tool-calling-system.md`.
 - **What We Shipped**:
   - **Core Framework** (537 lines): `Tool`, `ToolDefinition`, `ToolRegistry`, `ToolExecutionContext`
   - **Provider Adapters** (417 lines): Deepgram + OpenAI Realtime format translation
@@ -365,7 +365,7 @@ Each milestone includes scope, implementation details, and verification criteria
 
 ## Milestone 17 — Monitoring, Feedback & Guided Setup (Planned)
 
-- **Goal**: Ship an opt-in monitoring + analytics experience that is turnkey, captures per-call transcripts/metrics, and surfaces actionable YAML tuning guidance. Implementation details live in `docs/milestones/milestone-8-monitoring-stack.md`.
+- **Goal**: Ship an opt-in monitoring + analytics experience that is turnkey, captures per-call transcripts/metrics, and surfaces actionable YAML tuning guidance. Implementation details live in `docs/contributing/milestones/milestone-14-monitoring-stack.md`.
 - **Dependencies**: Milestones 5–7 in place so streaming telemetry, pipeline metadata, and configuration hot-reload already work.
 - **Workstreams & Tasks**:
   1. **Observability Foundation**
@@ -649,7 +649,7 @@ Keep this roadmap updated after each milestone to help any collaborator—or fut
 **Documentation**:
 
 - **New**: `docs/TOOL_CALLING_GUIDE.md` - Comprehensive 600+ line guide
-- **Updated**: FreePBX Integration Guide, CLI Tools Guide, README, Architecture.md
+- **Updated**: FreePBX Integration Guide, CLI Tools Guide, README, `docs/contributing/architecture-deep-dive.md`
 
 **Production Validation**:
 
@@ -705,7 +705,7 @@ Keep this roadmap updated after each milestone to help any collaborator—or fut
 
 For detailed implementation plans and specifications:
 
-- **docs/milestones/**: Detailed milestone implementation plans and technical specifications
+- **docs/contributing/milestones/**: Detailed milestone implementation plans and technical specifications
 - **OPENAI_REALTIME_GOLDEN_BASELINE.md**: OpenAI Realtime production configuration and validation
 
 ---

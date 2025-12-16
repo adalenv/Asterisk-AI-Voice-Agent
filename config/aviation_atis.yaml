@@ -1,0 +1,25 @@
+metno:
+  # met.no requires an identifying User-Agent. Include a URL and/or contact.
+  # See: https://api.met.no/doc/TermsOfService and https://api.met.no/doc/FAQ
+  user_agent: "Asterisk-AI-Voice-Agent (+https://github.com/hkjarral/Asterisk-AI-Voice-Agent)"
+  timeout_seconds: 10
+  # Cache TTL in seconds. The MCP server also background-refreshes tracked ICAOs on this cadence.
+  cache_ttl_seconds: 300
+
+awc:
+  # Optional enrichment (airport name, ATIS frequencies, runway list) via aviationweather.gov.
+  # Uses the met.no User-Agent by default if omitted.
+  timeout_seconds: 5
+  cache_ttl_seconds: 300
+
+# Output controls
+defaults:
+  # When true, include explicit "not available" lines for missing runway/frequency.
+  # Set to true to inform callers when data is unavailable.
+  explicit_not_available: true
+
+# Per-aerodrome extras - ONLY for data that cannot be obtained dynamically.
+# NOTE: We optionally fetch airport name, ATIS frequencies, and runway list from aviationweather.gov (AWC).
+# Runway in use is NOT available via any free API - it's an ATC decision.
+# Leave this section empty to use only live data.
+aerodromes: {}

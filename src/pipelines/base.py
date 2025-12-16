@@ -115,7 +115,7 @@ class Component(ABC):
         
         try:
             websocket = await asyncio.wait_for(
-                websockets.connect(url, extra_headers=headers if headers else None),
+                websockets.connect(url, additional_headers=headers if headers else None),
                 timeout=timeout
             )
             await websocket.close()

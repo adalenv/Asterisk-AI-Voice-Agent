@@ -19,7 +19,7 @@ This directory contains optional helpers for contributors working from the `deve
 - `.cursor/rules/`
 - `.windsurf/rules/`
 - `Agents.md`, `Gemini.md`
-- Regression docs (`docs/resilience.md`, `docs/regressions/milestone-7.md`, `docs/regression/issues/0001-adapter-execution-path.md`, `ASTERISK_18_VERIFICATION_REPORT.md`)
+- Regression docs (`docs/resilience.md`, plus any long-form walkthroughs kept under `archived/regressions/`)
 - This `tools/ide/` directory
 
 Keep production-ready workflows in the root `Makefile` and use this toolkit for iterative IDE workflows.

@@ -246,6 +246,15 @@ const ModelsPage = () => {
         return installedModels.some(m => m.path.includes(modelPath) || m.name === modelPath);
     };
 
+    // Get friendly display name for installed model by matching against catalog
+    const getModelDisplayName = (model: InstalledModel): string => {
+        const allCatalogModels = [...catalog.stt, ...catalog.tts, ...catalog.llm];
+        const catalogMatch = allCatalogModels.find(cm => 
+            cm.model_path && (model.path.includes(cm.model_path) || model.name === cm.model_path)
+        );
+        return catalogMatch?.name || model.name;
+    };
+
     return (
         <div className="p-6 space-y-6">
             {/* Toast notifications */}
@@ -404,9 +413,9 @@ const ModelsPage = () => {
                                                             {getTypeIcon(model.type)}
                                                         </div>
                                                         <div>
-                                                            <p className="font-medium">{model.name}</p>
+                                                            <p className="font-medium">{getModelDisplayName(model)}</p>
                                                             <p className="text-sm text-muted-foreground">
-                                                                {model.type.toUpperCase()} • {model.size_mb} MB
+                                                                {model.type.toUpperCase()} • {model.size_mb.toFixed(0)} MB • {model.name}
                                                             </p>
                                                         </div>
                                                     </div>

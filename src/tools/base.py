@@ -61,8 +61,34 @@ class ToolDefinition:
     description: str
     category: ToolCategory
     parameters: List[ToolParameter] = field(default_factory=list)
+    # Optional raw JSON schema (e.g., MCP tool inputSchema). If present, it is used
+    # for provider schema generation instead of `parameters`.
+    input_schema: Optional[Dict[str, Any]] = None
     requires_channel: bool = False  # Needs active call channel
     max_execution_time: int = 30    # Timeout in seconds
+
+    def _strip_defaults(self, schema: Any) -> Any:
+        """Deepgram does not support 'default' fields in parameter schema."""
+        if isinstance(schema, dict):
+            return {k: self._strip_defaults(v) for k, v in schema.items() if k != "default"}
+        if isinstance(schema, list):
+            return [self._strip_defaults(v) for v in schema]
+        return schema
+
+    def _json_schema_object(self) -> Dict[str, Any]:
+        if isinstance(self.input_schema, dict) and self.input_schema:
+            # Ensure schema is object-shaped for function calling.
+            if self.input_schema.get("type") is None:
+                return {"type": "object", **self.input_schema}
+            return dict(self.input_schema)
+        return {
+            "type": "object",
+            "properties": {
+                p.name: p.to_dict()
+                for p in self.parameters
+            },
+            "required": [p.name for p in self.parameters if p.required],
+        }
     
     def to_deepgram_schema(self) -> Dict[str, Any]:
         """
@@ -82,6 +108,12 @@ class ToolDefinition:
         Note: Deepgram doesn't support 'default' field in parameters,
         so we exclude it with include_default=False.
         """
+        if isinstance(self.input_schema, dict) and self.input_schema:
+            return {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self._strip_defaults(self._json_schema_object()),
+            }
         return {
             "name": self.name,
             "description": self.description,
@@ -118,14 +150,7 @@ class ToolDefinition:
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        p.name: p.to_dict()
-                        for p in self.parameters
-                    },
-                    "required": [p.name for p in self.parameters if p.required]
-                }
+                "parameters": self._json_schema_object(),
             }
         }
     
@@ -151,14 +176,7 @@ class ToolDefinition:
             "type": "function",
             "name": self.name,
             "description": self.description,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    p.name: p.to_dict()
-                    for p in self.parameters
-                },
-                "required": [p.name for p in self.parameters if p.required]
-            }
+            "parameters": self._json_schema_object(),
         }
     
     def to_elevenlabs_schema(self) -> Dict[str, Any]:
@@ -181,14 +199,7 @@ class ToolDefinition:
             "type": "client",
             "name": self.name,
             "description": self.description,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    p.name: p.to_dict()
-                    for p in self.parameters
-                },
-                "required": [p.name for p in self.parameters if p.required]
-            }
+            "parameters": self._json_schema_object(),
         }
     
     def to_prompt_text(self) -> str:
@@ -219,6 +230,17 @@ class ToolDefinition:
         have native function calling but can output structured JSON.
         """
         import json
+        if isinstance(self.input_schema, dict) and self.input_schema:
+            schema_obj = self._json_schema_object()
+            params = schema_obj.get("properties") if isinstance(schema_obj.get("properties"), dict) else {}
+            required = schema_obj.get("required") if isinstance(schema_obj.get("required"), list) else []
+            # Keep existing local prompt format, but preserve as much as possible.
+            return {
+                "name": self.name,
+                "description": self.description,
+                "parameters": params,
+                "required": required,
+            }
         params = {}
         required = []
         for p in self.parameters:

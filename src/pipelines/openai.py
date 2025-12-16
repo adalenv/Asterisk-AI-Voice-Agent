@@ -19,7 +19,7 @@ from typing import Any, AsyncIterator, Callable, Dict, Iterable, Optional
 
 import aiohttp
 import websockets
-from websockets.client import WebSocketClientProtocol
+from websockets.asyncio.client import ClientConnection
 
 from ..audio import convert_pcm16le_to_target_format, mulaw_to_pcm16le, resample_audio
 from ..config import AppConfig, OpenAIProviderConfig
@@ -104,7 +104,7 @@ def _decode_audio_payload(raw_bytes: bytes) -> bytes:
 
 @dataclass
 class _RealtimeSessionState:
-    websocket: WebSocketClientProtocol
+    websocket: ClientConnection
     options: Dict[str, Any]
     session_id: str
 
@@ -149,7 +149,7 @@ class OpenAISTTAdapter(STTComponent):
         ws_headers = list(_make_ws_headers(merged))
         websocket = await websockets.connect(
             merged["base_url"],
-            extra_headers=ws_headers,
+            additional_headers=ws_headers,
             max_size=16 * 1024 * 1024,
         )
 
@@ -223,7 +223,7 @@ class OpenAISTTAdapter(STTComponent):
 
     async def _await_transcript(
         self,
-        websocket: WebSocketClientProtocol,
+        websocket: ClientConnection,
         timeout: float,
         call_id: str,
     ) -> Optional[str]:
@@ -479,7 +479,7 @@ class OpenAILLMAdapter(LLMComponent):
         headers = list(_make_ws_headers(merged))
         websocket = await websockets.connect(
             merged["realtime_base_url"],
-            extra_headers=headers,
+            additional_headers=headers,
             max_size=8 * 1024 * 1024,
         )
 

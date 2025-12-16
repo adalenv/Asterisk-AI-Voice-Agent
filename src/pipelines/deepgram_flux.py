@@ -191,7 +191,7 @@ class DeepgramFluxSTTAdapter(STTComponent):
         try:
             websocket = await websockets.connect(
                 ws_url,
-                extra_headers=headers,
+                additional_headers=headers,
                 max_size=16 * 1024 * 1024,
                 ping_interval=20,
                 ping_timeout=10,

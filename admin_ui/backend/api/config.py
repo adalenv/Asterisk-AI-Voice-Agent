@@ -5,6 +5,8 @@ import re
 import asyncio
 import glob
 import tempfile
+import sys
+from contextlib import contextmanager
 from pydantic import BaseModel
 from typing import Dict, Any
 import settings
@@ -40,14 +42,215 @@ def _rotate_backups(base_path: str) -> None:
 class ConfigUpdate(BaseModel):
     content: str
 
+@contextmanager
+def _temporary_dotenv(path: str, defaults: Dict[str, str] | None = None):
+    """
+    Temporarily load KEY=VALUE pairs from a .env file into os.environ.
+
+    This keeps config schema validation consistent with how ai-engine injects
+    credentials/settings from environment variables at runtime.
+    """
+    env_pairs: Dict[str, str] = {}
+    try:
+        if path and os.path.exists(path):
+            from dotenv import dotenv_values
+            raw = dotenv_values(path)
+            for key, value in (raw or {}).items():
+                if key and value is not None:
+                    env_pairs[str(key)] = str(value)
+    except Exception:
+        env_pairs = {}
+
+    previous: Dict[str, Any] = {}
+    for key, value in env_pairs.items():
+        previous[key] = os.environ.get(key)
+        os.environ[key] = value
+
+    applied_defaults: Dict[str, str] = {}
+    for key, value in (defaults or {}).items():
+        if key not in os.environ or os.environ.get(key, "").strip() == "":
+            previous[key] = os.environ.get(key)
+            os.environ[key] = value
+            applied_defaults[key] = value
+
+    try:
+        yield
+    finally:
+        for key, old_value in previous.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = str(old_value)
+
+
+def _resolve_json_schema_ref(schema_root: Dict[str, Any], ref: str) -> Dict[str, Any]:
+    # Expected format: "#/$defs/SomeModel"
+    if not ref.startswith("#/"):
+        return {}
+    node: Any = schema_root
+    for part in ref.lstrip("#/").split("/"):
+        if isinstance(node, dict) and part in node:
+            node = node[part]
+        else:
+            return {}
+    return node if isinstance(node, dict) else {}
+
+
+def _collect_unknown_keys(data: Any, schema_root: Dict[str, Any], schema_node: Dict[str, Any], prefix: str) -> list:
+    """
+    Best-effort unknown-key detection using Pydantic's JSON schema.
+
+    We only warn when the schema node is a structured object with explicit
+    properties and does NOT allow additionalProperties (dict-like blobs).
+    """
+    if not isinstance(schema_node, dict):
+        return []
+
+    if "$ref" in schema_node:
+        resolved = _resolve_json_schema_ref(schema_root, schema_node["$ref"])
+        if resolved:
+            schema_node = resolved
+
+    # Avoid false positives for union-ish nodes.
+    for union_key in ("anyOf", "oneOf", "allOf"):
+        if union_key in schema_node:
+            return []
+
+    if not isinstance(data, dict):
+        return []
+
+    properties = schema_node.get("properties")
+    if not isinstance(properties, dict):
+        return []
+
+    additional = schema_node.get("additionalProperties")
+    if additional not in (None, False):
+        # This node is intentionally dict-like (e.g., providers, contexts).
+        # Don't warn about unknown keys here.
+        # Still descend into known properties when present.
+        warnings: list = []
+        for key, subschema in properties.items():
+            if key in data:
+                next_prefix = f"{prefix}.{key}" if prefix else key
+                warnings.extend(_collect_unknown_keys(data[key], schema_root, subschema, next_prefix))
+        return warnings
+
+    warnings: list = []
+    known_keys = set(properties.keys())
+    for key in data.keys():
+        if key not in known_keys:
+            full = f"{prefix}.{key}" if prefix else str(key)
+            warnings.append(f"Unknown config key: {full} (will be ignored)")
+
+    for key, subschema in properties.items():
+        if key in data:
+            next_prefix = f"{prefix}.{key}" if prefix else key
+            warnings.extend(_collect_unknown_keys(data[key], schema_root, subschema, next_prefix))
+
+    return warnings
+
+
+def _validate_ai_agent_config(content: str) -> Dict[str, Any]:
+    """
+    Validate ai-agent.yaml content against the canonical AppConfig schema.
+
+    Returns:
+      {"warnings": [...]} on success
+
+    Raises:
+      HTTPException(400) on validation errors
+    """
+    try:
+        parsed = yaml.safe_load(content) or {}
+    except yaml.YAMLError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {str(exc)}")
+
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="Invalid YAML: expected a mapping at the document root")
+
+    # Ensure project root is importable so we can reuse canonical Pydantic models.
+    project_root = getattr(settings, "PROJECT_ROOT", None)
+    if project_root and project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    try:
+        from pydantic import ValidationError
+        from src.config import AppConfig, load_config
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Server misconfiguration: cannot import config schema (src.config). Error: {exc}",
+        )
+
+    warnings: list[str] = []
+
+    # Warn if user put credentials in YAML (they will be ignored by design).
+    try:
+        asterisk_block = parsed.get("asterisk") if isinstance(parsed.get("asterisk"), dict) else {}
+        if isinstance(asterisk_block, dict) and any(k in asterisk_block for k in ("username", "password")):
+            warnings.append("Asterisk credentials in YAML are ignored; set ASTERISK_ARI_USERNAME/ASTERISK_ARI_PASSWORD in .env instead.")
+
+        providers_block = parsed.get("providers") if isinstance(parsed.get("providers"), dict) else {}
+        if isinstance(providers_block, dict):
+            for provider_name, provider_cfg in providers_block.items():
+                if isinstance(provider_cfg, dict) and "api_key" in provider_cfg:
+                    warnings.append(f"providers.{provider_name}.api_key in YAML is ignored; set the provider API key in .env instead.")
+    except Exception:
+        pass
+
+    # If ARI credentials are not present, validate with placeholders but warn the user.
+    env_required_defaults: Dict[str, str] = {}
+    try:
+        from dotenv import dotenv_values
+        dotenv_map = dotenv_values(settings.ENV_PATH) if os.path.exists(settings.ENV_PATH) else {}
+        get_dotenv = lambda k: str(dotenv_map.get(k) or "").strip()
+
+        ari_user_present = bool(get_dotenv("ASTERISK_ARI_USERNAME") or get_dotenv("ARI_USERNAME") or os.environ.get("ASTERISK_ARI_USERNAME") or os.environ.get("ARI_USERNAME"))
+        ari_pass_present = bool(get_dotenv("ASTERISK_ARI_PASSWORD") or get_dotenv("ARI_PASSWORD") or os.environ.get("ASTERISK_ARI_PASSWORD") or os.environ.get("ARI_PASSWORD"))
+
+        if not ari_user_present:
+            warnings.append("Missing ARI username in .env (ASTERISK_ARI_USERNAME or ARI_USERNAME). Engine will not connect to Asterisk ARI until set.")
+            env_required_defaults["ASTERISK_ARI_USERNAME"] = "__MISSING__"
+        if not ari_pass_present:
+            warnings.append("Missing ARI password in .env (ASTERISK_ARI_PASSWORD or ARI_PASSWORD). Engine will not connect to Asterisk ARI until set.")
+            env_required_defaults["ASTERISK_ARI_PASSWORD"] = "__MISSING__"
+    except Exception:
+        pass
+
+    # Validate using the same loader pipeline as ai-engine (env injection + defaults + normalization).
+    dir_path = os.path.dirname(settings.CONFIG_PATH)
+    with tempfile.NamedTemporaryFile("w", dir=dir_path, delete=False, suffix=".validate.yaml") as f:
+        f.write(content)
+        tmp_path = f.name
+
+    try:
+        with _temporary_dotenv(settings.ENV_PATH, defaults=env_required_defaults):
+            load_config(tmp_path)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=f"Config schema validation failed: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Config validation failed: {exc}")
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    try:
+        schema = AppConfig.model_json_schema()
+        warnings.extend(_collect_unknown_keys(parsed, schema, schema, prefix=""))
+    except Exception:
+        pass
+
+    return {"warnings": warnings}
+
+
 @router.post("/yaml")
 async def update_yaml_config(update: ConfigUpdate):
     try:
-        # Validate YAML before saving
-        try:
-            yaml.safe_load(update.content)
-        except yaml.YAMLError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid YAML: {str(e)}")
+        # Validate YAML + schema before saving.
+        validation = _validate_ai_agent_config(update.content)
+        warnings = validation.get("warnings") or []
 
         # Create backup before saving
         if os.path.exists(settings.CONFIG_PATH):
@@ -79,7 +282,8 @@ async def update_yaml_config(update: ConfigUpdate):
         return {
             "status": "success",
             "restart_required": True,
-            "message": "Configuration saved. Restart AI Engine to apply changes."
+            "message": "Configuration saved. Restart AI Engine to apply changes.",
+            "warnings": warnings,
         }
     except HTTPException:
         raise
@@ -527,6 +731,7 @@ async def export_logs():
         import io
         import glob
         from datetime import datetime
+        import subprocess
         
         # Create ZIP in memory
         zip_buffer = io.BytesIO()
@@ -534,14 +739,34 @@ async def export_logs():
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             # 1. Sanitized YAML
             if os.path.exists(settings.CONFIG_PATH):
-                with open(settings.CONFIG_PATH, 'r') as f:
-                    content = f.read()
-                # Simple sanitization (redact known key patterns if needed, but for now just raw or basic redaction)
-                # For this task, user asked for "sanitized". We'll redact common API key patterns.
-                import re
-                content = re.sub(r'api_key: .*', 'api_key: [REDACTED]', content)
-                content = re.sub(r'key: sk-.*', 'key: [REDACTED]', content)
-                zip_file.writestr('ai-agent-sanitized.yaml', content)
+                try:
+                    import yaml
+                    with open(settings.CONFIG_PATH, 'r') as f:
+                        parsed = yaml.safe_load(f) or {}
+
+                    def redact(obj):
+                        if isinstance(obj, dict):
+                            out = {}
+                            for k, v in obj.items():
+                                key = str(k).lower()
+                                if any(s in key for s in ["api_key", "apikey", "token", "secret", "password", "pass", "key"]):
+                                    out[k] = "[REDACTED]"
+                                else:
+                                    out[k] = redact(v)
+                            return out
+                        if isinstance(obj, list):
+                            return [redact(v) for v in obj]
+                        return obj
+
+                    redacted = redact(parsed)
+                    zip_file.writestr(
+                        'ai-agent-sanitized.yaml',
+                        yaml.safe_dump(redacted, sort_keys=False, default_flow_style=False),
+                    )
+                except Exception:
+                    # Fallback: write raw if sanitization fails
+                    with open(settings.CONFIG_PATH, 'r') as f:
+                        zip_file.writestr('ai-agent-sanitized.yaml', f.read())
             
             # 2. Sanitized ENV (Just keys, no values)
             if os.path.exists(settings.ENV_PATH):
@@ -552,6 +777,28 @@ async def export_logs():
                             key = line.split('=')[0].strip()
                             env_keys.append(f"{key}=[REDACTED]")
                 zip_file.writestr('.env.sanitized', '\n'.join(env_keys))
+
+            # 2b. Host OS info (if mounted) and basic Docker versions
+            for os_release in ("/host/etc/os-release", "/etc/os-release"):
+                if os.path.exists(os_release):
+                    try:
+                        with open(os_release, "r") as f:
+                            zip_file.writestr("os-release.txt", f.read())
+                        break
+                    except Exception:
+                        pass
+
+            def add_cmd(name: str, cmd: list):
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                    content = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
+                    zip_file.writestr(name, content.strip() + "\n")
+                except Exception as e:
+                    zip_file.writestr(name, f"Failed to run {cmd}: {e}\n")
+
+            add_cmd("docker-version.txt", ["docker", "version"])
+            add_cmd("docker-compose-version.txt", ["docker", "compose", "version"])
+            add_cmd("docker-ps.txt", ["docker", "ps", "-a"])
             
             # 3. Logs from Docker Containers
             try:

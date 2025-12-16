@@ -478,9 +478,19 @@ async def get_available_models(language: Optional[str] = None):
         language: Optional language code to filter models (e.g., 'en-US', 'fr-FR')
     """
     import psutil
+    import subprocess
     
     # Get system info for recommendations
     ram_gb = psutil.virtual_memory().total // (1024**3)
+    cpu_cores = psutil.cpu_count() or 1
+
+    # Best-effort GPU detection (works when tooling is available in the container)
+    gpu_detected = False
+    try:
+        result = subprocess.run(["nvidia-smi"], capture_output=True, timeout=2)
+        gpu_detected = result.returncode == 0
+    except Exception:
+        gpu_detected = False
     
     # Get the full catalog or filtered by language
     if language:
@@ -496,14 +506,37 @@ async def get_available_models(language: Optional[str] = None):
         catalog[category] = []
         for model in models:
             model_copy = model.copy()
-            # Mark as system-recommended if RAM is sufficient
-            if model.get("recommended") and ram_gb >= model.get("recommended_ram_gb", 0):
+            # Mark as system-recommended based on RAM + basic CPU/GPU heuristics.
+            recommended_ram = int(model.get("recommended_ram_gb", 0) or 0)
+            meets_ram = ram_gb >= recommended_ram
+
+            system_recommended = False
+            if category == "llm":
+                model_id = model.get("id")
+                if model_id == "tinyllama":
+                    system_recommended = meets_ram and cpu_cores >= 2
+                elif model_id == "phi3_mini":
+                    system_recommended = meets_ram and cpu_cores >= 4
+                elif model_id == "llama32_3b":
+                    system_recommended = meets_ram and (gpu_detected or cpu_cores >= 6)
+                elif model_id == "mistral_7b_instruct":
+                    system_recommended = meets_ram and (gpu_detected or cpu_cores >= 12)
+                elif model_id == "llama3_8b_instruct":
+                    system_recommended = meets_ram and (gpu_detected or cpu_cores >= 16)
+                else:
+                    system_recommended = bool(model.get("recommended")) and meets_ram
+            else:
+                system_recommended = bool(model.get("recommended")) and meets_ram
+
+            if system_recommended:
                 model_copy["system_recommended"] = True
             catalog[category].append(model_copy)
     
     return {
         "catalog": catalog,
         "system_ram_gb": ram_gb,
+        "system_cpu_cores": cpu_cores,
+        "system_gpu_detected": gpu_detected,
         "languages": get_available_languages(),
         "language_names": LANGUAGE_NAMES,
         "region_names": REGION_NAMES
@@ -713,7 +746,12 @@ async def download_single_model(request: SingleModelDownload):
     _download_progress = {"bytes_downloaded": 0, "total_bytes": 0, "percent": 0, "speed_bps": 0, "eta_seconds": None, "start_time": time.time(), "current_file": request.model_id}
     
     # Determine target directory based on type
-    if request.type == "stt":
+    # Special case: Kroko embedded models go to models/kroko/
+    is_kroko_embedded = request.model_id and request.model_id.startswith("kroko_") and request.model_id != "kroko_cloud"
+    
+    if is_kroko_embedded:
+        target_dir = os.path.join(PROJECT_ROOT, "models", "kroko")
+    elif request.type == "stt":
         target_dir = os.path.join(PROJECT_ROOT, "models", "stt")
     elif request.type == "tts":
         target_dir = os.path.join(PROJECT_ROOT, "models", "tts")
@@ -886,9 +924,15 @@ class ModelSelection(BaseModel):
     language: Optional[str] = "en-US"
     kroko_embedded: Optional[bool] = False
     kokoro_mode: Optional[str] = "local"
+    kokoro_api_base_url: Optional[str] = None
+    kokoro_api_key: Optional[str] = None
     # New fields for exact model selection
     stt_model_id: Optional[str] = None  # exact model id (e.g., "vosk_en_us_small")
     tts_model_id: Optional[str] = None  # exact model id (e.g., "piper_en_us_lessac_medium")
+    # Optional: custom LLM GGUF URL download (advanced)
+    llm_download_url: Optional[str] = None
+    llm_model_path: Optional[str] = None  # optional filename under models/llm/
+    llm_name: Optional[str] = None  # optional display name for logs
 
 
 @router.post("/local/download-selected-models")
@@ -899,13 +943,23 @@ async def download_selected_models(selection: ModelSelection):
     import urllib.request
     import zipfile
     import shutil
+    import time
     from settings import PROJECT_ROOT
     
-    global _download_output, _download_status
+    global _download_output, _download_status, _download_progress
     
     # Reset state
     _download_output = []
     _download_status = {"running": True, "completed": False, "error": None}
+    _download_progress = {
+        "bytes_downloaded": 0,
+        "total_bytes": 0,
+        "percent": 0,
+        "speed_bps": 0,
+        "eta_seconds": None,
+        "start_time": time.time(),
+        "current_file": "",
+    }
     
     # Get full catalog
     catalog = get_full_catalog()
@@ -955,8 +1009,27 @@ async def download_selected_models(selection: ModelSelection):
     
     # Get model info from catalog - prefer exact model_id if provided
     stt_model = find_stt_model(selection.stt, selection.language, selection.stt_model_id)
-    llm_model = next((m for m in catalog["llm"] if m["id"] == selection.llm), None)
+    llm_model = next((m for m in catalog["llm"] if m.get("id") == selection.llm), None)
     tts_model = find_tts_model(selection.tts, selection.language, selection.tts_model_id)
+
+    # Support custom GGUF LLM downloads (Wizard advanced path)
+    if selection.llm == "custom_gguf_url":
+        url = (selection.llm_download_url or "").strip()
+        if not url:
+            return {"status": "error", "message": "Custom LLM selected but llm_download_url is empty"}
+        filename = (selection.llm_model_path or "").strip()
+        if not filename:
+            filename = os.path.basename(url.split("?", 1)[0])
+        if not filename.endswith(".gguf"):
+            return {"status": "error", "message": "Custom LLM filename must end with .gguf"}
+        llm_model = {
+            "id": "custom_gguf_url",
+            "name": selection.llm_name or filename,
+            "download_url": url,
+            "model_path": filename,
+            "size_mb": 0,
+            "size_display": "Custom",
+        }
     
     _download_output.append(f"🌍 Selected language: {selection.language}")
     
@@ -966,22 +1039,43 @@ async def download_selected_models(selection: ModelSelection):
         return {"status": "error", "message": f"Unknown LLM model: {selection.llm}"}
     if not tts_model:
         return {"status": "error", "message": f"Unknown TTS model: {selection.tts}"}
+
+    kokoro_mode = (selection.kokoro_mode or "local").lower()
+    skip_kokoro_download = tts_model.get("backend") == "kokoro" and kokoro_mode in ("api", "hf")
     
     def download_file(url: str, dest_path: str, label: str):
         """Download a file with progress reporting."""
-        global _download_output
+        global _download_output, _download_progress
         try:
             _download_output.append(f"⬇️ Downloading {label}...")
+            _download_progress["current_file"] = label
             
             # Create directory if needed
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
             
             # Download with progress
+            start_time = time.time()
+            last_update = start_time
             def report_progress(block_num, block_size, total_size):
+                nonlocal last_update
+                bytes_done = block_num * block_size
                 if total_size > 0:
-                    percent = min(100, block_num * block_size * 100 // total_size)
-                    if block_num % 100 == 0:  # Report every 100 blocks
-                        mb_done = (block_num * block_size) / (1024 * 1024)
+                    now = time.time()
+                    percent = int(min(100, (bytes_done * 100) // total_size))
+                    elapsed = max(0.001, now - start_time)
+                    speed_bps = int(bytes_done / elapsed)
+                    remaining = max(0, total_size - bytes_done)
+                    eta = int(remaining / speed_bps) if speed_bps > 0 else None
+
+                    _download_progress["bytes_downloaded"] = int(bytes_done)
+                    _download_progress["total_bytes"] = int(total_size)
+                    _download_progress["percent"] = percent
+                    _download_progress["speed_bps"] = speed_bps
+                    _download_progress["eta_seconds"] = eta
+
+                    if now - last_update >= 2:
+                        last_update = now
+                        mb_done = bytes_done / (1024 * 1024)
                         mb_total = total_size / (1024 * 1024)
                         _download_output.append(f"   {label}: {mb_done:.1f}/{mb_total:.1f} MB ({percent}%)")
             
@@ -1003,7 +1097,7 @@ async def download_selected_models(selection: ModelSelection):
                 stt_dir = os.path.join(models_dir, "stt")
                 os.makedirs(stt_dir, exist_ok=True)
                 
-                if selection.stt == "vosk":
+                if stt_model.get("backend") == "vosk":
                     # Vosk is a zip file
                     zip_path = os.path.join(stt_dir, "vosk-model.zip")
                     if download_file(stt_model["download_url"], zip_path, "Vosk STT Model"):
@@ -1014,7 +1108,7 @@ async def download_selected_models(selection: ModelSelection):
                         _download_output.append("✅ Vosk model extracted")
                     else:
                         success = False
-                elif selection.stt == "sherpa_streaming":
+                elif stt_model.get("backend") == "sherpa":
                     # Sherpa is a tar.bz2 archive
                     import tarfile
                     archive_path = os.path.join(stt_dir, "sherpa-model.tar.bz2")
@@ -1025,6 +1119,13 @@ async def download_selected_models(selection: ModelSelection):
                         os.remove(archive_path)
                         _download_output.append("✅ Sherpa model extracted")
                     else:
+                        success = False
+                elif stt_model.get("backend") == "kroko" and stt_model.get("embedded"):
+                    # Kroko embedded ONNX models go to models/kroko/
+                    kroko_dir = os.path.join(models_dir, "kroko")
+                    os.makedirs(kroko_dir, exist_ok=True)
+                    dest = os.path.join(kroko_dir, stt_model["model_path"])
+                    if not download_file(stt_model["download_url"], dest, "Kroko Embedded STT Model"):
                         success = False
                 else:
                     # Single file model
@@ -1045,11 +1146,15 @@ async def download_selected_models(selection: ModelSelection):
                 _download_output.append(f"ℹ️ LLM: {llm_model['name']} (no download needed)")
             
             # Download TTS model
-            if tts_model.get("download_url"):
+            if skip_kokoro_download:
+                _download_output.append(
+                    f"ℹ️ TTS: {tts_model['name']} (no download needed for Kokoro mode={kokoro_mode})"
+                )
+            elif tts_model.get("download_url"):
                 tts_dir = os.path.join(models_dir, "tts")
                 os.makedirs(tts_dir, exist_ok=True)
                 
-                if selection.tts == "kokoro_82m":
+                if tts_model.get("backend") == "kokoro":
                     # Kokoro has multiple files: model, config, and voice files
                     kokoro_dir = os.path.join(tts_dir, "kokoro")
                     os.makedirs(kokoro_dir, exist_ok=True)
@@ -1088,13 +1193,19 @@ async def download_selected_models(selection: ModelSelection):
             _download_output.append("📝 Updating configuration...")
             env_updates = []
             
-            if stt_model.get("env_var"):
-                env_updates.extend(stt_model["env_var"].split("\n"))
+            # Persist backend selections (even if no download needed)
+            env_updates.append(f"LOCAL_STT_BACKEND={stt_model.get('backend') or selection.stt}")
+            env_updates.append(f"LOCAL_TTS_BACKEND={tts_model.get('backend') or selection.tts}")
+
+            # Kroko toggle (embedded vs cloud)
+            if (stt_model.get("backend") or selection.stt) == "kroko":
+                env_updates.append(f"KROKO_EMBEDDED={'1' if selection.kroko_embedded else '0'}")
+                env_updates.append(f"KROKO_LANGUAGE={selection.language or 'en-US'}")
             
             # Set model paths
             if stt_model.get("model_path") and stt_model.get("download_url"):
                 stt_path = os.path.join("/app/models/stt", stt_model["model_path"])
-                if selection.stt == "sherpa_streaming":
+                if stt_model.get("backend") == "sherpa":
                     env_updates.append(f"SHERPA_MODEL_PATH={stt_path}")
                 else:
                     env_updates.append(f"LOCAL_STT_MODEL_PATH={stt_path}")
@@ -1105,13 +1216,23 @@ async def download_selected_models(selection: ModelSelection):
             
             if tts_model.get("model_path") and tts_model.get("download_url"):
                 tts_path = os.path.join("/app/models/tts", tts_model["model_path"])
-                if selection.tts == "kokoro_82m":
+                if tts_model.get("backend") == "kokoro":
                     env_updates.append(f"KOKORO_MODEL_PATH={tts_path}")
                 else:
                     env_updates.append(f"LOCAL_TTS_MODEL_PATH={tts_path}")
-            
-            if tts_model.get("env_var"):
-                env_updates.extend(tts_model["env_var"].split("\n"))
+
+            # Kokoro mode: local vs api/hf (no local files required)
+            if (tts_model.get("backend") or selection.tts) == "kokoro":
+                mode = kokoro_mode
+                if mode not in ("local", "api", "hf"):
+                    mode = "local"
+                env_updates.append(f"KOKORO_MODE={mode}")
+                env_updates.append("KOKORO_VOICE=af_heart")
+                if mode == "api":
+                    if selection.kokoro_api_base_url:
+                        env_updates.append(f"KOKORO_API_BASE_URL={selection.kokoro_api_base_url}")
+                    if selection.kokoro_api_key:
+                        env_updates.append(f"KOKORO_API_KEY={selection.kokoro_api_key}")
             
             # Write to .env
             if env_updates:
@@ -1148,7 +1269,11 @@ async def download_selected_models(selection: ModelSelection):
     thread = threading.Thread(target=run_downloads, daemon=True)
     thread.start()
     
-    total_mb = (stt_model.get("size_mb", 0) + llm_model.get("size_mb", 0) + tts_model.get("size_mb", 0))
+    total_mb = (
+        stt_model.get("size_mb", 0)
+        + llm_model.get("size_mb", 0)
+        + (0 if skip_kokoro_download else tts_model.get("size_mb", 0))
+    )
     
     return {
         "status": "started",

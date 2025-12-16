@@ -52,8 +52,12 @@ const EnvPage = () => {
     const [ariTesting, setAriTesting] = useState(false);
     const [pendingRestart, setPendingRestart] = useState(false);
     const [restartingEngine, setRestartingEngine] = useState(false);
+    const [showAdvancedKokoro, setShowAdvancedKokoro] = useState(false);
 
     const [error, setError] = useState<string | null>(null);
+
+    const kokoroMode = (env['KOKORO_MODE'] || 'local').toLowerCase();
+    const showHfKokoroMode = showAdvancedKokoro || kokoroMode === 'hf';
 
     useEffect(() => {
         if (!authLoading && token) {
@@ -68,7 +72,11 @@ const EnvPage = () => {
             const res = await axios.get('/api/config/env', {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            setEnv(res.data);
+            const loadedEnv = res.data || {};
+            setEnv(loadedEnv);
+            if ((loadedEnv['KOKORO_MODE'] || '').toLowerCase() === 'hf') {
+                setShowAdvancedKokoro(true);
+            }
         } catch (err: any) {
             console.error('Failed to load env', err);
             setError(err.response?.data?.detail || 'Failed to load environment variables');
@@ -401,13 +409,13 @@ const EnvPage = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <FormSelect
                             label="Log Level"
-                            value={env['LOG_LEVEL'] || 'INFO'}
+                            value={(env['LOG_LEVEL'] || 'info').toLowerCase()}
                             onChange={(e) => updateEnv('LOG_LEVEL', e.target.value)}
                             options={[
-                                { value: 'DEBUG', label: 'Debug' },
-                                { value: 'INFO', label: 'Info' },
-                                { value: 'WARNING', label: 'Warning' },
-                                { value: 'ERROR', label: 'Error' },
+                                { value: 'debug', label: 'Debug' },
+                                { value: 'info', label: 'Info' },
+                                { value: 'warning', label: 'Warning' },
+                                { value: 'error', label: 'Error' },
                             ]}
                         />
                         <FormSelect
@@ -460,13 +468,13 @@ const EnvPage = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <FormSelect
                             label="Streaming Log Level"
-                            value={env['STREAMING_LOG_LEVEL'] || 'debug'}
+                            value={(env['STREAMING_LOG_LEVEL'] || 'info').toLowerCase()}
                             onChange={(e) => updateEnv('STREAMING_LOG_LEVEL', e.target.value)}
                             options={[
-                                { value: 'DEBUG', label: 'Debug' },
-                                { value: 'INFO', label: 'Info' },
-                                { value: 'WARNING', label: 'Warning' },
-                                { value: 'ERROR', label: 'Error' },
+                                { value: 'debug', label: 'Debug' },
+                                { value: 'info', label: 'Info' },
+                                { value: 'warning', label: 'Warning' },
+                                { value: 'error', label: 'Error' },
                             ]}
                         />
                     </div>
@@ -694,23 +702,33 @@ const EnvPage = () => {
                             />
                         )}
 
-                        {/* Kokoro Settings */}
-                        {env['LOCAL_TTS_BACKEND'] === 'kokoro' && (
-                            <>
-                                <FormSelect
-                                    label="Mode"
-                                    value={env['KOKORO_MODE'] || 'local'}
-                                    onChange={(e) => updateEnv('KOKORO_MODE', e.target.value)}
-                                    options={[
-                                        { value: 'local', label: 'Local (On-Premise)' },
-                                        { value: 'api', label: 'Cloud API' },
-                                    ]}
-                                />
-                                <FormSelect
-                                    label="Voice"
-                                    value={env['KOKORO_VOICE'] || 'af_heart'}
-                                    onChange={(e) => updateEnv('KOKORO_VOICE', e.target.value)}
-                                    options={[
+	                        {/* Kokoro Settings */}
+	                        {env['LOCAL_TTS_BACKEND'] === 'kokoro' && (
+	                            <>
+	                                <FormSelect
+	                                    label="Mode"
+	                                    value={kokoroMode}
+	                                    onChange={(e) => updateEnv('KOKORO_MODE', e.target.value)}
+	                                    options={[
+	                                        { value: 'local', label: 'Local (On-Premise)' },
+	                                        { value: 'api', label: 'Kokoro Web API (Cloud)' },
+	                                        ...(showHfKokoroMode ? [{ value: 'hf', label: 'HuggingFace (Auto-download, Advanced)' }] : []),
+	                                    ]}
+	                                />
+	                                <div className="col-span-full">
+	                                    <FormSwitch
+	                                        id="kokoro-advanced"
+	                                        label="Show advanced modes"
+	                                        description="Enables HuggingFace auto-download mode. Recommended only if you can tolerate runtime downloads."
+	                                        checked={showAdvancedKokoro}
+	                                        onChange={(e) => setShowAdvancedKokoro(e.target.checked)}
+	                                    />
+	                                </div>
+	                                <FormSelect
+	                                    label="Voice"
+	                                    value={env['KOKORO_VOICE'] || 'af_heart'}
+	                                    onChange={(e) => updateEnv('KOKORO_VOICE', e.target.value)}
+	                                    options={[
                                         { value: 'af_heart', label: 'Heart (Female, American)' },
                                         { value: 'af_bella', label: 'Bella (Female, American)' },
                                         { value: 'af_nicole', label: 'Nicole (Female, American)' },
@@ -724,12 +742,29 @@ const EnvPage = () => {
                                         { value: 'bm_lewis', label: 'Lewis (Male, British)' },
                                     ]}
                                 />
-                                {env['KOKORO_MODE'] === 'api' ? (
-                                    renderSecretInput('Kokoro API Key', 'KOKORO_API_KEY', 'Your Kokoro API key')
-                                ) : (
-                                    <FormInput
-                                        label="Model Path"
-                                        value={env['KOKORO_MODEL_PATH'] || '/app/models/tts/kokoro'}
+	                                {kokoroMode === 'api' ? (
+	                                    <>
+	                                        <FormInput
+	                                            label="Kokoro Web API Base URL"
+	                                            value={env['KOKORO_API_BASE_URL'] || 'https://voice-generator.pages.dev/api/v1'}
+	                                            onChange={(e) => updateEnv('KOKORO_API_BASE_URL', e.target.value)}
+	                                        />
+	                                        {renderSecretInput(
+	                                            'Kokoro Web API Token (optional)',
+	                                            'KOKORO_API_KEY',
+	                                            'Bearer token (optional); Dashboard only shows Cloud/API option when a token is set'
+	                                        )}
+	                                    </>
+	                                ) : kokoroMode === 'hf' ? (
+	                                    <div className="text-xs text-muted-foreground">
+	                                        HuggingFace mode forces Kokoro to load via the HuggingFace cache in the container and may download
+	                                        weights/voices on first use. Rebuilding the container can trigger re-downloads unless the cache is
+	                                        persisted; for production, prefer Local mode with downloaded files.
+	                                    </div>
+	                                ) : (
+	                                    <FormInput
+	                                        label="Model Path"
+	                                        value={env['KOKORO_MODEL_PATH'] || '/app/models/tts/kokoro'}
                                         onChange={(e) => updateEnv('KOKORO_MODEL_PATH', e.target.value)}
                                     />
                                 )}

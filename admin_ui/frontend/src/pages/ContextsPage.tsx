@@ -10,6 +10,14 @@ import ContextForm from '../components/config/ContextForm';
 const ContextsPage = () => {
     const [config, setConfig] = useState<any>({});
     const [loading, setLoading] = useState(true);
+    const [availableTools, setAvailableTools] = useState<string[]>([
+        'transfer',
+        'cancel_transfer',
+        'hangup_call',
+        'leave_voicemail',
+        'send_email_summary',
+        'request_transcript'
+    ]);
     const [editingContext, setEditingContext] = useState<string | null>(null);
     const [contextForm, setContextForm] = useState<any>({});
     const [isNewContext, setIsNewContext] = useState(false);
@@ -25,10 +33,31 @@ const ContextsPage = () => {
             const res = await axios.get('/api/config/yaml');
             const parsed = yaml.load(res.data.content) as any;
             setConfig(parsed || {});
+            await fetchMcpTools();
         } catch (err) {
             console.error('Failed to load config', err);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchMcpTools = async () => {
+        try {
+            const res = await axios.get('/api/mcp/status');
+            const routes = res.data?.tool_routes || {};
+            const mcpTools = Object.keys(routes).filter((t) => typeof t === 'string' && t.startsWith('mcp_'));
+            const builtin = [
+                'transfer',
+                'cancel_transfer',
+                'hangup_call',
+                'leave_voicemail',
+                'send_email_summary',
+                'request_transcript'
+            ];
+            const merged = Array.from(new Set([...builtin, ...mcpTools])).sort();
+            setAvailableTools(merged);
+        } catch (err) {
+            // Non-fatal: MCP may be disabled or ai-engine down.
         }
     };
 
@@ -252,6 +281,7 @@ const ContextsPage = () => {
                 <ContextForm
                     config={contextForm}
                     providers={config.providers}
+                    availableTools={availableTools}
                     onChange={setContextForm}
                     isNew={isNewContext}
                 />

@@ -30,6 +30,7 @@ const ConfigEditor = () => {
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [warning, setWarning] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
     const [restartRequired, setRestartRequired] = useState(false);
 
@@ -81,6 +82,9 @@ const ConfigEditor = () => {
     const handleSave = async () => {
         setSaving(true);
         try {
+            setError(null);
+            setWarning(null);
+            setSuccess(null);
             let contentToSave = '';
             if (activeTab === 'yaml') {
                 contentToSave = yamlContent;
@@ -97,8 +101,16 @@ const ConfigEditor = () => {
             }
 
             const response = await axios.post('/api/config/yaml', { content: contentToSave });
-            setSuccess('Configuration saved successfully');
+            setSuccess(response.data?.message || 'Configuration saved successfully');
             setTimeout(() => setSuccess(null), 5000);
+
+            const warnings = response.data?.warnings;
+            if (Array.isArray(warnings) && warnings.length > 0) {
+                const shown = warnings.slice(0, 6).join('; ');
+                const suffix = warnings.length > 6 ? ` (+${warnings.length - 6} more)` : '';
+                setWarning(`Saved with warnings: ${shown}${suffix}`);
+                setTimeout(() => setWarning(null), 15000);
+            }
             
             // Check if restart is required
             if (response.data?.restart_required) {
@@ -333,6 +345,13 @@ const ConfigEditor = () => {
                 <div className="p-4 bg-destructive/10 text-destructive rounded-md border border-destructive/20 flex justify-between items-center">
                     <span>{error}</span>
                     <button onClick={() => setError(null)} className="text-destructive hover:opacity-70">×</button>
+                </div>
+            )}
+
+            {warning && (
+                <div className="p-4 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 rounded-md border border-yellow-500/20 flex justify-between items-center">
+                    <span>{warning}</span>
+                    <button onClick={() => setWarning(null)} className="hover:opacity-70">×</button>
                 </div>
             )}
             

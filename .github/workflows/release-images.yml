@@ -1,0 +1,64 @@
+name: Release Images (GHCR)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push ai-engine
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ steps.meta.outputs.owner }}/asterisk-ai-voice-agent-ai-engine:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ steps.meta.outputs.owner }}/asterisk-ai-voice-agent-ai-engine:latest
+
+      # Publish a “core” local-ai-server profile (no optional heavy backends).
+      # Models are NOT bundled; users mount/download models separately.
+      - name: Build and push local-ai-server (core)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./local_ai_server
+          file: ./local_ai_server/Dockerfile
+          push: true
+          build-args: |
+            INCLUDE_VOSK=true
+            INCLUDE_SHERPA=false
+            INCLUDE_PIPER=true
+            INCLUDE_KOKORO=false
+            INCLUDE_LLAMA=true
+            INCLUDE_KROKO_EMBEDDED=false
+          tags: |
+            ghcr.io/${{ steps.meta.outputs.owner }}/asterisk-ai-voice-agent-local-ai-server:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ steps.meta.outputs.owner }}/asterisk-ai-voice-agent-local-ai-server:latest

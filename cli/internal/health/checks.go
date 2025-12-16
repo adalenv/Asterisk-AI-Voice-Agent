@@ -5,28 +5,64 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 func (c *Checker) checkDocker() Check {
 	// Check if docker command exists
 	if _, err := exec.LookPath("docker"); err != nil {
+		installCmd := "curl -fsSL https://get.docker.com | sh"
+		aavaDocs := docsURL("docs/INSTALLATION.md")
+		if c.platform != nil && c.platform.Platform != nil {
+			if v := getString(c.platform.Platform, "docker", "install_cmd"); v != "" {
+				installCmd = v
+			}
+			if v := getString(c.platform.Platform, "docker", "aava_docs"); v != "" {
+				aavaDocs = docsURL(v)
+			}
+		}
 		return Check{
 			Name:        "Docker",
 			Status:      StatusFail,
 			Message:     "Docker not found",
-			Remediation: "Install Docker: https://docs.docker.com/get-docker/",
+			Remediation: fmt.Sprintf("Run:\n%s\nDocs: %s", installCmd, aavaDocs),
 		}
 	}
 	
 	// Check if docker daemon is running
 	cmd := exec.Command("docker", "ps")
 	if err := cmd.Run(); err != nil {
+		startCmd := "sudo systemctl start docker"
+		rootlessStartCmd := ""
+		aavaDocs := docsURL("docs/INSTALLATION.md")
+		rootlessDocs := docsURL("docs/CROSS_PLATFORM_PLAN.md")
+		if c.platform != nil && c.platform.Platform != nil {
+			if v := getString(c.platform.Platform, "docker", "start_cmd"); v != "" {
+				startCmd = v
+			}
+			if v := getString(c.platform.Platform, "docker", "rootless_start_cmd"); v != "" {
+				rootlessStartCmd = v
+			}
+			if v := getString(c.platform.Platform, "docker", "aava_docs"); v != "" {
+				aavaDocs = docsURL(v)
+			}
+			if v := getString(c.platform.Platform, "docker", "rootless_docs"); v != "" {
+				rootlessDocs = docsURL(v)
+			}
+		}
+
+		remediation := fmt.Sprintf("Run: %s\nDocs: %s", startCmd, aavaDocs)
+		if rootlessStartCmd != "" {
+			remediation = remediation + fmt.Sprintf("\nRootless: %s\nRootless docs: %s", rootlessStartCmd, rootlessDocs)
+		}
 		return Check{
 			Name:        "Docker",
 			Status:      StatusFail,
 			Message:     "Docker daemon not running",
-			Remediation: "Start Docker daemon: sudo systemctl start docker",
+			Remediation: remediation,
 		}
 	}
 	
@@ -52,7 +88,7 @@ func (c *Checker) checkContainers() Check {
 			Status:      StatusFail,
 			Message:     "Failed to check container status",
 			Details:     err.Error(),
-			Remediation: "Run: docker-compose ps",
+			Remediation: "Run: docker compose ps (docs: " + docsURL("docs/INSTALLATION.md") + ")",
 		}
 	}
 	
@@ -62,7 +98,7 @@ func (c *Checker) checkContainers() Check {
 			Name:        "Containers",
 			Status:      StatusFail,
 			Message:     "No AI containers running",
-			Remediation: "Start services: docker-compose up -d",
+			Remediation: "Run: docker compose up -d (docs: " + docsURL("docs/INSTALLATION.md") + ")",
 		}
 	}
 	
@@ -78,7 +114,7 @@ func (c *Checker) checkContainers() Check {
 			Name:        "Containers",
 			Status:      StatusFail,
 			Message:     "AI containers not running",
-			Remediation: "Start services: docker-compose up -d",
+			Remediation: "Run: docker compose up -d (docs: " + docsURL("docs/INSTALLATION.md") + ")",
 		}
 	}
 	
@@ -87,6 +123,80 @@ func (c *Checker) checkContainers() Check {
 		Status:  StatusPass,
 		Message: fmt.Sprintf("%d container(s) running", running),
 		Details: string(output),
+	}
+}
+
+func (c *Checker) checkCompose() Check {
+	// Prefer Docker Compose v2 plugin: docker compose
+	cmd := exec.Command("docker", "compose", "version", "--short")
+	output, err := cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(output))
+		// Version format: v2.24.1 or 2.24.1 depending on build.
+		version = strings.TrimPrefix(version, "v")
+
+		status := StatusPass
+		message := fmt.Sprintf("Docker Compose v%s", version)
+		remediation := ""
+
+		parts := strings.Split(version, ".")
+		if len(parts) >= 2 {
+			major, _ := strconv.Atoi(parts[0])
+			minor, _ := strconv.Atoi(parts[1])
+			if major == 2 && minor > 0 && minor < 20 {
+				status = StatusWarn
+				upgradeCmd := ""
+				aavaDocs := docsURL("docs/INSTALLATION.md")
+				if c.platform != nil && c.platform.Platform != nil {
+					upgradeCmd = getString(c.platform.Platform, "compose", "upgrade_cmd")
+					if upgradeCmd == "" {
+						upgradeCmd = getString(c.platform.Platform, "compose", "install_cmd")
+					}
+					if v := getString(c.platform.Platform, "compose", "aava_docs"); v != "" {
+						aavaDocs = docsURL(v)
+					}
+				}
+				if upgradeCmd != "" {
+					remediation = fmt.Sprintf("Run:\n%s\nDocs: %s", upgradeCmd, aavaDocs)
+				}
+				message = fmt.Sprintf("Docker Compose v%s (upgrade recommended: v2.20+)", version)
+			}
+		}
+
+		return Check{Name: "Compose", Status: status, Message: message, Remediation: remediation}
+	}
+
+	// Fall back to docker-compose (v1). If present, treat as unsupported.
+	cmd = exec.Command("docker-compose", "version", "--short")
+	output, err = cmd.Output()
+	if err == nil {
+		version := strings.TrimSpace(string(output))
+		version = strings.TrimPrefix(version, "v")
+		return Check{
+			Name:        "Compose",
+			Status:      StatusFail,
+			Message:     "Docker Compose v1 detected (unsupported)",
+			Details:     "docker-compose " + version,
+			Remediation: "Install Docker Compose v2 plugin (docs: " + docsURL("docs/INSTALLATION.md") + ")",
+		}
+	}
+
+	installCmd := "sudo apt-get update && sudo apt-get install -y docker-compose-plugin"
+	aavaDocs := docsURL("docs/INSTALLATION.md")
+	if c.platform != nil && c.platform.Platform != nil {
+		if v := getString(c.platform.Platform, "compose", "install_cmd"); v != "" {
+			installCmd = v
+		}
+		if v := getString(c.platform.Platform, "compose", "aava_docs"); v != "" {
+			aavaDocs = docsURL(v)
+		}
+	}
+
+	return Check{
+		Name:        "Compose",
+		Status:      StatusFail,
+		Message:     "Docker Compose not found",
+		Remediation: fmt.Sprintf("Run:\n%s\nDocs: %s", installCmd, aavaDocs),
 	}
 }
 
@@ -188,7 +298,8 @@ func (c *Checker) checkConfiguration() Check {
 	}
 	
 	// Check if file is readable
-	if _, err := os.ReadFile(configPath); err != nil {
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
 		return Check{
 			Name:        "Configuration",
 			Status:      StatusFail,
@@ -199,11 +310,135 @@ func (c *Checker) checkConfiguration() Check {
 	}
 	
 	absPath, _ := filepath.Abs(configPath)
+
+	// Parse YAML to catch obvious issues early.
+	var root map[string]interface{}
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		return Check{
+			Name:        "Configuration",
+			Status:      StatusFail,
+			Message:     "Invalid YAML in config/ai-agent.yaml",
+			Details:     err.Error(),
+			Remediation: "Fix YAML syntax (see docs/Configuration-Reference.md) and re-run: agent doctor",
+		}
+	}
+
+	// Minimal schema checks. Credentials are injected from .env at runtime, so we warn
+	// when blocks are missing rather than failing hard.
+	status := StatusPass
+	details := []string{absPath}
+	remediation := []string{}
+
+	providersRaw, providersOK := root["providers"].(map[string]interface{})
+	if !providersOK {
+		return Check{
+			Name:        "Configuration",
+			Status:      StatusFail,
+			Message:     "Missing required 'providers' block in ai-agent.yaml",
+			Details:     absPath,
+			Remediation: "Add 'providers:' to config/ai-agent.yaml (see docs/Configuration-Reference.md)",
+		}
+	}
+	if len(providersRaw) == 0 {
+		return Check{
+			Name:        "Configuration",
+			Status:      StatusFail,
+			Message:     "No providers configured in ai-agent.yaml",
+			Details:     absPath,
+			Remediation: "Add at least one provider under 'providers:' (see docs/Configuration-Reference.md)",
+		}
+	}
+
+	if _, ok := root["default_provider"].(string); !ok {
+		status = StatusWarn
+		details = append(details, "default_provider is missing or not a string (engine may fall back to defaults)")
+		remediation = append(remediation, "Set default_provider in config/ai-agent.yaml")
+	} else {
+		// If default_provider is set, ensure it references an existing provider key.
+		if dp, _ := root["default_provider"].(string); dp != "" {
+			if _, ok := providersRaw[dp]; !ok {
+				return Check{
+					Name:        "Configuration",
+					Status:      StatusFail,
+					Message:     fmt.Sprintf("default_provider references missing provider: %s", dp),
+					Details:     absPath,
+					Remediation: "Fix default_provider or add the provider under 'providers:' (see docs/Configuration-Reference.md)",
+				}
+			}
+		}
+	}
+
+	if _, ok := root["asterisk"].(map[string]interface{}); !ok {
+		status = StatusWarn
+		details = append(details, "asterisk block missing (credentials are injected from .env at runtime)")
+		remediation = append(remediation, "Ensure .env has ASTERISK_ARI_USERNAME and ASTERISK_ARI_PASSWORD (see docs/INSTALLATION.md)")
+	}
+
+	if _, ok := root["llm"].(map[string]interface{}); !ok {
+		status = StatusWarn
+		details = append(details, "llm block missing (defaults/env may be used; behavior may be unexpected)")
+		remediation = append(remediation, "Add llm.initial_greeting and llm.prompt to config/ai-agent.yaml")
+	}
+
+	// Pipelines: if active_pipeline is set, it must exist under pipelines (unless explicitly disabled).
+	if ap, ok := root["active_pipeline"].(string); ok {
+		ap = strings.TrimSpace(ap)
+		if ap != "" {
+			if pipes, ok := root["pipelines"].(map[string]interface{}); ok {
+				if _, exists := pipes[ap]; !exists {
+					return Check{
+						Name:        "Configuration",
+						Status:      StatusFail,
+						Message:     fmt.Sprintf("active_pipeline references missing pipeline: %s", ap),
+						Details:     absPath,
+						Remediation: "Fix active_pipeline or add the pipeline under 'pipelines:' (see docs/Configuration-Reference.md)",
+					}
+				}
+			} else {
+				return Check{
+					Name:        "Configuration",
+					Status:      StatusFail,
+					Message:     "active_pipeline is set but pipelines block is missing",
+					Details:     absPath,
+					Remediation: "Add 'pipelines:' or clear active_pipeline (see docs/Configuration-Reference.md)",
+				}
+			}
+		}
+	}
+
+	// Contexts: if a context explicitly sets provider, ensure it exists.
+	if ctxs, ok := root["contexts"].(map[string]interface{}); ok {
+		for name, rawCtx := range ctxs {
+			ctx, ok := rawCtx.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if p, ok := ctx["provider"].(string); ok && strings.TrimSpace(p) != "" {
+				if _, ok := providersRaw[p]; !ok {
+					status = StatusWarn
+					details = append(details, fmt.Sprintf("context %q references missing provider %q", name, p))
+					remediation = append(remediation, "Fix context provider or add provider under 'providers:'")
+				}
+			}
+		}
+	}
+
+	message := "Configuration file found"
+	if status != StatusPass {
+		message = "Configuration found with warnings"
+	}
+
+	var remediationStr string
+	if len(remediation) > 0 {
+		remediationStr = strings.Join(remediation, " | ")
+	}
+
 	return Check{
-		Name:    "Configuration",
-		Status:  StatusPass,
-		Message: "Configuration file found",
-		Details: absPath,
+		Name:        "Configuration",
+		Status:      status,
+		Message:     message,
+		Details:     strings.Join(details, "\n"),
+		Remediation: remediationStr,
 	}
 }
 

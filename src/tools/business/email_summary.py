@@ -295,7 +295,7 @@ class SendEmailSummaryTool(Tool):
                 "Email summary sent successfully",
                 call_id=call_id,
                 recipient=email_data["to"],
-                email_id=response.get("id")
+                email_id=response.get("id") if isinstance(response, dict) else response.id
             )
             
         except Exception as e:

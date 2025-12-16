@@ -1,0 +1,30 @@
+metno:
+  # met.no requires an identifying User-Agent. Include a URL and/or contact.
+  # See: https://api.met.no/doc/TermsOfService and https://api.met.no/doc/FAQ
+  user_agent: "Asterisk-AI-Voice-Agent (+https://github.com/hkjarral/Asterisk-AI-Voice-Agent)"
+  timeout_seconds: 10
+  # Cache TTL in seconds. The MCP server also background-refreshes tracked ICAOs on this cadence.
+  cache_ttl_seconds: 300
+
+awc:
+  # Optional enrichment (airport name, ATIS frequencies, runway list) via aviationweather.gov.
+  # Uses the same identifying User-Agent by default if omitted.
+  user_agent: "Asterisk-AI-Voice-Agent (+https://github.com/hkjarral/Asterisk-AI-Voice-Agent)"
+  timeout_seconds: 5
+  cache_ttl_seconds: 300
+
+# Output controls (optional)
+defaults:
+  # When true, include explicit "not available" lines for missing runway/frequency/advisories.
+  # Aviation convention usually omits unknown lines; keep this false unless you want explicit phrasing.
+  explicit_not_available: false
+
+# Per-aerodrome deterministic extras (no guessing/hallucinations).
+# Keys are ICAO station codes.
+aerodromes:
+  LSMP:
+    aerodrome_name: "Payerne"
+    runway_in_use: "22"
+    afis_frequency_mhz: "131.130"
+    frequency_label: "AFIS"
+    traffic_advisory: "Traffic to report five minutes prior to entering the aerodrome traffic zone"

@@ -155,7 +155,7 @@ exten => 1000,1,NoOp(AI Voice Agent Test)
 - Channel variable override support (AI_PROVIDER, AI_AUDIO_PROFILE, AI_CONTEXT)
 - Provider capability negotiation with ACK parsing
 - Legacy config synthesis for backward compatibility
-- Documentation: Architecture.md updated with profile system
+- Documentation: `docs/contributing/architecture-deep-dive.md` updated with profile system
 
 ## Verification Checklist
 

@@ -52,6 +52,13 @@ Tool calling enables AI agents to perform real-world actions during conversation
 
 All tools work identically across supported providers—no code changes needed when switching providers.
 
+### MCP Tools (Experimental)
+
+This repo is adding support for **MCP-backed tools** (Model Context Protocol) that can be called the same way as built-in tools, using the existing `ToolRegistry` + provider adapters.
+
+- Design + branch guide: `docs/MCP_INTEGRATION.md`
+- Key constraint: MCP tools must be exposed with **provider-safe names** (no `.` namespacing), and must respect `contexts.<name>.tools` allowlisting.
+
 ### Modular Pipeline Tool Execution
 
 **Status**: ✅ Production validated (Nov 19, 2025)
@@ -762,8 +769,8 @@ Tools written once, work with any provider.
 
 - **[FreePBX Integration Guide](FreePBX-Integration-Guide.md)** - Dialplan setup and channel variables
 - **[Configuration Reference](Configuration-Reference.md)** - All YAML settings
-- **[Architecture](Architecture.md)** - System design and components
-- **[Tool Architecture Case Study](milestones/milestone-16-tool-calling-system.md)** - Design decisions and implementation details
+- **[Architecture Deep Dive](contributing/architecture-deep-dive.md)** - System design and components
+- **[Tool Architecture Case Study](contributing/milestones/milestone-16-tool-calling-system.md)** - Design decisions and implementation details
 
 ---
 

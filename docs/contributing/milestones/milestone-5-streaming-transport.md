@@ -27,7 +27,7 @@ Promote the experimental AudioSocket downstream streaming path to production qua
   - `provider_grace_ms`
   - `logging_level` (optional override per component)
 - Update `src/config.py` models and validation.
-- Document defaults and overrides in `docs/Architecture.md` (see "Streaming Transport Defaults" section) and double-check `docs/ROADMAP.md` references.
+- Document defaults and overrides in `docs/contributing/architecture-deep-dive.md` (see "Streaming Transport Defaults" section) and double-check `docs/ROADMAP.md` references.
 
 ### 5.2 StreamingPlaybackManager Enhancements
 
@@ -41,19 +41,19 @@ Promote the experimental AudioSocket downstream streaming path to production qua
 ### 5.3 Telemetry & Metrics
 
 - Extend `SessionStore` to capture per-call streaming metrics (depth, restarts, fallbacks, codec info).
-- Expose new Prometheus counters/gauges (see `docs/Architecture.md` for list).
+- Expose new Prometheus counters/gauges (see `docs/contributing/architecture-deep-dive.md` for list).
 - Emit a summary tuning hint at INFO level when a call ends (e.g., suggest increasing `min_start_ms`).
 
 ### 5.4 Regression & Documentation
 
-- Update `docs/regressions/deepgram-call-framework.md` with the new test procedure and expected metrics.
-- Update `call-framework.md` regression template with Streaming QA section.
-- Add a “Streaming Defaults & Tuning” section to `docs/Architecture.md` and highlight YAML keys.
+- Update `archived/regressions/deepgram-call-framework.md` with the new test procedure and expected metrics (and summarize key findings in `docs/resilience.md`).
+- Add a Streaming QA checklist to `docs/resilience.md` (or `docs/regressions/` if restored) so future regressions follow the same evidence format.
+- Add a “Streaming Defaults & Tuning” section to `docs/contributing/architecture-deep-dive.md` and highlight YAML keys.
 
 ## Deliverables
 
 - Code changes merged on `develop` with updated tests.
-- Documentation updates committed (`docs/Architecture.md`, roadmap, regression guide).
+- Documentation updates committed (`docs/contributing/architecture-deep-dive.md`, roadmap, regression guide).
 - Sample telemetry output included in the regression log.
 
 ## Verification Checklist
@@ -64,7 +64,7 @@ Promote the experimental AudioSocket downstream streaming path to production qua
 
 ## Handover Notes
 
-- Leave comments in `docs/milestones/milestone-6-openai-provider.md` if any follow-up is required for provider integration.
+- Leave comments in `docs/contributing/milestones/milestone-6-openai-realtime.md` if any follow-up is required for provider integration.
 - Flag any config or logging changes that alter deployment procedures so IDE rule files can be updated.
 
 ---

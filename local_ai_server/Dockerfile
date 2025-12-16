@@ -33,7 +33,7 @@ RUN if [ "$INCLUDE_VOSK" = "true" ]; then \
 
 RUN if [ "$INCLUDE_SHERPA" = "true" ]; then \
         echo "📦 Installing Sherpa-ONNX STT..." && \
-        pip install --no-cache-dir sherpa-onnx==1.12.18; \
+        pip install --no-cache-dir sherpa-onnx==1.12.19; \
     fi
 
 RUN if [ "$INCLUDE_PIPER" = "true" ]; then \

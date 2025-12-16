@@ -21,7 +21,7 @@ Verification quick check: run the helper script, place a single call, confirm da
 - Milestones 5–7 complete (streaming telemetry, pipeline metadata, hot reload).
 - Prometheus metrics already exposed at `/metrics` on `ai-engine` and `local-ai-server` (labels may need extension).
 - Follow-on documentation updates required in:
-  - `docs/Architecture.md`
+  - `docs/contributing/architecture-deep-dive.md`
   - `docs/ROADMAP.md`
   - `Agents.md`, `.cursor/rules/asterisk_ai_voice_agent.mdc`, `.windsurf/rules/asterisk_ai_voice_agent.md`, `Gemini.md`
 - Coordinate secrets handling: `.env` must include Grafana admin password when stack is enabled (document defaults and overrides).
@@ -105,7 +105,7 @@ Verification quick check: run the helper script, place a single call, confirm da
    - Run `make monitor-up` and open/print Grafana URL.
    - If requested, run smoke check (`curl http://localhost:15000/health`) before completion.
 2. **Documentation updates**
-   - Expand `docs/Architecture.md` monitoring section (ports, expectations, data retention).
+   - Expand `docs/contributing/architecture-deep-dive.md` monitoring section (ports, expectations, data retention).
    - Add quick-start section describing helper script workflow + manual commands.
    - Update `docs/ROADMAP.md` (done as part of this milestone).
    - Sync IDE rule files (`Agents.md`, `.cursor`, `.windsurf`, `Gemini.md`).
@@ -143,6 +143,6 @@ Verification quick check: run the helper script, place a single call, confirm da
 - Grafana provisioning + dashboard JSON files.
 - Helper script for onboarding non-Linux users.
 - Documentation updates across Architecture, Roadmap, and IDE rules.
-- Verification artifacts (screenshots or metrics captures) recorded under `docs/regressions/` as proof of completion.
+- Verification artifacts (screenshots or metrics captures) recorded in `docs/resilience.md` (and `docs/regressions/` if restored) as proof of completion.
 
 Complete these phases iteratively, landing Prometheus/Grafana scaffolding first, then layering analytics, recommendations, and onboarding tooling. Coordinate with stakeholders to calibrate recommendation thresholds before release.

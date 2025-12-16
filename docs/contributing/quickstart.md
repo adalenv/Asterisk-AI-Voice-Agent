@@ -266,10 +266,10 @@ For branching and PR details, also see `CONTRIBUTING.md`.
 ## 10. Where to Go Next
 
 - For architecture details:
-  - `docs/Architecture.md`
+  - `docs/contributing/architecture-deep-dive.md`
 - For roadmap and milestones:
   - `docs/ROADMAP.md`
-  - `docs/milestones/`
+  - `docs/contributing/milestones/`
 - For tools and integrations:
   - `docs/TOOL_CALLING_GUIDE.md`
   - `docs/ASTERISK_QUEUE_SETUP.md`
@@ -281,4 +281,3 @@ If you get stuck at any point, ask AVA in your AI IDE to:
 - Explain the relevant part of the system.
 - Suggest next steps.
 - Help you prepare tests and a PR.
-

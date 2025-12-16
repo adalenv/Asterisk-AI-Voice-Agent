@@ -6,6 +6,7 @@ import {
     Workflow,
     MessageSquare,
     Wrench,
+    Plug,
     Sliders,
     Activity,
     Zap,
@@ -82,6 +83,7 @@ const Sidebar = () => {
                     <SidebarItem to="/contexts" icon={MessageSquare} label="Contexts" />
                     <SidebarItem to="/profiles" icon={Sliders} label="Audio Profiles" />
                     <SidebarItem to="/tools" icon={Wrench} label="Tools" />
+                    <SidebarItem to="/mcp" icon={Plug} label="MCP" />
                 </SidebarGroup>
 
                 <SidebarGroup title="Advanced Settings">

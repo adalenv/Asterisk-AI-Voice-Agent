@@ -238,7 +238,7 @@ quick-regression:
 	  && echo "2. Place a short call into the AI context." \
 	  && echo "3. Watch for ExternalMedia bridge join, RTP frames, provider input, playback start/finish, and cleanup." \
 	  && echo "4. Re-run make test-health to ensure active_calls resets to 0." \
-	  && echo "5. Capture findings in call-framework.md or your issue tracker."
+	  && echo "5. Capture findings in docs/resilience.md (and/or archived/regressions/) or your issue tracker."
 
 ## provider-switch: Update default provider locally
 provider-switch:

@@ -364,16 +364,16 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                         placeholder={getModelPathPlaceholder('vosk', 'stt')}
                                     />
                                     {/* Quick Select for Vosk Models */}
-                                    {modelCatalog.stt.some((m: any) => m.id === 'vosk') && (
+                                    {modelCatalog.stt.some((m: any) => m.backend === 'vosk') && (
                                         <div className="mt-1 text-xs text-muted-foreground">
-                                            Available: {modelCatalog.stt.filter((m: any) => m.id === 'vosk').map((m: any) => (
+                                            Available: {modelCatalog.stt.filter((m: any) => m.backend === 'vosk').map((m: any) => (
                                                 <button
-                                                    key={m.id}
+                                                    key={m.id || m.path}
                                                     type="button"
                                                     className="underline mr-2 text-primary"
-                                                    onClick={() => handleChange('stt_model', m.model_path)}
+                                                    onClick={() => handleChange('stt_model', m.path)}
                                                 >
-                                                    {m.model_path}
+                                                    {m.path}
                                                 </button>
                                             ))}
                                         </div>
@@ -389,20 +389,20 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                 <input
                                     type="text"
                                     className="w-full p-2 rounded border border-input bg-background"
-                                    value={config.sherpa_model_path || ''}
-                                    onChange={(e) => handleChange('sherpa_model_path', e.target.value)}
-                                    placeholder={getModelPathPlaceholder('sherpa', 'stt')}
-                                />
-                                {modelCatalog.stt.some((m: any) => m.id.includes('sherpa')) && (
+                                value={config.sherpa_model_path || ''}
+                                onChange={(e) => handleChange('sherpa_model_path', e.target.value)}
+                                placeholder={getModelPathPlaceholder('sherpa', 'stt')}
+                            />
+                                {modelCatalog.stt.some((m: any) => m.backend === 'sherpa') && (
                                     <div className="mt-1 text-xs text-muted-foreground">
-                                        Available: {modelCatalog.stt.filter((m: any) => m.id.includes('sherpa')).map((m: any) => (
+                                        Available: {modelCatalog.stt.filter((m: any) => m.backend === 'sherpa').map((m: any) => (
                                             <button
-                                                key={m.id}
+                                                key={m.id || m.path}
                                                 type="button"
                                                 className="underline mr-2 text-primary"
-                                                onClick={() => handleChange('sherpa_model_path', m.model_path)}
+                                                onClick={() => handleChange('sherpa_model_path', m.path)}
                                             >
-                                                {m.model_path}
+                                                {m.path}
                                             </button>
                                         ))}
                                     </div>
@@ -535,18 +535,18 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                     onChange={(e) => handleChange('tts_voice', e.target.value)}
                                     placeholder={getModelPathPlaceholder('piper', 'tts')}
                                 />
-                                {modelCatalog.tts.some((m: any) => m.id.includes('piper')) && (
+                                {modelCatalog.tts.some((m: any) => m.backend === 'piper') && (
                                     <div className="mt-1 text-xs text-muted-foreground flex flex-wrap gap-2">
                                         <span>Use:</span>
-                                        {modelCatalog.tts.filter((m: any) => m.id.includes('piper')).map((m: any) => (
+                                        {modelCatalog.tts.filter((m: any) => m.backend === 'piper').map((m: any) => (
                                             <button
                                                 key={m.id}
                                                 type="button"
                                                 className="underline text-primary"
-                                                onClick={() => handleChange('tts_voice', m.model_path)}
+                                                onClick={() => handleChange('tts_voice', m.path)}
                                                 title={m.name}
                                             >
-                                                {m.id.replace('piper_', '')}
+                                                {m.name}
                                             </button>
                                         ))}
                                     </div>
@@ -603,9 +603,9 @@ const LocalProviderForm: React.FC<LocalProviderFormProps> = ({ config, onChange 
                                                     key={m.id}
                                                     type="button"
                                                     className="underline mr-2 text-primary"
-                                                    onClick={() => handleChange('kokoro_model_path', m.model_path)}
+                                                    onClick={() => handleChange('kokoro_model_path', m.path)}
                                                 >
-                                                    {m.model_path}
+                                                    {m.path}
                                                 </button>
                                             ))}
                                         </div>

@@ -22,15 +22,18 @@ debian:
   
   docker:
     install_docs: "https://docs.docker.com/engine/install/debian/"
+    aava_docs: "docs/INSTALLATION.md"
     install_cmd: |
       curl -fsSL https://get.docker.com | sh
     start_cmd: "sudo systemctl start docker"
     enable_cmd: "sudo systemctl enable docker"
     user_group_cmd: "sudo usermod -aG docker $USER"
     rootless_start_cmd: "systemctl --user start docker"
+    rootless_docs: "docs/CROSS_PLATFORM_PLAN.md"
   
   compose:
     install_docs: "https://docs.docker.com/compose/install/linux/"
+    aava_docs: "docs/INSTALLATION.md"
     install_cmd: |
       sudo apt-get update
       sudo apt-get install -y docker-compose-plugin
@@ -38,6 +41,7 @@ debian:
   
   selinux:
     present: false
+    aava_docs: "docs/INSTALLATION.md"
   
   apparmor:
     present: true
@@ -46,6 +50,7 @@ debian:
   
   firewall:
     type: "ufw"
+    aava_docs: "docs/INSTALLATION.md"
     open_port_cmd: "sudo ufw allow {port}/tcp"
     check_cmd: "sudo ufw status"
   
@@ -87,25 +92,50 @@ rhel:
   
   docker:
     install_docs: "https://docs.docker.com/engine/install/centos/"
+    aava_docs: "docs/INSTALLATION.md"
     install_cmd: |
-      sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-      sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      if command -v dnf >/dev/null 2>&1; then
+        sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+        sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      else
+        sudo yum install -y yum-utils
+        sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+        sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      fi
     start_cmd: "sudo systemctl start docker"
     enable_cmd: "sudo systemctl enable docker"
     user_group_cmd: "sudo usermod -aG docker $USER"
     rootless_start_cmd: "systemctl --user start docker"
+    rootless_docs: "docs/CROSS_PLATFORM_PLAN.md"
   
   compose:
     install_docs: "https://docs.docker.com/compose/install/linux/"
+    aava_docs: "docs/INSTALLATION.md"
     # Compose is installed with docker-compose-plugin in the docker install
-    install_cmd: "sudo dnf install -y docker-compose-plugin"
-    upgrade_cmd: "sudo dnf update -y docker-compose-plugin"
+    install_cmd: |
+      if command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y docker-compose-plugin
+      else
+        sudo yum install -y docker-compose-plugin
+      fi
+    upgrade_cmd: |
+      if command -v dnf >/dev/null 2>&1; then
+        sudo dnf update -y docker-compose-plugin
+      else
+        sudo yum update -y docker-compose-plugin
+      fi
   
   selinux:
     present: true
+    aava_docs: "docs/INSTALLATION.md"
     check_cmd: "getenforce"
     tools_package: "policycoreutils-python-utils"
-    tools_install_cmd: "sudo dnf install -y policycoreutils-python-utils"
+    tools_install_cmd: |
+      if command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y policycoreutils-python-utils
+      else
+        sudo yum install -y policycoreutils-python-utils
+      fi
     context_cmd: "sudo semanage fcontext -a -t container_file_t '{path}(/.*)?'"
     restore_cmd: "sudo restorecon -Rv {path}"
   
@@ -114,6 +144,7 @@ rhel:
   
   firewall:
     type: "firewalld"
+    aava_docs: "docs/INSTALLATION.md"
     open_port_cmd: "sudo firewall-cmd --permanent --add-port={port}/tcp && sudo firewall-cmd --reload"
     check_cmd: "sudo firewall-cmd --list-all"
   
@@ -184,6 +215,23 @@ sangoma:
     reload_cmd: "fwconsole reload"
     version_cmd: "fwconsole -V"
     dialplan_file: "/etc/asterisk/extensions_custom.conf"
+    aava_docs: "docs/FreePBX-Integration-Guide.md"
+
+  # CentOS 7-based distros often don't have a usable docker-compose-plugin package;
+  # prefer the manual v2 install path to keep installs predictable.
+  compose:
+    install_docs: "https://docs.docker.com/compose/install/linux/"
+    aava_docs: "docs/INSTALLATION.md"
+    install_cmd: |
+      sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
+      sudo chmod +x /usr/local/bin/docker-compose
+      sudo mkdir -p /usr/local/lib/docker/cli-plugins
+      sudo ln -sf /usr/local/bin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+    upgrade_cmd: |
+      sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
+      sudo chmod +x /usr/local/bin/docker-compose
+      sudo mkdir -p /usr/local/lib/docker/cli-plugins
+      sudo ln -sf /usr/local/bin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
   
   paths:
     asterisk_config:
@@ -230,7 +278,7 @@ eol_distributions:
   - os_id: ubuntu
     version: "20.04"
     eol_date: "2025-04-01"
-    message: "Ubuntu 20.04 standard support ends Apr 2025"
+    message: "Ubuntu 20.04 standard support ended Apr 2025 (ESM continues) - consider upgrading"
   
   - os_id: debian
     version: "9"

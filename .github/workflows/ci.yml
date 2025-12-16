@@ -31,6 +31,10 @@ jobs:
         run: |
           python -m compileall -q .
 
+      - name: Preflight script smoke (syntax)
+        run: |
+          bash -n preflight.sh
+
       - name: Run tests with coverage
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -85,8 +89,18 @@ jobs:
       - name: Build ai-engine image
         run: docker build -t ai-engine:test .
 
-      - name: Build local-ai-server image
-        run: docker build -t local-ai-server:test ./local_ai_server
+      # CI builds a minimal local-ai-server profile to keep PR checks fast and avoid
+      # exceeding GitHub runner disk limits. Full local backends are built/released
+      # via tagged releases and/or scheduled workflows.
+      - name: Build local-ai-server image (ci-min)
+        run: |
+          docker build -t local-ai-server:test ./local_ai_server \
+            --build-arg INCLUDE_VOSK=true \
+            --build-arg INCLUDE_SHERPA=false \
+            --build-arg INCLUDE_PIPER=true \
+            --build-arg INCLUDE_KOKORO=false \
+            --build-arg INCLUDE_LLAMA=true \
+            --build-arg INCLUDE_KROKO_EMBEDDED=false
 
       - name: Check image sizes
         run: |
@@ -108,10 +122,10 @@ jobs:
             AI_ENGINE_PASS=true
           fi
           
-          # local-ai-server budget: 4GB (includes ML models)
+          # local-ai-server (ci-min, local-core) budget: 2.5GB
           LOCAL_AI_SIZE=$(docker inspect local-ai-server:test --format='{{.Size}}')
           LOCAL_AI_MB=$((LOCAL_AI_SIZE / 1024 / 1024))
-          LOCAL_AI_BUDGET=4000
+          LOCAL_AI_BUDGET=2500
           
           if [ $LOCAL_AI_MB -gt $LOCAL_AI_BUDGET ]; then
             echo "| local-ai-server | ${LOCAL_AI_MB}MB | ${LOCAL_AI_BUDGET}MB | ❌ Over budget |" >> $GITHUB_STEP_SUMMARY
@@ -125,7 +139,7 @@ jobs:
           if [ "$AI_ENGINE_PASS" = "false" ] || [ "$LOCAL_AI_PASS" = "false" ]; then
             echo ""
             echo "⚠️ **One or more images exceed size budget!**" >> $GITHUB_STEP_SUMMARY
-            echo "Consider using build args to exclude unused backends." >> $GITHUB_STEP_SUMMARY
+            echo "For local-ai-server, CI uses a minimal build profile (no optional backends)." >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
 

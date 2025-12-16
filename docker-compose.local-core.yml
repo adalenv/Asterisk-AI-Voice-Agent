@@ -1,0 +1,15 @@
+services:
+  # A smaller local-ai-server profile intended for:
+  # - community “works out of the box” setup
+  # - keeping builds manageable on typical servers
+  #
+  # Models are NOT bundled; mount `./models` as usual.
+  local-ai-server:
+    build:
+      args:
+        INCLUDE_VOSK: "true"
+        INCLUDE_PIPER: "true"
+        INCLUDE_LLAMA: "true"
+        INCLUDE_SHERPA: "false"
+        INCLUDE_KOKORO: "false"
+        INCLUDE_KROKO_EMBEDDED: "false"

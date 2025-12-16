@@ -16,6 +16,7 @@ import PipelinesPage from './pages/PipelinesPage';
 import ContextsPage from './pages/ContextsPage';
 import ProfilesPage from './pages/ProfilesPage';
 import ToolsPage from './pages/ToolsPage';
+import MCPPage from './pages/MCPPage';
 
 // Advanced Configuration Pages
 import VADPage from './pages/Advanced/VADPage';
@@ -136,6 +137,7 @@ function App() {
                                             <Route path="/contexts" element={<ContextsPage />} />
                                             <Route path="/profiles" element={<ProfilesPage />} />
                                             <Route path="/tools" element={<ToolsPage />} />
+                                            <Route path="/mcp" element={<MCPPage />} />
 
                                             {/* Advanced Settings */}
                                             <Route path="/vad" element={<VADPage />} />

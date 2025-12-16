@@ -231,6 +231,53 @@ class ElevenLabsProviderConfig(BaseModel):
     use_speaker_boost: bool = Field(default=True)
 
 
+class MCPToolConfig(BaseModel):
+    """Configuration for a single MCP-backed tool exposed to the LLM."""
+
+    name: str
+    expose_as: Optional[str] = None  # Provider-safe name (e.g., mcp_weather_get_forecast)
+    description: Optional[str] = None
+
+    # Voice UX
+    speech_field: Optional[str] = None
+    speech_template: Optional[str] = None
+
+    # Timing / UX
+    timeout_ms: Optional[int] = None
+    slow_response_threshold_ms: Optional[int] = None
+    slow_response_message: Optional[str] = None
+
+
+class MCPServerRestartConfig(BaseModel):
+    enabled: bool = Field(default=True)
+    max_restarts: int = Field(default=5, ge=0)
+    backoff_ms: int = Field(default=1000, ge=0)
+
+
+class MCPServerDefaultsConfig(BaseModel):
+    timeout_ms: int = Field(default=10000, ge=1)
+    slow_response_threshold_ms: int = Field(default=0, ge=0)
+    slow_response_message: str = Field(default="Let me look that up for you, one moment...")
+
+
+class MCPServerConfig(BaseModel):
+    """Configuration for a single MCP server."""
+
+    enabled: bool = Field(default=True)
+    transport: str = Field(default="stdio")  # currently: stdio
+    command: List[str] = Field(default_factory=list)  # e.g., ["python3", "-m", "my_mcp_server"]
+    cwd: Optional[str] = None
+    env: Dict[str, str] = Field(default_factory=dict)
+    restart: MCPServerRestartConfig = Field(default_factory=MCPServerRestartConfig)
+    defaults: MCPServerDefaultsConfig = Field(default_factory=MCPServerDefaultsConfig)
+    tools: List[MCPToolConfig] = Field(default_factory=list)  # optional allowlist; if empty => expose all discovered
+
+
+class MCPConfig(BaseModel):
+    enabled: bool = Field(default=False)
+    servers: Dict[str, MCPServerConfig] = Field(default_factory=dict)
+
+
 class OpenAIRealtimeProviderConfig(BaseModel):
     enabled: bool = Field(default=True)
     api_key: Optional[str] = None
@@ -429,6 +476,8 @@ class AppConfig(BaseModel):
     contexts: Dict[str, Any] = Field(default_factory=dict)
     # Tool calling configuration (v4.1)
     tools: Dict[str, Any] = Field(default_factory=dict)
+    # MCP tool configuration (experimental)
+    mcp: Optional[MCPConfig] = None
 
     # Ensure tests that construct AppConfig(**dict) directly still get normalized pipelines
     # similar to load_config(), which calls _normalize_pipelines().

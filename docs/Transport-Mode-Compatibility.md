@@ -296,6 +296,6 @@ else:
 ---
 
 **For questions or issues, see**:
-- [Architecture.md](./Architecture.md)
+- [Architecture Deep Dive](./contributing/architecture-deep-dive.md)
 - [ROADMAP.md](./ROADMAP.md)
 - Linear issue AAVA-28

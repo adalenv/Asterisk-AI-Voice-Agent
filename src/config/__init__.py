@@ -36,6 +36,11 @@ OpenAIProviderConfig = _parent_config.OpenAIProviderConfig
 GoogleProviderConfig = _parent_config.GoogleProviderConfig
 ElevenLabsProviderConfig = _parent_config.ElevenLabsProviderConfig
 OpenAIRealtimeProviderConfig = _parent_config.OpenAIRealtimeProviderConfig
+MCPConfig = _parent_config.MCPConfig
+MCPServerConfig = _parent_config.MCPServerConfig
+MCPToolConfig = _parent_config.MCPToolConfig
+MCPServerRestartConfig = _parent_config.MCPServerRestartConfig
+MCPServerDefaultsConfig = _parent_config.MCPServerDefaultsConfig
 BargeInConfig = _parent_config.BargeInConfig
 LLMConfig = _parent_config.LLMConfig
 VADConfig = _parent_config.VADConfig
@@ -56,6 +61,11 @@ __all__ = [
     'GoogleProviderConfig',
     'ElevenLabsProviderConfig',
     'OpenAIRealtimeProviderConfig',
+    'MCPConfig',
+    'MCPServerConfig',
+    'MCPToolConfig',
+    'MCPServerRestartConfig',
+    'MCPServerDefaultsConfig',
     'BargeInConfig',
     'LLMConfig',
     'VADConfig',

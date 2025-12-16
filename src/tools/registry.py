@@ -4,7 +4,7 @@ Tool registry - central repository for all available tools.
 Singleton pattern ensures only one registry exists across the application.
 """
 
-from typing import Dict, List, Type, Optional
+from typing import Dict, List, Type, Optional, Iterable, Set
 from src.tools.base import Tool, ToolDefinition, ToolCategory
 import logging
 
@@ -55,7 +55,17 @@ class ToolRegistry:
         
         self._tools[tool_name] = tool
         logger.info(f"✅ Registered tool: {tool_name} ({tool.definition.category.value})")
-    
+
+    def register_instance(self, tool: Tool) -> None:
+        """
+        Register a tool instance (used for dynamically constructed tools like MCP wrappers).
+        """
+        tool_name = tool.definition.name
+        if tool_name in self._tools:
+            logger.warning(f"Tool {tool_name} already registered, overwriting")
+        self._tools[tool_name] = tool
+        logger.info(f"✅ Registered tool: {tool_name} ({tool.definition.category.value})")
+
     def get(self, name: str) -> Optional[Tool]:
         """
         Get tool by name, with alias support.
@@ -77,6 +87,25 @@ class ToolRegistry:
             return self._tools.get(canonical_name)
         
         return None
+
+    def has(self, name: str) -> bool:
+        """Return True if a tool is registered under this exact name (no alias resolution)."""
+        return name in self._tools
+
+    def unregister(self, name: str) -> bool:
+        """Unregister a tool by exact name (no alias resolution)."""
+        if name in self._tools:
+            self._tools.pop(name, None)
+            logger.info(f"🗑️ Unregistered tool: {name}")
+            return True
+        return False
+
+    def unregister_many(self, names: Iterable[str]) -> int:
+        removed = 0
+        for name in names:
+            if self.unregister(str(name)):
+                removed += 1
+        return removed
     
     def get_all(self) -> List[Tool]:
         """
@@ -110,7 +139,23 @@ class ToolRegistry:
             List of ToolDefinition objects
         """
         return [tool.definition for tool in self._tools.values()]
-    
+
+    def _iter_tools_filtered(self, tool_names: Optional[List[str]]) -> Iterable[Tool]:
+        if tool_names is None:
+            return self._tools.values()
+        seen: Set[str] = set()
+        tools: List[Tool] = []
+        for name in tool_names:
+            tool = self.get(name)
+            if not tool:
+                continue
+            tname = tool.definition.name
+            if tname in seen:
+                continue
+            seen.add(tname)
+            tools.append(tool)
+        return tools
+
     def to_deepgram_schema(self) -> List[Dict]:
         """
         Export all tools in Deepgram Voice Agent format.
@@ -118,10 +163,10 @@ class ToolRegistry:
         Returns:
             List of tool schemas for Deepgram
         """
-        return [
-            tool.definition.to_deepgram_schema()
-            for tool in self._tools.values()
-        ]
+        return [tool.definition.to_deepgram_schema() for tool in self._tools.values()]
+
+    def to_deepgram_schema_filtered(self, tool_names: Optional[List[str]]) -> List[Dict]:
+        return [tool.definition.to_deepgram_schema() for tool in self._iter_tools_filtered(tool_names)]
     
     def to_openai_schema(self) -> List[Dict]:
         """
@@ -130,10 +175,10 @@ class ToolRegistry:
         Returns:
             List of tool schemas for OpenAI Chat Completions (nested format)
         """
-        return [
-            tool.definition.to_openai_schema()
-            for tool in self._tools.values()
-        ]
+        return [tool.definition.to_openai_schema() for tool in self._tools.values()]
+
+    def to_openai_schema_filtered(self, tool_names: Optional[List[str]]) -> List[Dict]:
+        return [tool.definition.to_openai_schema() for tool in self._iter_tools_filtered(tool_names)]
     
     def to_openai_realtime_schema(self) -> List[Dict]:
         """
@@ -142,10 +187,10 @@ class ToolRegistry:
         Returns:
             List of tool schemas for OpenAI Realtime API (flat format)
         """
-        return [
-            tool.definition.to_openai_realtime_schema()
-            for tool in self._tools.values()
-        ]
+        return [tool.definition.to_openai_realtime_schema() for tool in self._tools.values()]
+
+    def to_openai_realtime_schema_filtered(self, tool_names: Optional[List[str]]) -> List[Dict]:
+        return [tool.definition.to_openai_realtime_schema() for tool in self._iter_tools_filtered(tool_names)]
     
     def to_elevenlabs_schema(self) -> List[Dict]:
         """
@@ -154,10 +199,10 @@ class ToolRegistry:
         Returns:
             List of tool schemas for ElevenLabs (client-side execution)
         """
-        return [
-            tool.definition.to_elevenlabs_schema()
-            for tool in self._tools.values()
-        ]
+        return [tool.definition.to_elevenlabs_schema() for tool in self._tools.values()]
+
+    def to_elevenlabs_schema_filtered(self, tool_names: Optional[List[str]]) -> List[Dict]:
+        return [tool.definition.to_elevenlabs_schema() for tool in self._iter_tools_filtered(tool_names)]
     
     def to_prompt_text(self) -> str:
         """

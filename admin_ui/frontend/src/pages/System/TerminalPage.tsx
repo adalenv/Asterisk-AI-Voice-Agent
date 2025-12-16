@@ -38,7 +38,11 @@ const TerminalPage = () => {
 
                 case 'restart':
                     if (args.length === 0) return ['Usage: restart <service> (e.g., ai_engine, all)'];
-                    await axios.post(`/api/system/restart?service=${args[0]}`);
+                    if (args[0] === 'all') {
+                        await axios.post('/api/system/containers/restart-all');
+                    } else {
+                        await axios.post(`/api/system/containers/${args[0]}/restart`);
+                    }
                     return [`Command sent: Restarting ${args[0]}...`];
 
                 case 'logs':

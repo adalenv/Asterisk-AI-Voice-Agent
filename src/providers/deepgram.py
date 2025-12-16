@@ -7,6 +7,7 @@ import re
 import audioop
 from typing import Callable, Optional, List, Dict, Any
 import websockets.exceptions
+from websockets.asyncio.client import ClientConnection
 
 from structlog import get_logger
 from prometheus_client import Gauge, Info
@@ -138,7 +139,7 @@ class DeepgramProvider(AIProviderInterface):
         super().__init__(on_event)
         self.config = config
         self.llm_config = llm_config
-        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
+        self.websocket: Optional[ClientConnection] = None
         self._keep_alive_task: Optional[asyncio.Task] = None
         self._is_audio_flowing = False
         self.request_id: Optional[str] = None
@@ -148,6 +149,7 @@ class DeepgramProvider(AIProviderInterface):
         # Tool calling support
         self.tool_adapter = DeepgramToolAdapter(tool_registry)
         logger.info("🛠️ Deepgram provider initialized with tool support")
+        self._allowed_tools: Optional[List[str]] = None
         self._in_audio_burst: bool = False
         self._first_output_chunk_logged: bool = False
         self._closing: bool = False
@@ -348,11 +350,16 @@ class DeepgramProvider(AIProviderInterface):
 
         try:
             logger.info("Connecting to Deepgram Voice Agent...", url=ws_url)
-            self.websocket = await websockets.connect(ws_url, extra_headers=list(headers.items()))
+            self.websocket = await websockets.connect(ws_url, additional_headers=list(headers.items()))
             logger.info("✅ Successfully connected to Deepgram Voice Agent.")
 
             # Persist call context for downstream events
             self.call_id = call_id
+            # Per-call tool allowlist: if None => legacy (all tools); if [] => no tools
+            if context and "tools" in context:
+                self._allowed_tools = context.get("tools")
+            else:
+                self._allowed_tools = None
             # Capture Deepgram request id if provided
             try:
                 rid = None
@@ -474,33 +481,24 @@ class DeepgramProvider(AIProviderInterface):
             }
         }
         
-        # Add tools if enabled in configuration
-        # Per Deepgram docs: tools go in agent.think.tools, NOT agent.tools
+        # Add tools if enabled in configuration.
+        # Per Deepgram docs: functions go in agent.think.functions.
         try:
-            import yaml
-            with open('/app/config/ai-agent.yaml', 'r') as f:
-                config_dict = yaml.safe_load(f)
-            
-            tools_config = config_dict.get('tools', {}) if config_dict else {}
-            
-            if tools_config.get('enabled', False):
-                # Get tools from adapter
-                tools_schemas = self.tool_adapter.get_tools_config()
-                
+            full_cfg = getattr(self, "_full_config", None)
+            tools_cfg = (full_cfg or {}).get("tools", {}) if isinstance(full_cfg, dict) else {}
+            tools_enabled = bool(tools_cfg.get("enabled", False))
+            if tools_enabled:
+                tools_schemas = self.tool_adapter.get_tools_config(self._allowed_tools)
                 if tools_schemas:
-                    # CRITICAL: Deepgram requires functions in agent.think.functions array
-                    # Per official docs: https://developers.deepgram.com/docs/voice-agents-function-calling
-                    # Functions are placed directly in array, NOT wrapped with {type: "function", function: {...}}
-                    # That wrapping is OpenAI's format. Deepgram wants: [{ name, description, parameters }, ...]
                     settings["agent"]["think"]["functions"] = tools_schemas
                     logger.info(
                         "✅ Deepgram functions configured",
                         call_id=self.call_id,
                         function_count=len(tools_schemas),
-                        functions=[t["name"] for t in tools_schemas]
+                        functions=[t["name"] for t in tools_schemas],
                     )
                 else:
-                    logger.warning("Tools enabled but no tools registered", call_id=self.call_id)
+                    logger.debug("Tools enabled but none selected for this call", call_id=self.call_id)
             else:
                 logger.debug("Tools disabled in configuration", call_id=self.call_id)
         except Exception as e:
@@ -546,7 +544,7 @@ class DeepgramProvider(AIProviderInterface):
         # Immediately inject greeting once to try to kick off TTS
         async def _inject_greeting_immediate():
             try:
-                if self.websocket and not self.websocket.closed and greeting_val and self._greeting_injections < 1:
+                if self.websocket and self.websocket.state.name == "OPEN" and greeting_val and self._greeting_injections < 1:
                     logger.info("Injecting greeting immediately after Settings", call_id=self.call_id)
                     self._greeting_injections += 1
                     try:
@@ -567,7 +565,7 @@ class DeepgramProvider(AIProviderInterface):
         async def _inject_greeting_if_quiet():
             try:
                 await asyncio.sleep(1.5)
-                if self.websocket and not self.websocket.closed and not self._in_audio_burst and greeting_val and self._greeting_injections < 2:
+                if self.websocket and self.websocket.state.name == "OPEN" and not self._in_audio_burst and greeting_val and self._greeting_injections < 2:
                     logger.info("Injecting greeting via fallback as no AgentAudio detected", call_id=self.call_id)
                     try:
                         self._greeting_injections += 1
@@ -851,6 +849,7 @@ class DeepgramProvider(AIProviderInterface):
                 'session_store': getattr(self, '_session_store', None),
                 'ari_client': getattr(self, '_ari_client', None),
                 'config': getattr(self, '_full_config', None),
+                'allowed_tools': self._allowed_tools,
                 'websocket': self.websocket
             }
             
@@ -891,7 +890,7 @@ class DeepgramProvider(AIProviderInterface):
                             "error": str(e)
                         }
                     }
-                    if self.websocket and not self.websocket.closed:
+                    if self.websocket and self.websocket.state.name == "OPEN":
                         await self.websocket.send(json.dumps(error_response))
                         logger.info("Sent error response to Deepgram", function_call_id=function_call_id)
             except Exception as send_error:
@@ -905,7 +904,7 @@ class DeepgramProvider(AIProviderInterface):
         try:
             if self._keep_alive_task:
                 self._keep_alive_task.cancel()
-            if self.websocket and not self.websocket.closed:
+            if self.websocket and self.websocket.state.name == "OPEN":
                 await self.websocket.close()
             if not self._closed:
                 logger.info("Disconnected from Deepgram Voice Agent.")
@@ -919,7 +918,7 @@ class DeepgramProvider(AIProviderInterface):
         while True:
             try:
                 await asyncio.sleep(10)
-                if self.websocket and not self.websocket.closed:
+                if self.websocket and self.websocket.state.name == "OPEN":
                     if not self._is_audio_flowing:
                         await self.websocket.send(json.dumps({"type": "KeepAlive"}))
                     self._is_audio_flowing = False
@@ -1212,7 +1211,7 @@ class DeepgramProvider(AIProviderInterface):
                                 except Exception:
                                     pass
                                 # If not yet retried and we have a minimal payload, attempt resend once
-                                if not self._settings_retry_attempted and self._last_settings_minimal and self.websocket and not self.websocket.closed:
+                                if not self._settings_retry_attempted and self._last_settings_minimal and self.websocket and self.websocket.state.name == "OPEN":
                                     try:
                                         self._settings_retry_attempted = True
                                         logger.warning("Deepgram Settings error; retrying with minimal Settings", call_id=self.call_id)
@@ -1304,7 +1303,7 @@ class DeepgramProvider(AIProviderInterface):
                         try:
                             et = event_data.get("type") if isinstance(event_data, dict) else None
                             if et == "SettingsApplied" and not self._in_audio_burst and self._greeting_injections < 2:
-                                if self.websocket and not self.websocket.closed:
+                                if self.websocket and self.websocket.state.name == "OPEN":
                                     logger.info("Skipping greeting injection - using Deepgram agent greeting", call_id=self.call_id, event_type=et)
                                     # Greeting injection disabled to prevent duplicate
                                     # self._greeting_injections += 1

@@ -25,7 +25,7 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
   - `active_pipeline: default`
   - Component-specific tuning (e.g., `options.stt.mode: stt`, `options.tts.voice`, `options.llm.temperature`).
 - Update Pydantic models with validation, defaults, and backwards-compatible fallbacks when pipelines are absent.
-- Document schema examples (Deepgram-only, mixed local/cloud, full-local) in `docs/Architecture.md`.
+- Document schema examples (Deepgram-only, mixed local/cloud, full-local) in `docs/contributing/architecture-deep-dive.md`.
 
 #### Phase 1 – Configuration Schema (Completed)
 
@@ -118,8 +118,8 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
 #### Phase 5 – Documentation, Samples, Regression Artifacts (Completed)
 
 - Files touched:
-  - [`docs/milestones/milestone-7-configurable-pipelines.md`](docs/milestones/milestone-7-configurable-pipelines.md) — adds completion summary, validation checklist, and cross-links to pipeline assets.
-  - [`docs/Architecture.md`](docs/Architecture.md) — captures pipeline orchestrator flow, config schema, and adapter mapping tables.
+  - [`milestone-7-configurable-pipelines.md`](milestone-7-configurable-pipelines.md) — adds completion summary, validation checklist, and cross-links to pipeline assets.
+  - [`architecture-deep-dive.md`](../architecture-deep-dive.md) — captures pipeline orchestrator flow, config schema, and adapter mapping tables.
   - [`examples/pipelines/local_only.yaml`](examples/pipelines/local_only.yaml), [`examples/pipelines/hybrid_deepgram_openai.yaml`](examples/pipelines/hybrid_deepgram_openai.yaml), [`examples/pipelines/cloud_only_google.yaml`](examples/pipelines/cloud_only_google.yaml) — sample configurations with credential prerequisites and audio format notes.
 - Summary:
   - Documented Deepgram, OpenAI, Google, and local adapters with references so operators can map YAML entries to the correct factories.
@@ -132,12 +132,12 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
 
 ### 7.4 Regression & Documentation
 
-- Add section to `call-framework.md` describing how to run calls with full-local and hybrid pipelines (local STT + cloud TTS, local STT + local LLM + cloud TTS, etc.).
+- Document how to run calls with full-local and hybrid pipelines using golden baselines (`docs/baselines/golden/`), case studies (`docs/case-studies/`), and evidence format in `docs/resilience.md`.
 - Create example pipeline configs under `examples/pipelines/` showcasing:
   - `local_only`
   - `local_stt_cloud_tts`
   - `cloud_only`
-- Update `docs/Architecture.md` and `docs/ROADMAP.md` to reflect pipeline composition options and selective local-component usage.
+- Update `docs/contributing/architecture-deep-dive.md` and `docs/ROADMAP.md` to reflect pipeline composition options and selective local-component usage.
 - Capture regression notes covering selective STT-only, TTS-only, and complete local pipeline flows.
 
 ### 7.5 Local Provider Selective Components (Completed 2025-09-25)
@@ -147,7 +147,7 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
 - Engine integration reuses provider metadata so calls that select local pipelines via `active_pipeline` or `AI_PROVIDER` channel variables invoke adapter-driven STT/LLM/TTS flows instead of the legacy full-provider session.
 - Provider defaults (`ws_url`, timeouts, chunk cadence) surfaced in [`config/ai-agent.yaml`](config/ai-agent.yaml); environment variables (`LOCAL_WS_*`) allow deployment-specific tuning without code changes.
 - Added unit test coverage in [`tests/test_pipeline_local_adapters.py`](tests/test_pipeline_local_adapters.py) verifying STT/LLM/TTS WebSocket interactions and orchestrator registration.
-- Documentation (`docs/Architecture.md`, this milestone file) updated with adapter mapping tables, pipeline references, and validation notes.
+- Documentation (`docs/contributing/architecture-deep-dive.md`, this milestone file) updated with adapter mapping tables, pipeline references, and validation notes.
 - Tests / validation:
   - `pytest tests/test_pipeline_local_adapters.py` *(requires `pytest` to be installed in the environment; current execution failed with `command not found`, so rerun after installing dev dependencies).*
 

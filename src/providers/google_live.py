@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional, List
 from collections import deque
 
 import websockets
-from websockets import WebSocketClientProtocol
+from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from structlog import get_logger
@@ -94,7 +94,7 @@ class GoogleLiveProvider(AIProviderInterface):
     ):
         super().__init__(on_event)
         self.config = config
-        self.websocket: Optional[WebSocketClientProtocol] = None
+        self.websocket: Optional[ClientConnection] = None
         self._receive_task: Optional[asyncio.Task] = None
         self._keepalive_task: Optional[asyncio.Task] = None
         self._send_lock = asyncio.Lock()
@@ -115,6 +115,7 @@ class GoogleLiveProvider(AIProviderInterface):
         # This ensures _session_store, _ari_client, etc. are available for tool execution
         from src.tools.registry import tool_registry
         self._tool_adapter = GoogleToolAdapter(tool_registry)
+        self._allowed_tools: Optional[List[str]] = None
         
         # Transcription buffering - hold latest partial until turnComplete
         self._input_transcription_buffer: str = ""
@@ -125,6 +126,8 @@ class GoogleLiveProvider(AIProviderInterface):
         
         # Metrics tracking
         self._session_start_time: Optional[float] = None
+        # Tool response sizing: keep Google toolResponse payloads small to avoid provider errors.
+        self._tool_response_max_bytes: int = 8000
 
     @staticmethod
     def get_capabilities() -> Optional[ProviderCapabilities]:
@@ -171,6 +174,11 @@ class GoogleLiveProvider(AIProviderInterface):
         self._conversation_history = []
         self._setup_complete = False
         self._greeting_completed = False
+        # Per-call tool allowlist: if None => legacy (all tools); if [] => no tools
+        if context and "tools" in context:
+            self._allowed_tools = context.get("tools")
+        else:
+            self._allowed_tools = None
 
         logger.info(
             "Starting Google Live session",
@@ -367,7 +375,7 @@ class GoogleLiveProvider(AIProviderInterface):
 
     async def _send_message(self, message: Dict[str, Any]) -> None:
         """Send a message to Google Live API."""
-        if not self.websocket:
+        if not self.websocket or getattr(self.websocket, "closed", False):
             logger.warning("No websocket connection", call_id=self._call_id)
             return
 
@@ -380,6 +388,61 @@ class GoogleLiveProvider(AIProviderInterface):
                     call_id=self._call_id,
                     error=str(e),
                 )
+                # Prevent log storms when the socket is already closed.
+                try:
+                    if self.websocket and getattr(self.websocket, "closed", False):
+                        self.websocket = None
+                except Exception:
+                    pass
+
+    def _safe_jsonable(self, obj: Any, *, depth: int = 0, max_depth: int = 4, max_items: int = 30) -> Any:
+        if depth >= max_depth:
+            return str(obj)
+        if obj is None or isinstance(obj, (str, int, float, bool)):
+            return obj
+        if isinstance(obj, dict):
+            out: Dict[str, Any] = {}
+            for idx, (k, v) in enumerate(obj.items()):
+                if idx >= max_items:
+                    break
+                out[str(k)] = self._safe_jsonable(v, depth=depth + 1, max_depth=max_depth, max_items=max_items)
+            return out
+        if isinstance(obj, (list, tuple)):
+            return [self._safe_jsonable(v, depth=depth + 1, max_depth=max_depth, max_items=max_items) for v in list(obj)[:max_items]]
+        return str(obj)
+
+    def _build_tool_response_payload(self, tool_name: str, result: Any) -> Dict[str, Any]:
+        """
+        Google Live can return 1011 internal errors if toolResponse payloads are too large or contain
+        unexpected shapes. Keep responses minimal, JSON-serializable, and capped in size.
+        """
+        if not isinstance(result, dict):
+            payload: Dict[str, Any] = {"status": "success", "message": str(result)}
+        else:
+            payload = {}
+            # Keep fields that affect conversation control.
+            for k in ("status", "message", "will_hangup", "transferred", "transfer_mode", "extension", "destination"):
+                if k in result:
+                    payload[k] = self._safe_jsonable(result.get(k))
+            # Always provide a message string (best-effort).
+            if "message" not in payload:
+                payload["message"] = str(result.get("message") or "")
+            # Do NOT include raw MCP result blobs - they are commonly large/nested and cause
+            # Google Live to stutter when generating audio. The `message` field already contains
+            # the speech text extracted via speech_field/speech_template.
+
+        # Cap size aggressively.
+        try:
+            encoded = json.dumps(payload, ensure_ascii=False)
+            if len(encoded.encode("utf-8")) <= self._tool_response_max_bytes:
+                return payload
+        except Exception:
+            pass
+
+        # If too large, fall back to status + truncated message only.
+        msg = str(payload.get("message") or "")
+        msg = msg[:800]
+        return {"status": payload.get("status", "success"), "message": msg}
 
     async def _send_greeting(self) -> None:
         """Send greeting by asking Gemini to speak it (validated pattern from Golden Baseline)."""
@@ -839,12 +902,29 @@ class GoogleLiveProvider(AIProviderInterface):
                     provider_name="google_live",
                 )
 
+                tools_enabled = True
+                try:
+                    full_cfg = getattr(self, "_full_config", None)
+                    if isinstance(full_cfg, dict):
+                        tools_enabled = bool((full_cfg.get("tools") or {}).get("enabled", True))
+                except Exception:
+                    tools_enabled = True
+
+                # Enforce allowlist (if provided by engine context)
+                if not tools_enabled:
+                    result = {"status": "error", "message": "Tools are disabled"}
+                elif self._allowed_tools is not None and func_name not in self._allowed_tools:
+                    result = {
+                        "status": "error",
+                        "message": f"Tool '{func_name}' not allowed for this call",
+                    }
+                else:
                 # Execute tool
-                result = await self._tool_adapter.execute_tool(
-                    func_name,
-                    func_args,
-                    tool_context,
-                )
+                    result = await self._tool_adapter.execute_tool(
+                        func_name,
+                        func_args,
+                        tool_context,
+                    )
 
                 # Check for hangup intent (like OpenAI Realtime pattern)
                 if func_name == "hangup_call" and result:
@@ -856,13 +936,14 @@ class GoogleLiveProvider(AIProviderInterface):
                         )
 
                 # Send tool response (camelCase per official API)
+                safe_result = self._build_tool_response_payload(func_name, result)
                 tool_response = {
                     "toolResponse": {
                         "functionResponses": [
                             {
                                 "id": call_id,
                                 "name": func_name,
-                                "response": result,
+                                "response": safe_result,
                             }
                         ]
                     }
@@ -942,7 +1023,7 @@ class GoogleLiveProvider(AIProviderInterface):
 
     async def _keepalive_loop(self) -> None:
         """Send periodic keepalive messages."""
-        while self.websocket and not self.websocket.closed:
+        while self.websocket and self.websocket.state.name == "OPEN":
             try:
                 await asyncio.sleep(_KEEPALIVE_INTERVAL_SEC)
                 # Send empty realtime input as keepalive (camelCase)
@@ -992,7 +1073,7 @@ class GoogleLiveProvider(AIProviderInterface):
                 await self._keepalive_task
 
         # Close WebSocket
-        if self.websocket and not self.websocket.closed:
+        if self.websocket and self.websocket.state.name == "OPEN":
             await self.websocket.close()
             _GOOGLE_LIVE_SESSIONS.dec()
 

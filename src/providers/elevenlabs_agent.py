@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Optional
 from dataclasses import dataclass
 
 import websockets
-from websockets.client import WebSocketClientProtocol
+from websockets.asyncio.client import ClientConnection
 
 from .base import AIProviderInterface, ProviderCapabilities, ProviderCapabilitiesMixin
 from .elevenlabs_config import ElevenLabsAgentConfig
@@ -65,7 +65,7 @@ class ElevenLabsAgentProvider(AIProviderInterface, ProviderCapabilitiesMixin):
         self.tool_registry = tool_registry
         
         # WebSocket connection
-        self._ws: Optional[WebSocketClientProtocol] = None
+        self._ws: Optional[ClientConnection] = None
         self._receive_task: Optional[asyncio.Task] = None
         self._keepalive_task: Optional[asyncio.Task] = None
         

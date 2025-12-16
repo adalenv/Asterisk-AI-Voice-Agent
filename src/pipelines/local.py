@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, Optional, Tuple
 
 import websockets
-from websockets.client import WebSocketClientProtocol
+from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
 from ..config import AppConfig, LocalProviderConfig
@@ -42,7 +42,7 @@ def _merge_dicts(base: Dict[str, Any], override: Optional[Dict[str, Any]]) -> Di
 
 @dataclass
 class _LocalSessionState:
-    websocket: WebSocketClientProtocol
+    websocket: ClientConnection
     options: Dict[str, Any]
     mode: str
     call_id: str
@@ -101,7 +101,7 @@ class _LocalAdapterBase:
         merged = self._compose_options(options)
         existing = self._sessions.get(call_id)
         if existing:
-            if existing.websocket.closed:
+            if existing.websocket.state.name != "OPEN":
                 self._sessions.pop(call_id, None)
             else:
                 # Reuse any open websocket session regardless of handshake status
@@ -367,15 +367,15 @@ class _LocalAdapterBase:
 
     async def _ensure_session(self, call_id: str, options: Dict[str, Any]) -> _LocalSessionState:
         session = self._sessions.get(call_id)
-        if session and not session.websocket.closed:
+        if session and session.websocket.state.name == "OPEN":
             return session
 
-        if session and session.websocket.closed:
+        if session and session.websocket.state.name != "OPEN":
             self._sessions.pop(call_id, None)
 
         await self.open_call(call_id, options)
         session = self._sessions.get(call_id)
-        if session and not session.websocket.closed:
+        if session and session.websocket.state.name == "OPEN":
             return session
 
         raise RuntimeError(f"Local adapter session not available for call {call_id}")

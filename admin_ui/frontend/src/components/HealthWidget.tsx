@@ -36,11 +36,26 @@ interface PendingChanges {
     llm?: { modelPath: string };
 }
 
+interface BackendCapabilities {
+    stt: {
+        vosk: { available: boolean; reason: string };
+        sherpa: { available: boolean; reason: string };
+        kroko_embedded: { available: boolean; reason: string };
+        kroko_cloud: { available: boolean; reason: string };
+    };
+    tts: {
+        piper: { available: boolean; reason: string };
+        kokoro: { available: boolean; reason: string };
+    };
+    llm: { available: boolean; reason: string };
+}
+
 export const HealthWidget = () => {
     const [health, setHealth] = useState<HealthInfo | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [availableModels, setAvailableModels] = useState<AvailableModels | null>(null);
+    const [capabilities, setCapabilities] = useState<BackendCapabilities | null>(null);
     const [restarting, setRestarting] = useState(false);
     const [pendingChanges, setPendingChanges] = useState<PendingChanges>({});
     const [applyingChanges, setApplyingChanges] = useState(false);
@@ -83,7 +98,7 @@ export const HealthWidget = () => {
         return () => clearInterval(interval);
     }, []);
 
-    // Fetch available models
+    // Fetch available models and capabilities
     useEffect(() => {
         const fetchModels = async () => {
             try {
@@ -93,7 +108,16 @@ export const HealthWidget = () => {
                 console.error('Failed to fetch available models', err);
             }
         };
+        const fetchCapabilities = async () => {
+            try {
+                const res = await axios.get('/api/local-ai/capabilities');
+                setCapabilities(res.data);
+            } catch (err) {
+                console.error('Failed to fetch capabilities', err);
+            }
+        };
         fetchModels();
+        fetchCapabilities();
     }, []);
 
     // Fetch default provider and active pipeline from config
@@ -141,7 +165,9 @@ export const HealthWidget = () => {
             const currentBackend = health?.local_ai_server.details.models?.stt?.backend || health?.local_ai_server.details.stt_backend || 'vosk';
             const currentPath = health?.local_ai_server.details.models?.stt?.path;
             if (currentBackend === 'kroko') {
-                return health?.local_ai_server.details.kroko_embedded ? 'kroko_embedded' : 'kroko_cloud';
+                // kroko.embedded is nested in status response
+                const krokoEmbedded = health?.local_ai_server.details.kroko?.embedded ?? health?.local_ai_server.details.kroko_embedded;
+                return krokoEmbedded ? 'kroko_embedded' : 'kroko_cloud';
             }
             // Return backend:path format to match selected model
             if (currentPath) {
@@ -163,7 +189,9 @@ export const HealthWidget = () => {
             const currentBackend = health?.local_ai_server.details.models?.tts?.backend || health?.local_ai_server.details.tts_backend || 'piper';
             const currentPath = health?.local_ai_server.details.models?.tts?.path;
             if (currentBackend === 'kokoro') {
-                return health?.local_ai_server.details.kokoro_mode === 'local' ? 'kokoro_local' : 'kokoro_cloud';
+                // kokoro.mode is nested in status response
+                const kokoroMode = health?.local_ai_server.details.kokoro?.mode || health?.local_ai_server.details.kokoro_mode || 'local';
+                return kokoroMode === 'local' || kokoroMode === 'hf' ? 'kokoro_local' : 'kokoro_cloud';
             }
             // Return backend:path format to match selected model
             if (currentPath) {
@@ -278,6 +306,13 @@ export const HealthWidget = () => {
         return parts[parts.length - 1];
     };
 
+    const getModelDisplay = (model: any) => {
+        if (!model) return 'Not configured';
+        if (model.display) return model.display;
+        if (model.path) return getModelName(String(model.path));
+        return 'Not configured';
+    };
+
 
 
     return (
@@ -308,7 +343,7 @@ export const HealthWidget = () => {
                                 if (!window.confirm('Are you sure you want to restart the Local AI Server?')) return;
                                 setRestarting(true);
                                 try {
-                                    await axios.post('/api/system/restart', { container: 'local-ai-server' });
+                                    await axios.post('/api/system/containers/local_ai_server/restart');
                                     // Poll for health
                                     setTimeout(() => setRestarting(false), 5000);
                                 } catch (err) {
@@ -401,7 +436,7 @@ export const HealthWidget = () => {
 
                                         const currentBackend = health?.local_ai_server.details.models?.stt?.backend || health?.local_ai_server.details.stt_backend;
                                         const currentPath = health?.local_ai_server.details.models?.stt?.path;
-                                        const currentEmbedded = health?.local_ai_server.details.kroko_embedded;
+                                        const currentEmbedded = health?.local_ai_server.details.kroko?.embedded ?? health?.local_ai_server.details.kroko_embedded;
 
                                         // Check if changed
                                         const isBackendChanged = backend !== currentBackend;
@@ -421,14 +456,26 @@ export const HealthWidget = () => {
                                 >
                                     {availableModels?.stt && Object.entries(availableModels.stt).map(([backend, models]) => {
                                         if (backend === 'kroko') {
+                                            // Only show Kroko options if available
+                                            const krokoEmbeddedAvailable = capabilities?.stt?.kroko_embedded?.available;
+                                            const krokoCloudAvailable = capabilities?.stt?.kroko_cloud?.available;
+                                            if (!krokoEmbeddedAvailable && !krokoCloudAvailable) return null;
                                             return (
                                                 <optgroup key="kroko" label="Kroko">
-                                                    <option key="kroko_embedded" value="kroko_embedded">Kroko (Embedded)</option>
-                                                    <option key="kroko_cloud" value="kroko_cloud">Kroko (Cloud)</option>
+                                                    {krokoEmbeddedAvailable && (
+                                                        <option key="kroko_embedded" value="kroko_embedded">Kroko (Embedded)</option>
+                                                    )}
+                                                    {krokoCloudAvailable && (
+                                                        <option key="kroko_cloud" value="kroko_cloud">Kroko (Cloud API)</option>
+                                                    )}
                                                 </optgroup>
                                             );
                                         }
-                                        // Show individual models in optgroup by backend
+                                        if (backend === 'sherpa') {
+                                            // Only show Sherpa if available and has models
+                                            if (!capabilities?.stt?.sherpa?.available || models.length === 0) return null;
+                                        }
+                                        // Show individual models in optgroup by backend (only if models exist)
                                         return models.length > 0 && (
                                             <optgroup key={backend} label={backend.charAt(0).toUpperCase() + backend.slice(1)}>
                                                 {models.map((model: any) => (
@@ -442,13 +489,27 @@ export const HealthWidget = () => {
                                 </select>
                             </div>
                             <div className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border border-border/50 truncate flex justify-between">
-                                <span>{getModelName(health.local_ai_server.details.models?.stt?.path || 'Not configured')}</span>
+                                <span>{getModelDisplay(health.local_ai_server.details.models?.stt)}</span>
                                 {health.local_ai_server.details.stt_backend === 'kroko' && (
                                     <span className="opacity-75">
-                                        {health.local_ai_server.details.kroko_embedded ? `Embedded (Port ${health.local_ai_server.details.kroko_port || 6006})` : 'Cloud API'}
+                                        {(health.local_ai_server.details.kroko?.embedded ?? health.local_ai_server.details.kroko_embedded) ? `Embedded (Port ${health.local_ai_server.details.kroko?.port || health.local_ai_server.details.kroko_port || 6006})` : 'Cloud API'}
                                     </span>
                                 )}
                             </div>
+                            {/* Warning when Kroko embedded not available */}
+                            {capabilities && !capabilities.stt?.kroko_embedded?.available && (
+                                <div className="text-xs p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 space-y-1">
+                                    <div>
+                                        <span className="font-medium">Kroko Embedded not available.</span>
+                                        <span className="opacity-75"> First download a Kroko ONNX model from the </span>
+                                        <Link to="/models" className="underline hover:text-amber-500">Models Page</Link>
+                                        <span className="opacity-75">, then rebuild the container:</span>
+                                    </div>
+                                    <code className="block bg-black/20 dark:bg-white/10 px-2 py-1 rounded text-[10px] font-mono select-all">
+                                        docker compose build --build-arg INCLUDE_KROKO_EMBEDDED=true local-ai-server && docker compose up -d local-ai-server
+                                    </code>
+                                </div>
+                            )}
                         </div>
 
                         {/* LLM Section */}
@@ -490,7 +551,7 @@ export const HealthWidget = () => {
                                 ))}
                             </select>
                             <div className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border border-border/50 truncate">
-                                {getModelName(health.local_ai_server.details.models?.llm?.path || 'Not configured')}
+                                {getModelDisplay(health.local_ai_server.details.models?.llm)}
                             </div>
                         </div>
 
@@ -536,7 +597,7 @@ export const HealthWidget = () => {
 
                                         const currentBackend = health?.local_ai_server.details.models?.tts?.backend || health?.local_ai_server.details.tts_backend;
                                         const currentPath = health?.local_ai_server.details.models?.tts?.path;
-                                        const currentMode = health?.local_ai_server.details.kokoro_mode;
+                                        const currentMode = health?.local_ai_server.details.kokoro?.mode || health?.local_ai_server.details.kokoro_mode;
 
                                         const isBackendChanged = backend !== currentBackend;
                                         const isPathChanged = modelPath && modelPath !== currentPath;
@@ -560,14 +621,21 @@ export const HealthWidget = () => {
                                 >
                                     {availableModels?.tts && Object.entries(availableModels.tts).map(([backend, models]) => {
                                         if (backend === 'kokoro') {
+                                            // Only show Kokoro if available
+                                            if (!capabilities?.tts?.kokoro?.available && models.length === 0) return null;
+                                            const kokoroApiConfigured = !!health?.local_ai_server?.details?.kokoro?.api_key_set;
                                             return (
                                                 <optgroup key="kokoro" label="Kokoro">
-                                                    <option key="kokoro_local" value="kokoro_local">Kokoro (Local)</option>
-                                                    <option key="kokoro_cloud" value="kokoro_cloud">Kokoro (Cloud/API)</option>
+                                                    {(capabilities?.tts?.kokoro?.available || models.length > 0) && (
+                                                        <option key="kokoro_local" value="kokoro_local">Kokoro (Local)</option>
+                                                    )}
+                                                    {kokoroApiConfigured && (
+                                                        <option key="kokoro_cloud" value="kokoro_cloud">Kokoro (Cloud/API)</option>
+                                                    )}
                                                 </optgroup>
                                             );
                                         }
-                                        // Show individual models in optgroup by backend
+                                        // Show individual models in optgroup by backend (only if models exist)
                                         return models.length > 0 && (
                                             <optgroup key={backend} label={backend.charAt(0).toUpperCase() + backend.slice(1)}>
                                                 {models.map((model: any) => (
@@ -581,11 +649,23 @@ export const HealthWidget = () => {
                                 </select>
                             </div>
                             <div className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border border-border/50 truncate flex justify-between">
-                                <span>{getModelName(health.local_ai_server.details.models?.tts?.path || 'Not configured')}</span>
+                                <span>{getModelDisplay(health.local_ai_server.details.models?.tts)}</span>
                                 {health.local_ai_server.details.tts_backend === 'kokoro' && health.local_ai_server.details.kokoro_voice && (
                                     <span className="opacity-75">Voice: {health.local_ai_server.details.kokoro_voice}</span>
                                 )}
                             </div>
+                            {!!capabilities?.tts?.kokoro?.available && !health?.local_ai_server?.details?.kokoro?.api_key_set && (
+                                <div className="text-xs p-2 rounded bg-muted/30 border border-border/50 text-muted-foreground">
+                                    Enable Kokoro Cloud/API by setting `KOKORO_API_KEY` (and `KOKORO_MODE=api`) in <Link to="/env" className="underline">Env</Link>.
+                                </div>
+                            )}
+                            {health?.local_ai_server?.details?.models?.tts?.backend === 'kokoro' &&
+                                !health?.local_ai_server?.details?.kokoro?.api_key_set &&
+                                (health?.local_ai_server?.details?.kokoro?.mode || health?.local_ai_server?.details?.kokoro_mode) !== 'local' && (
+                                    <div className="text-xs p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400">
+                                        Kokoro Cloud/API requires `KOKORO_API_KEY`. Configure it in <Link to="/env" className="underline">Env</Link>.
+                                    </div>
+                                )}
                         </div>
 
                         {/* Apply Changes Banner */}

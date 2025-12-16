@@ -38,6 +38,7 @@ type Checker struct {
 	verbose bool
 	ctx     context.Context
 	envMap  map[string]string
+	platform *PlatformContext
 }
 
 func NewChecker(verbose bool) *Checker {
@@ -52,6 +53,7 @@ func NewChecker(verbose bool) *Checker {
 		verbose: verbose,
 		ctx:     context.Background(),
 		envMap:  envMap,
+		platform: DetectPlatformContext(),
 	}
 }
 
@@ -64,6 +66,7 @@ func (c *Checker) RunAll() (*HealthResult, error) {
 	// Run all checks in sequence
 	checks := []func() Check{
 		c.checkDocker,
+		c.checkCompose,
 		c.checkContainers,
 		c.checkAsteriskARI,
 		c.checkAudioSocket,

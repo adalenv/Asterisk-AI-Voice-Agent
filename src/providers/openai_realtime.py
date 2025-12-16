@@ -19,7 +19,7 @@ import audioop
 from typing import Any, Dict, Optional, List
 
 import websockets
-from websockets import WebSocketClientProtocol
+from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from structlog import get_logger
@@ -85,7 +85,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
     ):
         super().__init__(on_event)
         self.config = config
-        self.websocket: Optional[WebSocketClientProtocol] = None
+        self.websocket: Optional[ClientConnection] = None
         self._receive_task: Optional[asyncio.Task] = None
         self._keepalive_task: Optional[asyncio.Task] = None
         self._send_lock = asyncio.Lock()
@@ -109,6 +109,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         self._output_resample_state: Optional[tuple] = None
         self._transcript_buffer: str = ""
         self._input_info_logged: bool = False
+        self._allowed_tools: Optional[List[str]] = None
         # Aggregate provider-rate PCM16 bytes (24 kHz default) and commit in >=100ms chunks
         self._pending_audio_provider_rate: bytearray = bytearray()
         
@@ -331,6 +332,11 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         # Initialize session ACK mechanism (similar to Deepgram pattern)
         self._session_ack_event = asyncio.Event()
         self._outfmt_acknowledged = False
+        # Per-call tool allowlist: if None => legacy (all tools); if [] => no tools
+        if context and "tools" in context:
+            self._allowed_tools = context.get("tools")
+        else:
+            self._allowed_tools = None
 
         self._reset_output_meter()
 
@@ -344,7 +350,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
 
         logger.info("Connecting to OpenAI Realtime", url=url, call_id=call_id)
         try:
-            self.websocket = await websockets.connect(url, extra_headers=headers)
+            self.websocket = await websockets.connect(url, additional_headers=headers)
         except Exception:
             logger.error("Failed to connect to OpenAI Realtime", call_id=call_id, exc_info=True)
             raise
@@ -456,7 +462,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         """
         if not audio_chunk:
             return
-        if not self.websocket or self.websocket.closed:
+        if not self.websocket or self.websocket.state.name != "OPEN":
             logger.debug("Dropping inbound audio: websocket not ready", call_id=self._call_id)
             return
 
@@ -527,7 +533,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
 
     async def cancel_response(self):
         """Cancel any in-progress response generation (for barge-in)."""
-        if not self.websocket or self.websocket.closed:
+        if not self.websocket or self.websocket.state.name != "OPEN":
             return
         if not self._pending_response:
             logger.debug("No pending response to cancel", call_id=self._call_id)
@@ -560,6 +566,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                 'session_store': getattr(self, '_session_store', None),
                 'ari_client': getattr(self, '_ari_client', None),
                 'config': getattr(self, '_full_config', None),
+                'allowed_tools': self._allowed_tools,
                 'websocket': self.websocket
             }
             
@@ -608,7 +615,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                             })
                         }
                     }
-                    if self.websocket and not self.websocket.closed:
+                    if self.websocket and self.websocket.state.name == "OPEN":
                         await self._send_json(error_response)
                         logger.info("Sent error response to OpenAI", call_id=call_id_field)
             except Exception as send_error:
@@ -632,7 +639,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
             # Cancel farewell timeout if active
             self._cancel_farewell_timeout()
 
-            if self.websocket and not self.websocket.closed:
+            if self.websocket and self.websocket.state.name == "OPEN":
                 await self.websocket.close()
 
             await self._emit_audio_done()
@@ -779,12 +786,22 @@ class OpenAIRealtimeProvider(AIProviderInterface):
 
         # Add tool calling configuration
         try:
-            tools = self.tool_adapter.get_tools_config()
-            if tools:
-                session["tools"] = tools
-                session["tool_choice"] = "auto"  # Let OpenAI decide when to call tools
-                logger.info(f"🛠️  OpenAI session configured with {len(tools)} tools", 
-                           call_id=self._call_id)
+            tools_enabled = True
+            full_cfg = getattr(self, "_full_config", None)
+            if isinstance(full_cfg, dict):
+                tools_enabled = bool((full_cfg.get("tools") or {}).get("enabled", True))
+
+            if tools_enabled:
+                tools = self.tool_adapter.get_tools_config(self._allowed_tools)
+                if tools:
+                    session["tools"] = tools
+                    session["tool_choice"] = "auto"  # Let OpenAI decide when to call tools
+                    logger.info(
+                        f"🛠️  OpenAI session configured with {len(tools)} tools",
+                        call_id=self._call_id,
+                    )
+            else:
+                logger.debug("Tools disabled via config; not configuring OpenAI tools", call_id=self._call_id)
         except Exception as e:
             logger.warning(f"Failed to add tools to OpenAI session: {e}", 
                           call_id=self._call_id, exc_info=True)
@@ -808,7 +825,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
 
     async def _send_explicit_greeting(self):
         greeting = (self.config.greeting or "").strip()
-        if not greeting or not self.websocket or self.websocket.closed:
+        if not greeting or not self.websocket or self.websocket.state.name != "OPEN":
             return
 
         # Per OpenAI Dec 2024 docs: Disable turn_detection during greeting
@@ -885,7 +902,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
 
     async def _re_enable_vad(self):
         """Re-enable turn_detection after greeting completes."""
-        if not self.websocket or self.websocket.closed:
+        if not self.websocket or self.websocket.state.name != "OPEN":
             return
         
         # Build turn_detection config from YAML or use OpenAI defaults
@@ -926,7 +943,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         )
 
     async def _ensure_response_request(self):
-        if self._pending_response or not self.websocket or self.websocket.closed:
+        if self._pending_response or not self.websocket or self.websocket.state.name != "OPEN":
             return
 
         response_payload: Dict[str, Any] = {
@@ -1005,7 +1022,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
             )
 
     async def _send_json(self, payload: Dict[str, Any]):
-        if not self.websocket or self.websocket.closed:
+        if not self.websocket or self.websocket.state.name != "OPEN":
             return
         # Avoid logging base64 audio payloads; but log control message types
         try:
@@ -1028,7 +1045,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         
         See: https://platform.openai.com/docs/api-reference/realtime-client-events/response/cancel
         """
-        if not self.websocket or self.websocket.closed:
+        if not self.websocket or self.websocket.state.name != "OPEN":
             return
         
         try:
@@ -1873,16 +1890,16 @@ class OpenAIRealtimeProvider(AIProviderInterface):
 
     async def _keepalive_loop(self):
         try:
-            while self.websocket and not self.websocket.closed:
+            while self.websocket and self.websocket.state.name == "OPEN":
                 await asyncio.sleep(_KEEPALIVE_INTERVAL_SEC)
-                if not self.websocket or self.websocket.closed:
+                if not self.websocket or self.websocket.state.name != "OPEN":
                     break
                 try:
                     # Use native WebSocket ping control frames instead of
                     # sending an application-level {"type":"ping"} event,
                     # which Realtime rejects with invalid_request_error.
                     async with self._send_lock:
-                        if self.websocket and not self.websocket.closed:
+                        if self.websocket and self.websocket.state.name == "OPEN":
                             await self.websocket.ping()
                 except asyncio.CancelledError:
                     break
@@ -1909,7 +1926,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                 if self.config.organization:
                     headers.append(("OpenAI-Organization", self.config.organization))
                 logger.info("Reconnecting to OpenAI Realtime", call_id=call_id, attempt=attempt)
-                self.websocket = await websockets.connect(url, extra_headers=headers)
+                self.websocket = await websockets.connect(url, additional_headers=headers)
                 # Reset minor state
                 self._pending_response = False
                 self._in_audio_burst = False
@@ -2194,7 +2211,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         warmup_bytes = int(max(0, self._egress_pacer_warmup_ms) / 20) * chunk_bytes
         # Warm-up buffer
         try:
-            while self.websocket and not self.websocket.closed and self._pacer_running:
+            while self.websocket and self.websocket.state.name == "OPEN" and self._pacer_running:
                 async with self._pacer_lock:
                     buf_len = len(self._outbuf)
                 if buf_len >= warmup_bytes or not self._egress_pacer_enabled:
@@ -2207,7 +2224,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
 
         # Emit loop at 20 ms cadence
         try:
-            while self.websocket and not self.websocket.closed and self._pacer_running:
+            while self.websocket and self.websocket.state.name == "OPEN" and self._pacer_running:
                 chunk = b""
                 async with self._pacer_lock:
                     if len(self._outbuf) >= chunk_bytes:
@@ -2281,7 +2298,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         return chunk_bytes, silence
 
     async def _switch_to_pcm24k_output(self) -> None:
-        if not self.websocket or self.websocket.closed:
+        if not self.websocket or self.websocket.state.name != "OPEN":
             return
         call_id = self._call_id
         try:

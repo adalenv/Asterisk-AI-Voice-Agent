@@ -156,7 +156,7 @@ Expected output:
 
 ## Model Downloads
 
-Models are downloaded automatically on first start, or you can pre-download:
+Models must be downloaded via **Admin UI → Models Page** or using the setup script:
 
 ```bash
 ./scripts/model_setup.sh
@@ -186,9 +186,33 @@ LOCAL_STT_MODEL_PATH=/app/models/stt/sherpa-onnx-streaming-zipformer-en-2023-06-
 - `phi-3-mini-128k-instruct.Q4_K_M.gguf` (larger context)
 - Any llama.cpp compatible GGUF model
 
-**TTS**:
-- Kokoro (built-in, high quality)
-- Piper (various voices/languages)
+**TTS - Piper** (default):
+- `en_US-lessac-medium.onnx` (English, recommended)
+- Various voices/languages available
+
+**TTS - Kokoro** (premium quality):
+
+- **Local mode** (default): Downloaded model files
+  ```bash
+  KOKORO_MODE=local
+  KOKORO_VOICE=af_heart
+  ```
+- **API mode** (networked, not fully local):
+  ```bash
+  KOKORO_MODE=api
+  KOKORO_API_BASE_URL=https://voice-generator.pages.dev/api/v1
+  # KOKORO_API_KEY=... (if required by endpoint)
+  ```
+- **HuggingFace mode**: Auto-downloads from HF Hub
+  ```bash
+  KOKORO_MODE=hf
+  ```
+- Voices: `af_heart`, `af_bella`, `am_adam`, `bf_emma`, `bm_george`, etc.
+
+**STT - Kroko Embedded** (optional, requires rebuild):
+- High-accuracy ONNX-based STT
+- Requires: `docker compose build --build-arg INCLUDE_KROKO_EMBEDDED=true local-ai-server`
+- Models: Download from Admin UI → Models Page
 
 ## Troubleshooting
 

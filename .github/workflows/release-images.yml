@@ -62,3 +62,13 @@ jobs:
           tags: |
             ghcr.io/${{ steps.meta.outputs.owner }}/asterisk-ai-voice-agent-local-ai-server:${{ steps.meta.outputs.tag }}
             ghcr.io/${{ steps.meta.outputs.owner }}/asterisk-ai-voice-agent-local-ai-server:latest
+
+      - name: Build and push admin-ui
+        uses: docker/build-push-action@v6
+        with:
+          context: ./admin_ui
+          file: ./admin_ui/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ steps.meta.outputs.owner }}/asterisk-ai-voice-agent-admin-ui:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ steps.meta.outputs.owner }}/asterisk-ai-voice-agent-admin-ui:latest

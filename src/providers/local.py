@@ -42,6 +42,10 @@ class LocalProvider(AIProviderInterface):
         self._server_unavailable: bool = False
         # Parse host/port from ws_url for port checking
         self._server_host, self._server_port = self._parse_ws_url(self.ws_url)
+        # Track if we were previously connected (for background reconnect on disconnect)
+        self._was_connected: bool = False
+        # Background reconnect task (runs when previously connected server disconnects)
+        self._background_reconnect_task: Optional[asyncio.Task] = None
 
     def _parse_ws_url(self, ws_url: str) -> tuple:
         """Parse host and port from WebSocket URL."""
@@ -171,6 +175,7 @@ class LocalProvider(AIProviderInterface):
                     )
                 
                 self.websocket = await self._connect_ws()
+                self._was_connected = True  # Mark that we successfully connected
                 logger.info("✅ Connected to Local AI Server", elapsed=f"{total_elapsed}s")
 
                 # Authenticate before starting receive/send loops if required.
@@ -228,6 +233,64 @@ class LocalProvider(AIProviderInterface):
                 total_elapsed += delay
                 
         return False
+
+    async def _background_reconnect_loop(self):
+        """Background task that periodically tries to reconnect for up to 12 minutes.
+        
+        Only runs when we were previously connected and got disconnected (e.g., server restart).
+        Does not block anything - runs independently in the background.
+        """
+        max_duration = 12 * 60  # 12 minutes
+        check_interval = 30  # Check every 30 seconds
+        start_time = asyncio.get_event_loop().time()
+        
+        logger.info(
+            "🔄 Starting background reconnect (server was previously connected)",
+            max_duration="12 minutes",
+            check_interval="30s"
+        )
+        
+        while True:
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed >= max_duration:
+                logger.warning(
+                    "⏹️ Background reconnect timed out after 12 minutes",
+                    note="Local AI Server did not come back online"
+                )
+                break
+            
+            # Wait before checking
+            await asyncio.sleep(check_interval)
+            
+            # Check if port is open
+            if await self._is_port_open(timeout=1.0):
+                logger.info("🔄 Local AI Server port detected, attempting reconnect...")
+                success = await self._reconnect()
+                if success:
+                    logger.info("✅ Background reconnect successful")
+                    self._was_connected = True
+                    # Restart listener task
+                    if not self._listener_task or self._listener_task.done():
+                        self._listener_task = asyncio.create_task(self._receive_loop())
+                    break
+                else:
+                    logger.debug("Reconnect attempt failed, will retry...")
+            else:
+                remaining = int(max_duration - elapsed)
+                logger.debug(
+                    f"Local AI Server port still closed, will check again in {check_interval}s",
+                    remaining=f"{remaining}s"
+                )
+        
+        self._background_reconnect_task = None
+
+    def _start_background_reconnect(self):
+        """Start background reconnect task if not already running."""
+        if self._background_reconnect_task and not self._background_reconnect_task.done():
+            logger.debug("Background reconnect task already running")
+            return
+        
+        self._background_reconnect_task = asyncio.create_task(self._background_reconnect_loop())
 
     async def initialize(self):
         """Initialize persistent connection to Local AI Server.
@@ -578,7 +641,7 @@ class LocalProvider(AIProviderInterface):
                     logger.warning("Received unknown message type from Local AI Server", message_type=type(message))
         except websockets.exceptions.ConnectionClosed as e:
             logger.warning("Local AI Server connection closed", reason=str(e))
-            # Attempt to reconnect
+            # Attempt immediate reconnect
             logger.info("Attempting to reconnect to Local AI Server...")
             success = await self._reconnect()
             if success:
@@ -587,7 +650,16 @@ class LocalProvider(AIProviderInterface):
                 if not self._listener_task or self._listener_task.done():
                     self._listener_task = asyncio.create_task(self._receive_loop())
             else:
-                logger.error("Failed to reconnect to Local AI Server")
+                # Immediate reconnect failed - if we were previously connected,
+                # start background reconnect task (non-blocking, up to 12 minutes)
+                if self._was_connected:
+                    logger.info(
+                        "Immediate reconnect failed, starting background reconnect task",
+                        note="Will check every 30s for up to 12 minutes"
+                    )
+                    self._start_background_reconnect()
+                else:
+                    logger.error("Failed to reconnect to Local AI Server")
         except Exception:
             logger.error("Error receiving events from Local AI Server", exc_info=True)
 

@@ -732,7 +732,7 @@ class LocalAIServer:
 
         # Model paths
         self.stt_model_path = os.getenv(
-            "LOCAL_STT_MODEL_PATH", "/app/models/stt/vosk-model-small-en-us-0.15"
+            "LOCAL_STT_MODEL_PATH", "/app/models/stt/vosk-model-en-us-0.22"
         )
         self.llm_model_path = os.getenv(
             "LOCAL_LLM_MODEL_PATH", "/app/models/llm/phi-3-mini-4k-instruct.Q4_K_M.gguf"
@@ -764,9 +764,9 @@ class LocalAIServer:
         default_threads = max(1, min(16, os.cpu_count() or 1))
         self.llm_threads = int(os.getenv("LOCAL_LLM_THREADS", str(default_threads)))
         self.llm_context = int(os.getenv("LOCAL_LLM_CONTEXT", "768"))
-        self.llm_batch = int(os.getenv("LOCAL_LLM_BATCH", "256"))
-        self.llm_max_tokens = int(os.getenv("LOCAL_LLM_MAX_TOKENS", "48"))
-        self.llm_temperature = float(os.getenv("LOCAL_LLM_TEMPERATURE", "0.2"))
+        self.llm_batch = int(os.getenv("LOCAL_LLM_BATCH", "128"))
+        self.llm_max_tokens = int(os.getenv("LOCAL_LLM_MAX_TOKENS", "64"))
+        self.llm_temperature = float(os.getenv("LOCAL_LLM_TEMPERATURE", "0.4"))
         self.llm_top_p = float(os.getenv("LOCAL_LLM_TOP_P", "0.85"))
         self.llm_repeat_penalty = float(os.getenv("LOCAL_LLM_REPEAT_PENALTY", "1.05"))
         
@@ -794,7 +794,7 @@ class LocalAIServer:
         self.audio_buffer = b""
         self.buffer_size_bytes = PCM16_TARGET_RATE * 2 * 1.0  # 1 second at 16kHz (32000 bytes)
         # Process buffer after N ms of silence (idle finalizer). Configurable via env.
-        self.buffer_timeout_ms = int(os.getenv("LOCAL_STT_IDLE_MS", "3000"))
+        self.buffer_timeout_ms = int(os.getenv("LOCAL_STT_IDLE_MS", "5000"))
 
     def _resolve_vosk_model_path(self, path: str) -> str:
         """Resolve the correct Vosk model directory.

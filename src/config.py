@@ -321,6 +321,9 @@ class BargeInConfig(BaseModel):
     post_tts_end_protection_ms: int = Field(default=250)
     # Extra protection during the first greeting turn
     greeting_protection_ms: int = Field(default=0)
+    # Provider-owned mode: local VAD fallback only for providers that don't emit explicit interruption events.
+    provider_fallback_enabled: bool = Field(default=True)
+    provider_fallback_providers: List[str] = Field(default_factory=lambda: ["google_live", "deepgram"])
 
 
 class LLMConfig(BaseModel):

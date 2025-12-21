@@ -129,6 +129,9 @@ class CallSession:
     streaming_response: bool = False
     streaming_started: bool = False
     current_stream_id: Optional[str] = None
+    # Media path confirmation (first inbound audio frame observed)
+    media_rx_confirmed: bool = False
+    first_media_rx_ts: float = 0.0
     streaming_bytes_sent: int = 0
     streaming_fallback_count: int = 0
     streaming_jitter_buffer_depth: int = 0

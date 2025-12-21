@@ -2721,6 +2721,17 @@ class Engine:
                 logger.debug("No session for caller; dropping AudioSocket audio", conn_id=conn_id, caller_channel_id=caller_channel_id)
                 return
 
+            # Media-path confirmation: first inbound audio frame observed.
+            # Used to gate barge-in actions so we don't trigger during setup races.
+            try:
+                if not bool(getattr(session, "media_rx_confirmed", False)):
+                    session.media_rx_confirmed = True
+                    session.first_media_rx_ts = time.time()
+                    await self._save_session(session)
+                    logger.info("Media RX confirmed (AudioSocket)", call_id=caller_channel_id)
+            except Exception:
+                logger.debug("Failed to set media_rx_confirmed (AudioSocket)", call_id=caller_channel_id, exc_info=True)
+
             diagnostics_flags = session.audio_diagnostics
             if "inbound_first_frame" not in diagnostics_flags:
                 fmt, rate = self._infer_transport_from_frame(len(audio_bytes))
@@ -2977,8 +2988,12 @@ class Engine:
                             prov_rate,
                         )
                     except Exception:
-                        logger.debug("Provider input capture failed (unconditional)", call_id=session.call_id, exc_info=True)
-                    
+                        logger.debug(
+                            "Provider input capture failed (unconditional)",
+                            call_id=session.call_id,
+                            exc_info=True,
+                        )
+
                     # CRITICAL: Pass sample_rate and encoding to prevent double resampling
                     # Google Live needs to know audio is already at provider_rate to skip resampling
                     try:
@@ -3004,6 +3019,17 @@ class Engine:
                         error=str(e),
                         exc_info=True,
                     )
+                # Provider-owned mode: local VAD fallback may flush local output (never cancels provider).
+                try:
+                    await self._maybe_provider_barge_in_fallback(
+                        session,
+                        pcm16=pcm_bytes,
+                        pcm_rate_hz=pcm_rate,
+                        audiosocket_wire=audio_bytes,
+                        source="audiosocket",
+                    )
+                except Exception:
+                    logger.debug("Provider barge-in fallback check failed (AudioSocket)", call_id=caller_channel_id, exc_info=True)
                 return
             else:
                 logger.info(
@@ -3284,26 +3310,8 @@ class Engine:
                     should_trigger = False
 
                 if should_trigger:
-                    # Trigger barge-in: stop active playback(s), clear gating, and continue forwarding audio
+                    # Trigger barge-in: flush local output and continue forwarding audio to provider
                     try:
-                        playback_ids = await self.session_store.list_playbacks_for_call(caller_channel_id)
-                        for pid in playback_ids:
-                            try:
-                                await self.ari_client.stop_playback(pid)
-                            except Exception:
-                                logger.debug("Playback stop error during barge-in", playback_id=pid, exc_info=True)
-
-                        # Clear all active gating tokens
-                        tokens = list(getattr(session, 'tts_tokens', set()) or [])
-                        for token in tokens:
-                            try:
-                                if self.conversation_coordinator:
-                                    await self.conversation_coordinator.on_tts_end(caller_channel_id, token, reason="barge-in")
-                            except Exception:
-                                logger.debug("Failed to clear gating token during barge-in", token=token, exc_info=True)
-
-                        session.barge_in_candidate_ms = 0
-                        session.last_barge_in_ts = now
                         # Observe reaction latency if we captured onset
                         try:
                             if float(getattr(session, 'barge_start_ts', 0.0) or 0.0) > 0.0:
@@ -3312,7 +3320,11 @@ class Engine:
                                 session.barge_start_ts = 0.0
                         except Exception:
                             pass
-                        await self._save_session(session)
+                        await self._apply_barge_in_action(
+                            caller_channel_id,
+                            source="local_vad",
+                            reason="tts_overlap",
+                        )
                         
                         # Notify VAD manager of barge-in event for adaptive learning
                         if self.vad_manager and vad_result:
@@ -3611,6 +3623,217 @@ class Engine:
 
         return result
 
+    async def _run_enhanced_vad_pcm16(self, session: CallSession, pcm16_bytes: bytes, src_rate_hz: int) -> Optional[VADResult]:
+        """Run enhanced VAD on known PCM16 input (used by ExternalMedia RTP path)."""
+        if not self.vad_manager or not pcm16_bytes:
+            return None
+
+        try:
+            src_rate = int(src_rate_hz or 0) or 16000
+        except Exception:
+            src_rate = 16000
+
+        try:
+            if src_rate != 8000:
+                state = self._resample_state_vad8k.get(session.call_id)
+                pcm16_8k, state = audioop.ratecv(pcm16_bytes, 2, 1, src_rate, 8000, state)
+                self._resample_state_vad8k[session.call_id] = state
+            else:
+                pcm16_8k = pcm16_bytes
+        except Exception:
+            pcm16_8k = pcm16_bytes
+
+        if not pcm16_8k:
+            return None
+
+        vad_state = session.vad_state.setdefault("enhanced_vad", {})
+        frame_buffer: bytearray = vad_state.setdefault("frame_buffer", bytearray())
+        frame_buffer.extend(pcm16_8k)
+
+        result: Optional[VADResult] = None
+        stats = vad_state.setdefault("stats", {"frames": 0, "speech_frames": 0})
+
+        while len(frame_buffer) >= 320:
+            frame = bytes(frame_buffer[:320])
+            del frame_buffer[:320]
+            result = await self.vad_manager.process_frame(session.call_id, frame)
+            stats["frames"] = stats.get("frames", 0) + 1
+            if result.is_speech:
+                stats["speech_frames"] = stats.get("speech_frames", 0) + 1
+
+        if result:
+            try:
+                total = max(stats.get("frames", 0), 1)
+                speech_ratio = stats.get("speech_frames", 0) / total
+                session.vad_state["enhanced_summary"] = {
+                    "frames": stats.get("frames", 0),
+                    "speech_frames": stats.get("speech_frames", 0),
+                    "speech_ratio": speech_ratio,
+                    "last_confidence": result.confidence,
+                    "last_energy": result.energy_level,
+                }
+            except Exception:
+                pass
+
+        return result
+
+    async def _is_inbound_isolated_for_barge_in_fallback(self, session: CallSession) -> bool:
+        """Best-effort check that inbound audio is caller-isolated (safe to run local VAD for barge-in)."""
+        try:
+            import time
+
+            now = time.time()
+            state = session.vad_state.setdefault("barge_in_fallback", {})
+            last_ts = float(state.get("iso_check_ts", 0.0) or 0.0)
+            # Cache for 200ms to avoid per-frame lock contention in SessionStore.
+            if last_ts and (now - last_ts) < 0.2:
+                return bool(state.get("iso_ok", False))
+
+            playback_ids = []
+            try:
+                playback_ids = await self.session_store.list_playbacks_for_call(session.call_id)
+            except Exception:
+                playback_ids = []
+
+            has_playback = bool(playback_ids)
+            has_bridge_moh = False
+            try:
+                mid = getattr(session, "music_snoop_channel_id", None)
+                has_bridge_moh = bool(mid and str(mid).startswith("bridge-moh:"))
+            except Exception:
+                has_bridge_moh = False
+
+            ok = (not has_playback) and (not has_bridge_moh)
+            state["iso_check_ts"] = now
+            state["iso_ok"] = ok
+            state["iso_has_playback"] = has_playback
+            state["iso_has_bridge_moh"] = has_bridge_moh
+            return ok
+        except Exception:
+            return False
+
+    async def _maybe_provider_barge_in_fallback(
+        self,
+        session: CallSession,
+        *,
+        pcm16: bytes,
+        pcm_rate_hz: int,
+        audiosocket_wire: Optional[bytes],
+        source: str,
+    ) -> None:
+        """Local VAD fallback for provider-owned mode (flush-only, no provider cancellation)."""
+        try:
+            cfg = getattr(self.config, "barge_in", None)
+            if not cfg or not bool(getattr(cfg, "enabled", True)):
+                return
+            if not bool(getattr(cfg, "provider_fallback_enabled", True)):
+                return
+
+            call_id = session.call_id
+            provider_name = getattr(session, "provider_name", None) or getattr(self.config, "default_provider", "")
+            allow = set((getattr(cfg, "provider_fallback_providers", None) or []) or [])
+            if allow and provider_name not in allow:
+                return
+
+            # Only relevant while streaming playback is active (agent is speaking).
+            try:
+                if not self.streaming_playback_manager.is_stream_active(call_id):
+                    return
+            except Exception:
+                return
+
+            # Only when inbound media path is confirmed.
+            if not bool(getattr(session, "media_rx_confirmed", False)):
+                return
+
+            # Only when we can reasonably assume inbound is caller-isolated.
+            if not await self._is_inbound_isolated_for_barge_in_fallback(session):
+                return
+
+            import time
+
+            now = time.time()
+            vad_result: Optional[VADResult] = None
+            if self.vad_manager:
+                try:
+                    if source == "audiosocket":
+                        vad_result = await self._run_enhanced_vad(session, audiosocket_wire or b"")
+                    else:
+                        vad_result = await self._run_enhanced_vad_pcm16(session, pcm16, int(pcm_rate_hz or 0) or 16000)
+                except Exception:
+                    vad_result = None
+
+            # Energy fallback
+            try:
+                energy = int(vad_result.energy_level) if vad_result else int(audioop.rms(pcm16, 2) if pcm16 else 0)
+            except Exception:
+                energy = 0
+
+            frame_ms = 20
+            confidence = 0.0
+            vad_speech = False
+            webrtc_positive = False
+            if vad_result:
+                frame_ms = max(int(getattr(vad_result, "frame_duration_ms", 20) or 20), 1)
+                confidence = float(getattr(vad_result, "confidence", 0.0) or 0.0)
+                vad_speech = bool(getattr(vad_result, "is_speech", False))
+                webrtc_positive = bool(getattr(vad_result, "webrtc_result", False))
+
+            threshold = int(getattr(cfg, "energy_threshold", 1000))
+            criteria_met = 0
+            if vad_speech:
+                criteria_met += 1
+            if energy >= threshold:
+                criteria_met += 1
+            try:
+                if vad_result and confidence >= float(getattr(self.vad_manager, "confidence_threshold", 0.6)):
+                    criteria_met += 1
+            except Exception:
+                pass
+            if webrtc_positive:
+                criteria_met += 1
+
+            if criteria_met >= (2 if vad_result else 1):
+                if int(getattr(session, "barge_in_candidate_ms", 0) or 0) == 0:
+                    session.barge_start_ts = now
+                session.barge_in_candidate_ms = int(getattr(session, "barge_in_candidate_ms", 0) or 0) + frame_ms
+            else:
+                session.barge_in_candidate_ms = 0
+
+            cooldown_ms = int(getattr(cfg, "cooldown_ms", 500))
+            last_barge_in_ts = float(getattr(session, "last_barge_in_ts", 0.0) or 0.0)
+            in_cooldown = (now - last_barge_in_ts) * 1000 < cooldown_ms if last_barge_in_ts else False
+
+            min_ms = int(getattr(cfg, "min_ms", 250))
+            should_trigger = (not in_cooldown) and (int(getattr(session, "barge_in_candidate_ms", 0) or 0) >= min_ms)
+            if not should_trigger:
+                return
+
+            try:
+                if float(getattr(session, "barge_start_ts", 0.0) or 0.0) > 0.0:
+                    reaction_s = max(0.0, now - float(session.barge_start_ts))
+                    _BARGE_REACTION_SECONDS.labels(call_id).observe(reaction_s)
+                    session.barge_start_ts = 0.0
+            except Exception:
+                pass
+
+            await self._apply_barge_in_action(
+                call_id,
+                source="local_vad_fallback",
+                reason=f"{provider_name}:{source}",
+            )
+            logger.info(
+                "🎧 BARGE-IN (provider fallback) triggered",
+                call_id=call_id,
+                provider=provider_name,
+                source=source,
+                energy=energy,
+                criteria_met=criteria_met,
+                confidence=round(confidence, 3),
+            )
+        except Exception:
+            logger.debug("Provider barge-in fallback failed", call_id=getattr(session, "call_id", None), exc_info=True)
+
     def _should_use_vad_fallback(self, session: CallSession) -> bool:
         """Determine if we should use fallback audio forwarding when VAD doesn't detect speech."""
         try:
@@ -3669,6 +3892,84 @@ class Engine:
         if as_fmt in ('ulaw', 'mulaw', 'g711_ulaw', 'mu-law'):
             return bytes([0xFF]) * length  # μ-law silence
         return b"\x00" * length  # PCM16 silence (zeroed samples)
+
+    async def _apply_barge_in_action(self, call_id: str, *, source: str, reason: str) -> None:
+        """Apply platform-owned barge-in actions (flush local output only).
+
+        Contract (Option 2):
+        - Stop/flush local playback immediately (stream + ARI playback).
+        - Do NOT stop provider sessions or pause inbound audio to providers.
+        - Gate on first inbound audio frame so we don't trigger during setup.
+        """
+        try:
+            session = await self.session_store.get_by_call_id(call_id)
+            if not session:
+                return
+
+            if not bool(getattr(session, "media_rx_confirmed", False)):
+                logger.debug(
+                    "Barge-in ignored (media not confirmed)",
+                    call_id=call_id,
+                    source=source,
+                    reason=reason,
+                )
+                return
+
+            # Stop/flush streaming playback first (prevents tail audio).
+            try:
+                await self.streaming_playback_manager.stop_streaming_playback(call_id)
+            except Exception:
+                logger.debug("Streaming playback stop failed during barge-in", call_id=call_id, exc_info=True)
+            # Ensure subsequent provider audio can restart playback cleanly.
+            # If we keep the old queue, on_provider_event will continue enqueueing but never restart streaming.
+            try:
+                self._provider_stream_queues.pop(call_id, None)
+                self._provider_stream_formats.pop(call_id, None)
+                self._provider_coalesce_buf.pop(call_id, None)
+            except Exception:
+                logger.debug("Failed to clear provider stream buffers during barge-in", call_id=call_id, exc_info=True)
+
+            # Stop any active ARI playbacks (file playback and edge cases).
+            try:
+                playback_ids = await self.session_store.list_playbacks_for_call(call_id)
+                for pid in playback_ids:
+                    try:
+                        await self.ari_client.stop_playback(pid)
+                    except Exception:
+                        logger.debug("Playback stop error during barge-in", playback_id=pid, exc_info=True)
+            except Exception:
+                logger.debug("Failed to enumerate playbacks during barge-in", call_id=call_id, exc_info=True)
+
+            # Clear any platform gating tokens (pipelines/file playback only).
+            try:
+                tokens = list(getattr(session, "tts_tokens", set()) or [])
+                for token in tokens:
+                    try:
+                        if self.conversation_coordinator:
+                            await self.conversation_coordinator.on_tts_end(call_id, token, reason="barge-in")
+                        else:
+                            await self.session_store.clear_gating_token(call_id, token)
+                    except Exception:
+                        logger.debug("Failed to clear gating token during barge-in", token=token, exc_info=True)
+            except Exception:
+                logger.debug("Failed to clear gating tokens during barge-in", call_id=call_id, exc_info=True)
+
+            # Reset candidate window and record observability.
+            try:
+                import time
+                session.barge_in_candidate_ms = 0
+                session.last_barge_in_ts = time.time()
+                session.barge_in_count = int(getattr(session, "barge_in_count", 0) or 0) + 1
+                session.audio_diagnostics["barge_in_last_source"] = source
+                session.audio_diagnostics["barge_in_last_reason"] = reason
+                session.audio_diagnostics["barge_in_last_ts"] = float(session.last_barge_in_ts)
+                await self._save_session(session)
+            except Exception:
+                logger.debug("Failed to record barge-in state", call_id=call_id, exc_info=True)
+
+            logger.info("🎧 BARGE-IN action applied", call_id=call_id, source=source, reason=reason)
+        except Exception:
+            logger.error("Barge-in action failed", call_id=call_id, source=source, reason=reason, exc_info=True)
 
     async def _export_config_metrics(self, call_id: str) -> None:
         """Expose configured knobs as Prometheus gauges for this call."""
@@ -3782,6 +4083,17 @@ class Engine:
             if not session:
                 logger.debug("No session for caller; dropping RTP audio", ssrc=ssrc, caller_channel_id=caller_channel_id)
                 return
+
+            # Media-path confirmation: first inbound audio frame observed.
+            # Used to gate barge-in actions so we don't trigger during setup races.
+            try:
+                if not bool(getattr(session, "media_rx_confirmed", False)):
+                    session.media_rx_confirmed = True
+                    session.first_media_rx_ts = time.time()
+                    await self._save_session(session)
+                    logger.info("Media RX confirmed (ExternalMedia)", call_id=caller_channel_id)
+            except Exception:
+                logger.debug("Failed to set media_rx_confirmed (ExternalMedia)", call_id=caller_channel_id, exc_info=True)
 
             # Check for pipeline mode FIRST (before continuous_input provider routing)
             # Pipeline adapters need audio in their queue, not sent to monolithic providers
@@ -3973,23 +4285,6 @@ class Engine:
                 min_ms = int(getattr(cfg, 'min_ms', 250))
                 if not in_cooldown and session.barge_in_candidate_ms >= min_ms:
                     try:
-                        playback_ids = await self.session_store.list_playbacks_for_call(caller_channel_id)
-                        for pid in playback_ids:
-                            try:
-                                await self.ari_client.stop_playback(pid)
-                            except Exception:
-                                logger.debug("Playback stop error during RTP barge-in", playback_id=pid, exc_info=True)
-
-                        tokens = list(getattr(session, 'tts_tokens', set()) or [])
-                        for token in tokens:
-                            try:
-                                if self.conversation_coordinator:
-                                    await self.conversation_coordinator.on_tts_end(caller_channel_id, token, reason="barge-in")
-                            except Exception:
-                                logger.debug("Failed to clear gating token during RTP barge-in", token=token, exc_info=True)
-
-                        session.barge_in_candidate_ms = 0
-                        session.last_barge_in_ts = now
                         try:
                             if float(getattr(session, 'barge_start_ts', 0.0) or 0.0) > 0.0:
                                 reaction_s = max(0.0, now - float(session.barge_start_ts))
@@ -3997,7 +4292,11 @@ class Engine:
                                 session.barge_start_ts = 0.0
                         except Exception:
                             pass
-                        await self._save_session(session)
+                        await self._apply_barge_in_action(
+                            caller_channel_id,
+                            source="local_vad",
+                            reason="tts_overlap",
+                        )
                         logger.info("🎧 BARGE-IN (RTP) triggered", call_id=caller_channel_id)
                     except Exception:
                         logger.error("Error triggering RTP barge-in", call_id=caller_channel_id, exc_info=True)
@@ -4040,6 +4339,17 @@ class Engine:
 
             # Forward PCM16 16k frames to provider
             await provider.send_audio(pcm_16k)
+            # Provider-owned mode: local VAD fallback may flush local output (never cancels provider).
+            try:
+                await self._maybe_provider_barge_in_fallback(
+                    session,
+                    pcm16=pcm_16k,
+                    pcm_rate_hz=16000,
+                    audiosocket_wire=None,
+                    source="externalmedia",
+                )
+            except Exception:
+                logger.debug("Provider barge-in fallback check failed (ExternalMedia)", call_id=caller_channel_id, exc_info=True)
         except Exception as exc:
             logger.error("Error handling RTP audio", ssrc=ssrc, error=str(exc), exc_info=True)
 
@@ -4406,6 +4716,22 @@ class Engine:
             session = await self.session_store.get_by_call_id(call_id)
             if not session:
                 logger.warning("Provider event for unknown call", event_type=etype, call_id=call_id)
+                return
+
+            # Option 2: Provider-owned VAD/barge-in. Provider signals interruption; platform flushes local output only.
+            # - OpenAI Realtime emits `ProviderBargeIn` on `input_audio_buffer.speech_started` cancellation.
+            # - ElevenLabs emits `interruption` when it detects barge-in.
+            if etype in ("ProviderBargeIn", "interruption"):
+                try:
+                    provider_evt = event.get("event") or event.get("reason") or ""
+                    reason = provider_evt if etype == "ProviderBargeIn" else (provider_evt or etype)
+                    await self._apply_barge_in_action(
+                        call_id,
+                        source="provider_event",
+                        reason=str(reason or etype),
+                    )
+                except Exception:
+                    logger.error("Failed to apply provider barge-in", call_id=call_id, event_type=etype, exc_info=True)
                 return
 
             # Provider requests early TTS gating clear (e.g., OpenAI greeting complete)

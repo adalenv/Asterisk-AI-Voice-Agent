@@ -95,6 +95,8 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         self._current_response_id: Optional[str] = None  # Track active response for cancellation
         self._greeting_response_id: Optional[str] = None  # Track greeting to protect from barge-in
         self._greeting_completed: bool = False  # Track if greeting has finished
+        # Debounce engine-level barge-in signals (prevents flush storms).
+        self._last_barge_in_emit_ts: float = 0.0
         self._farewell_response_id: Optional[str] = None  # Track farewell response for hangup
         self._hangup_after_response: bool = False  # Flag to trigger hangup after next response
         self._farewell_timeout_task: Optional[asyncio.Task] = None  # Timeout fallback for hangup
@@ -1095,6 +1097,28 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                 response_id=response_id,
                 exc_info=True
             )
+
+    async def _emit_provider_barge_in(self, *, event_type: str) -> None:
+        """Notify the engine that provider-side VAD detected user interruption.
+
+        Engine uses this to flush local playback immediately (Option 2),
+        while OpenAI remains responsible for response cancellation/turn-taking.
+        """
+        try:
+            now = time.time()
+            if now - float(self._last_barge_in_emit_ts or 0.0) < 0.25:
+                return
+            self._last_barge_in_emit_ts = now
+            await self.on_event(
+                {
+                    "type": "ProviderBargeIn",
+                    "call_id": self._call_id,
+                    "provider": "openai_realtime",
+                    "event": event_type,
+                }
+            )
+        except Exception:
+            logger.debug("Failed to emit ProviderBargeIn", call_id=self._call_id, exc_info=True)
     
     async def _send_audio_to_openai(self, pcm16: bytes):
         """Helper method to send PCM16 audio to OpenAI (extracted for gating logic).
@@ -1594,6 +1618,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                             elapsed_seconds=round(elapsed, 2)
                         )
                         await self._cancel_response(self._current_response_id)
+                        await self._emit_provider_barge_in(event_type=event_type)
                 else:
                     # No audio started yet, still cancel text-only responses
                     logger.info(
@@ -1602,6 +1627,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                         response_id=self._current_response_id
                     )
                     await self._cancel_response(self._current_response_id)
+                    await self._emit_provider_barge_in(event_type=event_type)
             else:
                 logger.info("OpenAI input_audio_buffer ack", call_id=self._call_id, event_type=event_type)
             return

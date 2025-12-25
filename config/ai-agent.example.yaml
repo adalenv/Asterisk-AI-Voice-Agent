@@ -1,12 +1,12 @@
 # Example ai-agent.yaml (General)
 # Copy this to config/ai-agent.yaml and customize for your environment.
 #
-# Choose one of the example variants as a starting point:
-#  - config/ai-agent.local.yaml            (Local-only pipeline)
-#  - config/ai-agent.cloud-openai.yaml     (Cloud-only OpenAI pipeline)
-#  - config/ai-agent.hybrid.yaml           (Local STT + OpenAI LLM + Deepgram TTS)
-#  - config/ai-agent.openai-agent.yaml     (Monolithic OpenAI Realtime agent)
-#  - config/ai-agent.deepgram-agent.yaml   (Monolithic Deepgram Voice Agent)
+# For validated starting points, see the golden baseline configs:
+#  - config/ai-agent.golden-openai.yaml
+#  - config/ai-agent.golden-deepgram.yaml
+#  - config/ai-agent.golden-google-live.yaml
+#  - config/ai-agent.golden-elevenlabs.yaml
+#  - config/ai-agent.golden-local-hybrid.yaml
 #
 # Secrets come from .env (see .env.example). YAML values may reference env using ${NAME}.
 

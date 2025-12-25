@@ -8,6 +8,13 @@ ElevenLabs Conversational AI is a full-agent provider that combines speech-to-te
 
 > **Note**: ElevenLabs is a **full agent only** provider. TTS-only mode for hybrid pipelines is not currently supported.
 
+If you used the Admin UI Setup Wizard, you may not need to follow this guide end-to-end. For first-call onboarding and transport selection, see:
+- `INSTALLATION.md`
+- `Transport-Mode-Compatibility.md`
+
+For how provider/context selection works (including `AI_CONTEXT` / `AI_PROVIDER`), see:
+- `Configuration-Reference.md` → "Call Selection & Precedence (Provider / Pipeline / Context)"
+
 ## Quick Start
 
 ### 1. Create ElevenLabs Agent
@@ -88,9 +95,11 @@ exten => s,n,Stasis(asterisk-ai-voice-agent)
 exten => s,n,Hangup()
 ```
 
-**CRITICAL**: Both `AI_CONTEXT` and `AI_PROVIDER` must be set:
-- `AI_CONTEXT` - Selects the context (profile, tools)
-- `AI_PROVIDER` - Must be `elevenlabs_agent`
+**Recommended**: Set `AI_CONTEXT` and `AI_PROVIDER` when you want an explicit per-extension override:
+- `AI_CONTEXT` selects the context (profile, tools)
+- `AI_PROVIDER=elevenlabs_agent` forces this provider for the call
+
+If you omit these, the engine will select a context/provider using the precedence rules in `docs/Configuration-Reference.md`.
 
 ### 7. Reload Asterisk
 

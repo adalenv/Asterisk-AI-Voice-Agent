@@ -6,6 +6,13 @@ Deepgram Voice Agent is a monolithic real-time conversational AI provider that c
 
 **Performance**: 1-2 second response latency | Full duplex | Native tool execution
 
+If you used the Admin UI Setup Wizard, you may not need to follow this guide end-to-end. For first-call onboarding and transport selection, see:
+- `INSTALLATION.md`
+- `Transport-Mode-Compatibility.md`
+
+For how provider/context selection works (including `AI_CONTEXT` / `AI_PROVIDER`), see:
+- `Configuration-Reference.md` → "Call Selection & Precedence (Provider / Pipeline / Context)"
+
 ## Quick Start
 
 ### 1. Get Deepgram API Key
@@ -78,9 +85,11 @@ exten => s,n,Stasis(asterisk-ai-voice-agent)
 exten => s,n,Hangup()
 ```
 
-**CRITICAL**: Both `AI_CONTEXT` and `AI_PROVIDER` must be set:
-- `AI_CONTEXT` - Selects the context (greeting, prompt, profile)
-- `AI_PROVIDER` - Must be `deepgram`
+**Recommended**: Set `AI_CONTEXT` and `AI_PROVIDER` when you want an explicit per-extension override:
+- `AI_CONTEXT` selects the context (greeting, prompt, profile, tools)
+- `AI_PROVIDER=deepgram` forces this provider for the call
+
+If you omit these, the engine will select a context/provider using the precedence rules in `docs/Configuration-Reference.md`.
 
 ### 5. Reload Asterisk
 

@@ -9,6 +9,13 @@ Google AI integration provides two modes for the Asterisk AI Voice Agent:
 
 This guide covers setup for both modes.
 
+If you used the Admin UI Setup Wizard, you may not need to follow this guide end-to-end. For first-call onboarding and transport selection, see:
+- `INSTALLATION.md`
+- `Transport-Mode-Compatibility.md`
+
+For how provider/context selection works (including `AI_CONTEXT` / `AI_PROVIDER`), see:
+- `Configuration-Reference.md` → "Call Selection & Precedence (Provider / Pipeline / Context)"
+
 ## Quick Start
 
 ### 1. Enable Google Cloud APIs
@@ -58,9 +65,11 @@ exten => s,n,Stasis(asterisk-ai-voice-agent)
 exten => s,n,Hangup()
 ```
 
-**CRITICAL**: Both `AI_CONTEXT` and `AI_PROVIDER` must be set:
-- `AI_CONTEXT` - Selects the context (greeting, prompt, profile)
-- `AI_PROVIDER` - Selects the provider (google_live, google_cloud_full, etc.)
+**Recommended**: Set `AI_CONTEXT` and `AI_PROVIDER` when you want an explicit per-extension override:
+- `AI_CONTEXT` selects the context (greeting, prompt, profile, tools)
+- `AI_PROVIDER` selects the provider (e.g., `google_live`, `google_cloud_full`)
+
+If you omit these, the engine will select a context/provider using the precedence rules in `docs/Configuration-Reference.md`.
 
 ### 4. Restart Asterisk
 

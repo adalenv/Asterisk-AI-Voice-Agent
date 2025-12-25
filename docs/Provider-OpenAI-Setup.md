@@ -6,6 +6,13 @@ OpenAI Realtime API provides low-latency bidirectional streaming conversational 
 
 **Performance**: 0.5-1.5 second response latency | Full duplex | Server-side echo cancellation
 
+If you used the Admin UI Setup Wizard, you may not need to follow this guide end-to-end. For first-call onboarding and transport selection, see:
+- `INSTALLATION.md`
+- `Transport-Mode-Compatibility.md`
+
+For how provider/context selection works (including `AI_CONTEXT` / `AI_PROVIDER`), see:
+- `Configuration-Reference.md` → "Call Selection & Precedence (Provider / Pipeline / Context)"
+
 ## Quick Start
 
 ### 1. Get OpenAI API Key
@@ -120,9 +127,11 @@ exten => s,n,Stasis(asterisk-ai-voice-agent)
 exten => s,n,Hangup()
 ```
 
-**CRITICAL**: Both `AI_CONTEXT` and `AI_PROVIDER` must be set:
-- `AI_CONTEXT` - Selects the context (greeting, prompt, profile)
-- `AI_PROVIDER` - Must be `openai_realtime`
+**Recommended**: Set `AI_CONTEXT` and `AI_PROVIDER` when you want an explicit per-extension override:
+- `AI_CONTEXT` selects the context (greeting, prompt, profile, tools)
+- `AI_PROVIDER=openai_realtime` forces this provider for the call
+
+If you omit these, the engine will select a context/provider using the precedence rules in `docs/Configuration-Reference.md`.
 
 ### 6. Reload Asterisk
 

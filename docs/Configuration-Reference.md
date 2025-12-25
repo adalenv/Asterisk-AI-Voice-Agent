@@ -4,7 +4,7 @@ This document explains every major option in `config/ai-agent.yaml`, the precede
 
 ## Configuration Architecture (v4.5)
 
-v4.0 introduces a **modular pipeline architecture** alongside monolithic provider support:
+Starting in v4.0, the project added a **modular pipeline architecture** alongside monolithic provider support:
 
 ### Monolithic Providers
 - **Single provider** handles STT, LLM, and TTS internally
@@ -56,6 +56,43 @@ See [LOCAL_ONLY_SETUP.md](LOCAL_ONLY_SETUP.md) for detailed configuration.
 
 ---
 
+## Call Selection & Precedence (Provider / Pipeline / Context)
+
+On each call, the engine selects:
+- a **context** (greeting/prompt/tools/profile)
+- a **provider mode** (full agent provider vs pipeline)
+
+This selection is intentionally flexible so you can keep safe defaults while still overriding behavior per extension.
+
+### Context selection
+
+- If your dialplan sets `AI_CONTEXT`, that context name is used.
+- Otherwise, the engine uses the `default` context.
+
+### Provider selection
+
+Highest priority first:
+
+1. **Dialplan override**: `AI_PROVIDER` (if set)
+2. **Context override**: `contexts.<name>.provider` (if set for the selected context)
+3. **Global default**: `default_provider`
+
+### Pipeline selection
+
+If the selected provider path is a pipeline-based configuration, the engine uses:
+
+- `active_pipeline` to determine which pipeline to run.
+
+### Recommended approach
+
+- Keep `default_provider` + `active_pipeline` set to a known-good baseline.
+- Use `AI_CONTEXT` for persona/tool scoping.
+- Use `AI_PROVIDER` only when you want an explicit per-extension override.
+
+See also:
+- [Installation Guide](INSTALLATION.md)
+- [Transport Compatibility](Transport-Mode-Compatibility.md)
+
 ## Canonical persona and greeting
 
 - llm.initial_greeting: Text the agent speaks first (if provider supports explicit greeting or the engine plays via TTS).
@@ -68,9 +105,9 @@ See [LOCAL_ONLY_SETUP.md](LOCAL_ONLY_SETUP.md) for detailed configuration.
 ## Transports
 
 - audio_transport: `audiosocket` | `externalmedia`
-  - **audiosocket** (For Full Agents): TCP-based streaming transport. Use with OpenAI Realtime and Deepgram Voice Agent monolithic providers.
-  - **externalmedia** (For Pipelines): RTP/UDP-based transport. Use with Local Hybrid and modular pipelines (separate STT/LLM/TTS).
-  - **Selection**: Based on provider architecture, not deployment preference. Full agents require AudioSocket, pipelines require ExternalMedia.
+  - **audiosocket**: TCP-based audio transport.
+  - **externalmedia**: RTP/UDP-based audio transport.
+  - **Selection**: Use the validated combinations in **[Transport & Playback Mode Compatibility Guide](Transport-Mode-Compatibility.md)**. Transport selection depends on provider mode and playback method (not a single strict rule).
 - downstream_mode: `stream` | `file`
   - **stream**: Real-time streaming (20ms frames). Best UX. Works with full agents.
   - **file**: File-based playback via bridge. More robust to jitter. Automatically used by pipelines.

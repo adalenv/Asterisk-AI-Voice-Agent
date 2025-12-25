@@ -39,7 +39,11 @@ The most powerful, flexible open-source AI voice agent for Asterisk/FreePBX. Fea
 
 ## 🚀 Quick Start
 
-Get up and running in **2 minutes** with the Admin UI.
+Get the **Admin UI running in 2 minutes**.
+
+For a complete **first successful call** walkthrough (dialplan + transport selection + verification), see:
+- **[Installation Guide](docs/INSTALLATION.md)**
+- **[Transport Compatibility](docs/Transport-Mode-Compatibility.md)**
 
 ### 1. Run Pre-flight Check (Required)
 
@@ -76,6 +80,9 @@ Follow the **Setup Wizard** to configure your providers and make a test call.
 ### 4. Verify Installation
 
 ```bash
+# Start ai-engine (required for health checks)
+docker compose up -d --build ai-engine
+
 # Check ai-engine health
 curl http://localhost:15000/health
 # Expected: {"status":"healthy"}
@@ -87,6 +94,9 @@ docker compose logs ai-engine | tail -20
 ### 5. Connect Asterisk
 
 The wizard will generate the necessary dialplan configuration for your Asterisk server.
+
+Transport selection is configuration-dependent (not strictly “pipelines vs full agents”). Use the validated matrix in:
+- **[docs/Transport-Mode-Compatibility.md](docs/Transport-Mode-Compatibility.md)**
 
 ---
 
@@ -282,7 +292,7 @@ active_pipeline: local_ollama
 - **Tool Calling System**: AI-powered actions (transfers, emails) work with any provider.
 - **Agent CLI Tools**: `doctor`, `troubleshoot`, `demo`, `init` commands.
 - **Modular Pipeline System**: Independent STT, LLM, and TTS provider selection.
-- **Dual Transport Support**: AudioSocket (full agents) and ExternalMedia RTP (pipelines).
+- **Dual Transport Support**: AudioSocket and ExternalMedia RTP (see Transport Compatibility matrix).
 - **High-Performance Architecture**: Separate `ai-engine` and `local-ai-server` containers.
 - **Observability**: Built-in **Call History** for per-call debugging + optional `/metrics` scraping.
 - **State Management**: SessionStore for centralized, typed call state.

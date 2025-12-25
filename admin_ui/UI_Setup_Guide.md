@@ -1,6 +1,6 @@
 # Admin UI Setup Guide
 
-**Version**: 1.0.0 (Release 4.4.1)  
+**Version**: 1.0.0 (Introduced in Release 4.4.1; applies to v4.5.3+)  
 **Release Date**: November 30, 2025  
 **Quick Start**: 5 minutes to get running
 
@@ -39,7 +39,12 @@ That's it! The container will:
 - ✅ Create a default admin user
 - ✅ Mount your config files
 
-> **Note**: The wizard will automatically create `.env` from `.env.example` when you start the setup process.
+> **Note**: Run `./preflight.sh --apply-fixes` first (recommended) to create `.env` and generate a secure `JWT_SECRET`.
+> The Admin UI reads/writes `config/ai-agent.yaml` and `.env`.
+
+For first-call onboarding (dialplan + transport selection + verification), see:
+- [Installation Guide](../docs/INSTALLATION.md)
+- [Transport Compatibility](../docs/Transport-Mode-Compatibility.md)
 
 ### 2. Access the UI
 
@@ -609,9 +614,11 @@ curl http://localhost:3003
 | Service | Port | Protocol | Access |
 |---------|------|----------|--------|
 | Admin UI | 3003 | HTTP | http://localhost:3003 |
-| AI Engine | 5050 | AudioSocket | Internal |
+| AI Engine Health/Metrics | 15000 | HTTP | Internal/Local |
+| AI Engine AudioSocket | 8090 | TCP | Asterisk → ai-engine |
+| AI Engine ExternalMedia RTP | 18080 | UDP | Bidirectional |
 | Local AI Server | 8765 | WebSocket | Internal |
-| Asterisk ARI | 8088 | HTTP | Internal |
+| Asterisk ARI | 8088 | HTTP/WebSocket | Internal |
 
 ### Changing the Admin UI Port
 
@@ -757,18 +764,17 @@ cp config/users.json config/users.json.$(date +%Y%m%d)
 ### Upcoming Features (v1.1)
 
 Coming in future releases:
-1. **Call History & Analytics** - View past calls, transcripts, and summaries
-2. **YAML Diff Preview** - See changes before saving
-3. **Log Filtering** - Filter logs by level and component
-4. **Multi-User Support** - Role-based access control
-5. **2FA Authentication** - Two-factor authentication
+1. **YAML Diff Preview** - See changes before saving
+2. **Log Filtering** - Filter logs by level and component
+3. **Multi-User Support** - Role-based access control
+4. **2FA Authentication** - Two-factor authentication
 
 ---
 
 ## 📝 Version Information
 
 - **Admin UI Version**: 1.0.0
-- **Project Version**: 4.4.1
+- **Project Version**: 4.5.3+
 - **Release Date**: November 30, 2025
 - **Release Branch**: `develop`
 - **Guide Version**: 1.0

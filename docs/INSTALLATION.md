@@ -87,6 +87,8 @@ The installer will:
 
 **Best for:** Advanced users, custom configurations, specific requirements
 
+If you want to use additional providers (e.g., Google Live, ElevenLabs) or switch between multiple golden configs, use the Admin UI Setup Wizard (Path A) or edit `config/ai-agent.yaml` directly.
+
 **Local note:** This project does **not** bundle models in images. For recommended local build/run profiles (including a smaller `local-core` build), see `docs/LOCAL_PROFILES.md`.
 
 **Kroko note:** `INCLUDE_KROKO_EMBEDDED` is off by default to keep the local-ai-server image lighter. Enable it only if you need embedded Kroko (see `docs/LOCAL_PROFILES.md`).
@@ -104,7 +106,7 @@ Before you begin, ensure your system meets the following requirements:
 - **Operating System**: A modern Linux distribution (e.g., Ubuntu 20.04+, CentOS 7+).
 - **Asterisk**: Version 18 or newer. FreePBX 15+ is also supported.
 - **ARI (Asterisk REST Interface)**: Enabled and configured on your Asterisk server.
-- **Docker**: Latest stable version of Docker and Docker Compose.
+- **Docker**: Latest stable version of Docker and Docker Compose. Podman is community-supported (aliased as `docker`) but not officially tested.
 - **Git**: Required to clone the project repository.
 - **Network Access**: Your server must be able to make outbound connections to the internet for Docker image downloads and API access to AI providers.
 
@@ -258,7 +260,58 @@ After starting the service, you can check that it is running correctly.
 docker compose ps
 ```
 
-You should see the `ai-engine` and `local-ai-server` containers running.
+You should see the `ai-engine` container running, and `local-ai-server` if your selected configuration requires local STT/LLM/TTS.
+
+## First Successful Call (Canonical Checklist)
+
+This section is designed to remove ambiguity between “containers started” and a **working phone call**.
+
+### 1) Confirm engine health
+
+```bash
+curl http://localhost:15000/health
+```
+
+Expected: `{"status":"healthy"}`
+
+### 2) Confirm ARI connectivity
+
+In `ai-engine` logs, look for indicators that ARI is reachable and authenticated.
+
+```bash
+docker compose logs -f ai-engine
+```
+
+If ARI is not reachable, verify `.env` values and that Asterisk ARI is enabled:
+- `ASTERISK_HOST`
+- `ASTERISK_ARI_USERNAME`
+- `ASTERISK_ARI_PASSWORD`
+
+### 3) Choose transport using the validated compatibility matrix
+
+Transport selection depends on your chosen provider mode and playback method.
+
+Use the validated combinations in:
+- **[Transport & Playback Mode Compatibility Guide](Transport-Mode-Compatibility.md)**
+
+### 4) Configure Asterisk dialplan and reload
+
+Add the minimal Stasis dialplan in **[5. Configure Asterisk Dialplan](#5-configure-asterisk-dialplan)** below, then reload your dialplan:
+
+```bash
+asterisk -rx "dialplan reload"
+```
+
+### 5) Place a test call and verify expected outcomes
+
+Expected outcomes:
+- You hear a greeting.
+- The call appears in **Admin UI → Call History** (if enabled in your config/release).
+- `ai-engine` logs show the call entering Stasis and starting the configured transport.
+
+If you get “greeting only” or “no audio”, jump to:
+- **[Transport Compatibility](Transport-Mode-Compatibility.md)**
+- **[Troubleshooting Guide](TROUBLESHOOTING_GUIDE.md)**
 
 ### Check Container Logs
 
@@ -266,13 +319,16 @@ You should see the `ai-engine` and `local-ai-server` containers running.
 docker compose logs -f ai-engine
 ```
 
-Look for a message indicating a successful connection to the Asterisk ARI and that the AudioSocket listener is ready on port 8090.
+Look for a message indicating a successful connection to Asterisk ARI and that the engine is ready to start the selected transport.
+
+For transport-specific expectations (AudioSocket vs ExternalMedia RTP), see:
+- **[Transport & Playback Mode Compatibility Guide](Transport-Mode-Compatibility.md)**
 
 ### 5. Configure Asterisk Dialplan
 
 The engine uses **ARI-based architecture** - the dialplan just hands calls to Stasis. The engine manages audio transport internally.
 
-**Minimal Dialplan** (works for all 3 golden baselines):
+**Minimal Dialplan** (works for all supported modes):
 
 Add to `/etc/asterisk/extensions_custom.conf`:
 
@@ -305,10 +361,12 @@ exten => s,1,NoOp(AI Agent - OpenAI Realtime)
 **How It Works:**
 1. Call enters `Stasis(asterisk-ai-voice-agent)`
 2. Engine receives StasisStart event via ARI
-3. **For full agents** (OpenAI, Deepgram): Engine creates AudioSocket channel via ARI
-4. **For hybrid pipelines** (Local Hybrid): Engine creates ExternalMedia RTP channel via ARI
-5. Engine bridges transport channel with caller
-6. Two-way audio flows automatically
+3. Engine starts the configured transport and playback mode for that call
+4. Engine bridges the transport channel with the caller
+5. Two-way audio flows automatically
+
+For validated transport/playback combinations, see:
+- **[Transport & Playback Mode Compatibility Guide](Transport-Mode-Compatibility.md)**
 
 After adding the dialplan, reload Asterisk configuration:
 

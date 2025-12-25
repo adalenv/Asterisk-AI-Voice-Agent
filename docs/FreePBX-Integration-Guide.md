@@ -1,17 +1,20 @@
 # FreePBX Integration Guide
 
-Complete guide for integrating Asterisk AI Voice Agent v4.0 with FreePBX.
+Complete guide for integrating Asterisk AI Voice Agent v4.5.3+ with FreePBX.
 
 ## 1. Overview
 
-The Asterisk AI Voice Agent v4.0 integrates with FreePBX using the **Asterisk REST Interface (ARI)**. Calls enter the Stasis application, and the `ai-engine` handles all call control, audio transport, and AI provider orchestration.
+The Asterisk AI Voice Agent integrates with FreePBX using the **Asterisk REST Interface (ARI)**. Calls enter the Stasis application, and the `ai-engine` handles all call control, audio transport, and AI provider orchestration.
 
-**v4.0 supports 3 validated configurations:**
-- **OpenAI Realtime** - Cloud-based monolithic agent
-- **Deepgram Voice Agent** - Enterprise cloud agent with Think stage
-- **Local Hybrid** - Local STT/TTS + Cloud LLM (privacy-focused)
+If you’re setting this up for the first time, follow the canonical “first successful call” flow first:
 
-Each configuration uses the optimal transport automatically (AudioSocket or ExternalMedia RTP).
+- `INSTALLATION.md`
+- `Configuration-Reference.md` → "Call Selection & Precedence (Provider / Pipeline / Context)"
+- `Transport-Mode-Compatibility.md`
+
+This guide focuses on FreePBX integration mechanics (ARI user, dialplan routing, networking).
+
+Transport selection is configuration-driven (see `Transport-Mode-Compatibility.md` for validated combinations).
 
 ## 2. Prerequisites
 
@@ -249,7 +252,7 @@ This simple 3-line context works for all configurations. Without any variables s
 
 ```asterisk
 [from-ai-agent]
-exten => s,1,NoOp(Asterisk AI Voice Agent v4.0)
+exten => s,1,NoOp(Asterisk AI Voice Agent)
  same => n,Stasis(asterisk-ai-voice-agent)
  same => n,Hangup()
 ```
@@ -260,9 +263,10 @@ exten => s,1,NoOp(Asterisk AI Voice Agent v4.0)
 - No variables required!
 
 **How it works:**
-- **Full agents** (OpenAI Realtime, Deepgram): Engine originates AudioSocket channel
-- **Pipelines** (Local Hybrid, Local Only): Engine originates ExternalMedia RTP channel
-- All audio transport is managed internally via ARI
+
+- The dialplan always routes the call to `Stasis(asterisk-ai-voice-agent)`.
+- Optionally set `AI_PROVIDER` and/or `AI_CONTEXT` before `Stasis()` to override behavior per extension.
+- Audio transport (AudioSocket vs ExternalMedia RTP) is determined by your config and should match a validated combination in `Transport-Mode-Compatibility.md`.
 
 No `AudioSocket()` or `ExternalMedia()` needed in dialplan.
 
@@ -430,10 +434,7 @@ curl http://127.0.0.1:15000/health
 **Expected response**:
 ```json
 {
-  "status": "healthy",
-  "ari_connected": true,
-  "audio_transport": "audiosocket",  // or "externalmedia"
-  "active_configuration": "golden-openai"  // or golden-deepgram, golden-local-hybrid
+  "status": "healthy"
 }
 ```
 
@@ -553,10 +554,7 @@ docker compose logs local-ai-server | tail -20
 - Sample rate mismatch
 
 **Solution**:
-Check transport compatibility in `docs/Transport-Mode-Compatibility.md`
-
-For pipelines (Local Hybrid): Must use ExternalMedia RTP + file playback
-For full agents (OpenAI/Deepgram): Can use either transport + streaming
+See the validated transport combinations in `docs/Transport-Mode-Compatibility.md`.
 
 ---
 
@@ -645,6 +643,6 @@ Once your integration is working:
 
 ---
 
-**FreePBX Integration Guide v4.0 - Complete** ✅
+**FreePBX Integration Guide - Complete** ✅
 
 For questions or issues, see the [GitHub repository](https://github.com/hkjarral/Asterisk-AI-Voice-Agent).

@@ -64,32 +64,38 @@ class ElevenLabsToolAdapter:
             for tool_name, tool in self.registry._tools.items():
                 definition = tool.definition
                 
+                # Use input_schema if available (e.g., MCP tools), otherwise build from parameters
+                if isinstance(getattr(definition, 'input_schema', None), dict) and definition.input_schema:
+                    # MCP tools and others with raw JSON schema
+                    schema = definition.input_schema.copy()
+                    if schema.get("type") is None:
+                        schema["type"] = "object"
+                    parameters = schema
+                else:
+                    # Built-in tools with ToolParameter list
+                    parameters = {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    }
+                    for param in definition.parameters:
+                        param_schema = {
+                            "type": param.type,
+                            "description": param.description,
+                        }
+                        if param.enum:
+                            param_schema["enum"] = param.enum
+                        parameters["properties"][param.name] = param_schema
+                        if param.required:
+                            parameters["required"].append(param.name)
+                
                 # Build ElevenLabs tool schema
                 tool_schema = {
                     "type": "client",  # Client-side tool execution
                     "name": definition.name,
                     "description": definition.description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                    }
+                    "parameters": parameters
                 }
-                
-                # Add parameters
-                for param in definition.parameters:
-                    param_schema = {
-                        "type": param.type,
-                        "description": param.description,
-                    }
-                    
-                    if param.enum:
-                        param_schema["enum"] = param.enum
-                    
-                    tool_schema["parameters"]["properties"][param.name] = param_schema
-                    
-                    if param.required:
-                        tool_schema["parameters"]["required"].append(param.name)
                 
                 tools.append(tool_schema)
                 

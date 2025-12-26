@@ -618,6 +618,13 @@ const CallHistoryPage = () => {
                             </div>
                             <div className="flex items-center gap-2">
                                 <button
+                                    onClick={() => openTroubleshoot(modalCall)}
+                                    className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground h-9 px-3"
+                                    title="Open Logs filtered to this call"
+                                >
+                                    Troubleshoot
+                                </button>
+                                <button
                                     onClick={() => handleDelete(modalCall.id)}
                                     className="p-2 hover:bg-destructive/10 rounded-lg text-destructive"
                                     title="Delete this call"

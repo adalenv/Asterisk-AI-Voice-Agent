@@ -448,41 +448,60 @@ Keep this roadmap updated after each milestone to help any collaborator—or fut
 
 ### v4.5.3 (December 2025) - Security Hardening Sprint
 
-**Release Date**: December 17, 2025  
-**Focus**: Security hardening, resilience, and Admin UI production readiness
+**Release Date**: December 22, 2025  
+**Focus**: Security hardening, RTP safety, and production readiness
 
-**Security Hardening** (AAVA-131):
+**Security Hardening** (AAVA-131, AAVA-136, AAVA-137):
 
-- Default network bindings changed to localhost (127.0.0.1) for all services
-- Admin UI requires `JWT_SECRET` and `UVICORN_HOST=0.0.0.0` for remote access
-- local_ai_server fail-closed auth enforcement for non-loopback binds
-- Health endpoint binds to localhost by default
+- Preflight is treated as required in docs; stronger “you are exposing a control plane” warnings for operators.
+- Remote access is explicit: Admin UI supports `UVICORN_HOST=0.0.0.0` (default in docker-compose for out-of-box UX) and requires `JWT_SECRET`; production guidance recommends reverse proxy/VPN and tight firewall rules.
+- ARI runtime reconnect supervisor with exponential backoff; `/ready` reflects true ARI connection state; removed blocking IO from async runtime paths (`time.sleep` → `asyncio.sleep`).
 
-**Resilience Improvements** (AAVA-136, AAVA-137):
+**RTP Safety & Hardening**:
 
-- ARI runtime reconnect supervisor with exponential backoff
-- Removed blocking IO from async runtime paths (`time.sleep` → `asyncio.sleep`)
-- `/ready` endpoint reflects true ARI connection state
+- ExternalMedia RTP hardening: remote endpoint pinning (`external_media.lock_remote_endpoint`) and allowlist support (`external_media.allowed_remote_hosts`).
+- Fixed SSRC routing to prevent cross-call audio mixing by using authoritative `call_id` in engine callback.
+
+**Observability & Debugging**:
+
+- Default provider is now `local_hybrid` (pipeline-first GA default); readiness probe is pipeline-aware when `default_provider` references a pipeline.
+- Low-cardinality Prometheus metrics only (no per-call labels like `call_id`); per-call debugging is via Admin UI → Call History.
+- Removed legacy bundled Prometheus/Grafana monitoring stack and `monitoring/` assets from the main repo path (bring-your-own monitoring).
+- Local AI logging: suppressed noisy websocket handshake errors; improved client connection logging.
 
 **Admin UI Adoption Readiness** (AAVA-130):
 
-- Fixed JWT_SECRET load-order vulnerability
-- Fixed config export crash (`CONFIG_PATH.exists()`)
-- Atomic writes for all config-mutating endpoints
-- CORS restricted by default with env override
+- Fixed JWT_SECRET load-order vulnerability; CORS restricted by default with env override.
+- Atomic writes for config-mutating endpoints; fixed config export crash (`CONFIG_PATH.exists()`).
+- Admin UI backend: model switching mappings for `faster_whisper` STT and `melotts` TTS.
 
-**Documentation Updates** (AAVA-132, AAVA-133, AAVA-134, AAVA-135):
+**Tests**:
 
-- Updated resilience.md from v3.0 to v4.x
-- Fixed transport default documentation (ExternalMedia is default)
-- Added Kroko binary integrity verification (SHA256)
-- Added Admin-UI control plane hardening documentation
+- Added tests for RTP routing/security and Prometheus label cardinality.
 
-**Local AI Server Logging**:
+---
 
-- Suppressed noisy websockets handshake errors via log filter
-- Added client connection logging at INFO level
-- Aligned main.py defaults with docker-compose.yml
+### v4.5.2 (December 2025) - Local AI Enhancements
+
+**Release Date**: December 16, 2025  
+**Focus**: Local AI capabilities, model management, and stability fixes
+
+- Kokoro API mode (`KOKORO_MODE=api`) for OpenAI-compatible TTS endpoints.
+- Model hot-swap via WebSocket (STT/TTS/LLM without container restart) and improved auto-reconnect behavior.
+- MCP tool integration framework and initial tool implementations.
+- Compatibility fixes (websockets 15.x, resend 2.x, sherpa-onnx 1.12.19).
+
+---
+
+### v4.5.0 (December 2025) - Admin UI Stability & Ops UX
+
+**Release Date**: December 11, 2025  
+**Focus**: Admin UI stability, safer config writes, and better operator feedback
+
+- Admin UI stability fixes across config editor state, validation, and restart-required UX.
+- Docker operations improvements (prefer Docker SDK restart; compose fallback).
+- Atomic writes + backup rotation for `config/ai-agent.yaml` and `.env`.
+- Health endpoint improvements (uptime, pending timers, live conversation metrics).
 
 ---
 
@@ -569,11 +588,11 @@ Keep this roadmap updated after each milestone to help any collaborator—or fut
 
 ---
 
-### 🚧 Next: Milestone 21 - Call History & Analytics Dashboard
+### ✅ Completed: Milestone 21 - Call History & Analytics Dashboard
 
-**Status**: In Progress  
+**Status**: ✅ Complete  
 **Branch**: `feature/call-history`  
-**Estimated Effort**: 7 days
+**Completed**: December 18, 2025
 
 Comprehensive call history with debugging capabilities:
 
@@ -585,6 +604,16 @@ Comprehensive call history with debugging capabilities:
 - CSV/JSON export
 
 See: `docs/contributing/milestones/milestone-21-call-history.md`
+
+---
+
+### 🚧 Next (Proposed): Integration Tests + Automated Regression Suite
+
+This is the highest ROI “production hardening” follow-up now that multi-provider + multi-pipeline GA is stable.
+
+- Integration tests for transfer workflows (ARI + tool execution end-to-end, not just unit tests)
+- Automated regression test suite (golden baseline replay + health assertions)
+- CI coverage threshold to 30% then 40% (currently ~27%)
 
 ---
 
@@ -767,5 +796,5 @@ For detailed implementation plans and specifications:
 
 ---
 
-**Last Updated**: December 17, 2025  
-**Roadmap Version**: 2.6 (Added v4.5.3 Security Hardening Sprint, updated v4.5 Planning status)
+**Last Updated**: December 27, 2025  
+**Roadmap Version**: 2.7 (Added v4.5.0/v4.5.2 releases, corrected v4.5.3 and Milestone 21 status)

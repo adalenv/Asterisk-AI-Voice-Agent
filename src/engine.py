@@ -1104,10 +1104,40 @@ class Engine:
             logger.info("🎯 HYBRID ARI - Processing caller channel", channel_id=channel_id)
             await self._handle_caller_stasis_start_hybrid(channel_id, channel)
         elif self._is_local_channel(channel):
+            # Local channels are normally used as a helper leg (e.g. transfers) and must
+            # be mapped back to a real caller channel. However, for automated smoke tests
+            # (and some controlled dialplan flows), we intentionally originate a Local
+            # channel directly into an AI-agent context. In that case we want to treat
+            # the Local channel itself as the caller so we can inject audio via bridge
+            # playback and validate end-to-end behavior without a human endpoint.
+            dialplan_ctx = (channel.get("dialplan", {}) or {}).get("context", "") or ""
+            local_caller_contexts = {
+                "ava-test",
+                "from-ai-agent-google",
+                "from-ai-agent-deepgram",
+                "from-ai-agent-openai",
+                "from-ai-agent-local",
+                "from-ai-agent-custom",
+                "from-ai-agent-mcp",
+                "from-ai-agent-elevlabs",
+            }
+
+            if dialplan_ctx in local_caller_contexts:
+                logger.info(
+                    "🎯 HYBRID ARI - Treating Local channel as caller (smoke/dialplan test)",
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    context=dialplan_ctx,
+                )
+                await self._handle_caller_stasis_start_hybrid(channel_id, channel)
+                return
+
             # This is the Local channel entering Stasis - legacy path
-            logger.info("🎯 HYBRID ARI - Local channel entered Stasis",
-                       channel_id=channel_id,
-                       channel_name=channel_name)
+            logger.info(
+                "🎯 HYBRID ARI - Local channel entered Stasis",
+                channel_id=channel_id,
+                channel_name=channel_name,
+            )
             # Now add the Local channel to the bridge
             await self._handle_local_stasis_start_hybrid(channel_id, channel)
         elif self._is_audiosocket_channel(channel):

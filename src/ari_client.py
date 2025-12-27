@@ -33,10 +33,16 @@ class ARIClient:
         self.password = password
         self.app_name = app_name
         self.http_url = base_url
-        ws_host = base_url.replace("http://", "").split('/')[0]
+        # Determine WebSocket scheme based on HTTP scheme
+        if base_url.startswith("https://"):
+            ws_scheme = "wss"
+            ws_host = base_url.replace("https://", "").split('/')[0]
+        else:
+            ws_scheme = "ws"
+            ws_host = base_url.replace("http://", "").split('/')[0]
         safe_username = quote(username)
         safe_password = quote(password)
-        self.ws_url = f"ws://{ws_host}/ari/events?api_key={safe_username}:{safe_password}&app={app_name}&subscribeAll=true&subscribe=ChannelAudioFrame"
+        self.ws_url = f"{ws_scheme}://{ws_host}/ari/events?api_key={safe_username}:{safe_password}&app={app_name}&subscribeAll=true&subscribe=ChannelAudioFrame"
         self.websocket: Optional[ClientConnection] = None
         self.http_session: Optional[aiohttp.ClientSession] = None
         self.running = False

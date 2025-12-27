@@ -184,7 +184,7 @@ class Engine:
     def __init__(self, config: AppConfig):
         self.config = config
         self._start_time = time.time()  # Track engine start time for uptime
-        base_url = f"http://{config.asterisk.host}:{config.asterisk.port}/ari"
+        base_url = f"{config.asterisk.scheme}://{config.asterisk.host}:{config.asterisk.port}/ari"
         self.ari_client = ARIClient(
             username=config.asterisk.username,
             password=config.asterisk.password,

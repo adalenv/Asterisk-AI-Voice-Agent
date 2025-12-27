@@ -37,6 +37,7 @@ _PROJ_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class AsteriskConfig(BaseModel):
     host: str
     port: int = Field(default=8088)
+    scheme: str = Field(default="http")  # http or https (https uses wss:// for WebSocket)
     username: str
     password: str
     app_name: str = Field(default="ai-voice-agent")

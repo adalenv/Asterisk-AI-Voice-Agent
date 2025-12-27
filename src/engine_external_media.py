@@ -137,7 +137,7 @@ class ExternalMediaEngine:
             self.ari_client = ARIClient(
                 username=self.config.asterisk.username,
                 password=self.config.asterisk.password,
-                base_url=f"http://{self.config.asterisk.host}:{self.config.asterisk.port}/ari",
+                base_url=f"{self.config.asterisk.scheme}://{self.config.asterisk.host}:{self.config.asterisk.port}/ari",
                 app_name=self.config.asterisk.app_name
             )
             

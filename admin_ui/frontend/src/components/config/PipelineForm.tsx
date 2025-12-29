@@ -6,6 +6,7 @@ import { CheckCircle, AlertCircle, Loader2, Wrench } from 'lucide-react';
 // Available tools that can be enabled for pipelines
 const AVAILABLE_TOOLS = [
     { id: 'transfer', label: 'Transfer Call', description: 'Transfer to extensions, queues, or ring groups' },
+    { id: 'attended_transfer', label: 'Attended Transfer', description: 'Warm transfer with agent announcement + DTMF accept/decline (requires Local AI Server)' },
     { id: 'cancel_transfer', label: 'Cancel Transfer', description: 'Cancel an in-progress transfer' },
     { id: 'hangup_call', label: 'Hangup Call', description: 'End the call with a farewell message' },
     { id: 'leave_voicemail', label: 'Leave Voicemail', description: 'Send caller to voicemail' },

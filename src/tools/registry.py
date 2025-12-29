@@ -285,6 +285,12 @@ After outputting a tool call, provide a brief spoken response.
             self.register(UnifiedTransferTool)
         except ImportError as e:
             logger.warning(f"Could not import UnifiedTransferTool: {e}")
+
+        try:
+            from src.tools.telephony.attended_transfer import AttendedTransferTool
+            self.register(AttendedTransferTool)
+        except ImportError as e:
+            logger.warning(f"Could not import AttendedTransferTool: {e}")
         
         try:
             from src.tools.telephony.cancel_transfer import CancelTransferTool

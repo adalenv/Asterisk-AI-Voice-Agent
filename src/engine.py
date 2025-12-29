@@ -209,6 +209,12 @@ class Engine:
             conversation_coordinator=self.conversation_coordinator,
         )
         self.conversation_coordinator.set_playback_manager(self.playback_manager)
+        # Attended transfer (warm transfer w/ agent DTMF acceptance) runtime state.
+        # These are intentionally in-memory only (per-engine-instance) to avoid schema churn.
+        self._ari_playback_waiters: Dict[str, asyncio.Future] = {}
+        self._attended_transfer_dtmf_waiters: Dict[str, asyncio.Future] = {}
+        self._attended_transfer_dtmf_digits: Dict[str, str] = {}
+        self._attended_transfer_agent_channel_to_call_id: Dict[str, str] = {}
         # Per-call transcript timing cache for latency histograms
         self._last_transcript_ts: Dict[str, float] = {}
         
@@ -1818,6 +1824,7 @@ class Engine:
         handlers = {
             'transfer': self._handle_transfer_answered,
             'warm-transfer': self._handle_transfer_answered,  # Warm transfer uses same handler
+            'attended-transfer': self._handle_attended_transfer_answered,
             'transfer-failed': self._handle_transfer_failed,
             'voicemail-complete': self._handle_voicemail_complete,
             'queue-answered': self._handle_queue_answered,
@@ -1937,6 +1944,453 @@ class Engine:
             logger.error(f"🔀 TRANSFER - Failed to bridge: {e}",
                         channel_id=channel_id)
             await self.ari_client.hangup_channel(channel_id)
+
+    def register_attended_transfer_agent_channel(self, call_id: str, agent_channel_id: str) -> None:
+        """Register an attended transfer agent channel to resolve DTMF events back to a call."""
+        if agent_channel_id:
+            self._attended_transfer_agent_channel_to_call_id[agent_channel_id] = call_id
+
+    def start_attended_transfer_timeout_guard(self, call_id: str, agent_channel_id: str, *, timeout_sec: float) -> None:
+        """Ensure MOH/action state is cleaned up if the agent leg never answers."""
+        try:
+            asyncio.create_task(self._attended_transfer_timeout_guard(call_id, agent_channel_id, timeout_sec=float(timeout_sec)))
+        except Exception:
+            logger.debug("Failed to schedule attended transfer timeout guard", call_id=call_id, exc_info=True)
+
+    async def _attended_transfer_timeout_guard(self, call_id: str, agent_channel_id: str, *, timeout_sec: float) -> None:
+        try:
+            await asyncio.sleep(max(0.0, float(timeout_sec)) + 2.0)
+            session = await self.session_store.get_by_call_id(call_id)
+            if not session:
+                return
+            action = getattr(session, "current_action", None) or {}
+            if action.get("type") != "attended_transfer":
+                return
+            if str(action.get("agent_channel_id") or "") != str(agent_channel_id):
+                return
+            if bool(action.get("answered", False)):
+                return
+
+            logger.info("Attended transfer timed out before answer; resuming caller", call_id=call_id, agent_channel_id=agent_channel_id)
+            try:
+                await self.ari_client.hangup_channel(agent_channel_id)
+            except Exception:
+                pass
+            try:
+                await self.ari_client.send_command(method="DELETE", resource=f"channels/{session.caller_channel_id}/moh")
+            except Exception:
+                pass
+            try:
+                session.current_action = None
+                session.audio_capture_enabled = True
+            except Exception:
+                pass
+            await self._save_session(session)
+        except Exception:
+            logger.debug("Attended transfer timeout guard failed", call_id=call_id, exc_info=True)
+        finally:
+            self._unregister_attended_transfer_agent_channel(agent_channel_id)
+
+    def _unregister_attended_transfer_agent_channel(self, agent_channel_id: str) -> None:
+        if agent_channel_id:
+            self._attended_transfer_agent_channel_to_call_id.pop(agent_channel_id, None)
+            self._attended_transfer_dtmf_digits.pop(agent_channel_id, None)
+            waiter = self._attended_transfer_dtmf_waiters.pop(agent_channel_id, None)
+            if waiter and not waiter.done():
+                try:
+                    waiter.cancel()
+                except Exception:
+                    pass
+
+    async def _wait_for_ari_playback(self, playback_id: str, *, timeout_sec: float) -> bool:
+        try:
+            loop = asyncio.get_running_loop()
+            fut = loop.create_future()
+            self._ari_playback_waiters[playback_id] = fut
+            await asyncio.wait_for(fut, timeout=max(0.1, float(timeout_sec)))
+            return True
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            self._ari_playback_waiters.pop(playback_id, None)
+
+    async def _wait_for_attended_transfer_dtmf(
+        self,
+        agent_channel_id: str,
+        *,
+        timeout_sec: float,
+    ) -> Optional[str]:
+        existing = self._attended_transfer_dtmf_digits.get(agent_channel_id)
+        if existing:
+            return existing
+        try:
+            loop = asyncio.get_running_loop()
+            fut = loop.create_future()
+            self._attended_transfer_dtmf_waiters[agent_channel_id] = fut
+            digit = await asyncio.wait_for(fut, timeout=max(0.1, float(timeout_sec)))
+            if isinstance(digit, str) and digit:
+                return digit
+            return None
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            self._attended_transfer_dtmf_waiters.pop(agent_channel_id, None)
+
+    async def _local_ai_server_tts(self, *, call_id: str, text: str, timeout_sec: float) -> Optional[bytes]:
+        """Synthesize μ-law 8k audio via local-ai-server (hard requirement for attended transfer)."""
+        try:
+            import base64
+            import json
+            import websockets
+
+            providers = getattr(self.config, "providers", {}) or {}
+            local_cfg = providers.get("local") if isinstance(providers, dict) else None
+            if not isinstance(local_cfg, dict) or not bool(local_cfg.get("enabled", True)):
+                return None
+            ws_url = str(local_cfg.get("base_url") or local_cfg.get("ws_url") or "").strip()
+            if not ws_url:
+                return None
+            auth_token = str(local_cfg.get("auth_token") or "").strip() or None
+
+            async with websockets.connect(ws_url, open_timeout=float(timeout_sec), ping_interval=None) as ws:
+                if auth_token:
+                    await ws.send(json.dumps({"type": "auth", "auth_token": auth_token}))
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "tts_request",
+                            "text": text,
+                            "call_id": call_id,
+                            "response_format": "json",
+                        }
+                    )
+                )
+                deadline = time.time() + max(0.1, float(timeout_sec))
+                while time.time() < deadline:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=max(0.1, float(deadline - time.time())))
+                    if isinstance(msg, bytes):
+                        continue
+                    try:
+                        data = json.loads(msg)
+                    except Exception:
+                        continue
+                    if data.get("type") == "tts_response" and data.get("audio_data"):
+                        return base64.b64decode(data["audio_data"])
+                return None
+        except Exception:
+            logger.debug("Local AI Server TTS failed", call_id=call_id, exc_info=True)
+            return None
+
+    async def _play_ulaw_bytes_on_channel_and_wait(
+        self,
+        *,
+        channel_id: str,
+        audio_bytes: bytes,
+        playback_id_prefix: str,
+        timeout_sec: float,
+    ) -> Optional[str]:
+        try:
+            import os
+            import uuid
+
+            if not audio_bytes:
+                return None
+            playback_id = f"{playback_id_prefix}-{uuid.uuid4().hex[:12]}"
+            media_dir = getattr(self.playback_manager, "media_dir", "/mnt/asterisk_media/ai-generated")
+            try:
+                os.makedirs(media_dir, exist_ok=True)
+            except Exception:
+                pass
+            audio_file = os.path.join(media_dir, f"{playback_id}.ulaw")
+            with open(audio_file, "wb") as f:
+                f.write(audio_bytes)
+            try:
+                os.chmod(audio_file, 0o664)
+            except Exception:
+                pass
+
+            # Ensure ARIClient cleans up this file on PlaybackFinished.
+            try:
+                if hasattr(self.ari_client, "active_playbacks"):
+                    self.ari_client.active_playbacks[playback_id] = audio_file
+            except Exception:
+                pass
+
+            media_uri = f"sound:ai-generated/{playback_id}"
+            loop = asyncio.get_running_loop()
+            fut = loop.create_future()
+            self._ari_playback_waiters[playback_id] = fut
+            ok = await self.ari_client.play_media_on_channel_with_id(channel_id, media_uri, playback_id)
+            if not ok:
+                self._ari_playback_waiters.pop(playback_id, None)
+                return None
+            try:
+                await asyncio.wait_for(fut, timeout=max(0.1, float(timeout_sec)))
+            except asyncio.TimeoutError:
+                pass
+            finally:
+                self._ari_playback_waiters.pop(playback_id, None)
+            return playback_id
+        except Exception:
+            logger.debug("Failed to play ulaw bytes on channel", channel_id=channel_id, exc_info=True)
+            return None
+
+    async def _handle_attended_transfer_answered(self, channel_id: str, args: list):
+        """
+        Handle attended (warm) transfer agent leg entering Stasis on answer.
+        Args: ['attended-transfer', caller_id, destination_key]
+        """
+        caller_id = args[1] if len(args) > 1 else None
+        destination_key = args[2] if len(args) > 2 else None
+        if not caller_id or not destination_key:
+            logger.error("🔀 ATTENDED TRANSFER - Insufficient args", channel_id=channel_id, args=args)
+            await self.ari_client.hangup_channel(channel_id)
+            return
+
+        session = await self.session_store.get_by_call_id(caller_id)
+        if not session:
+            logger.error("🔀 ATTENDED TRANSFER - Session not found", caller_id=caller_id, channel_id=channel_id)
+            await self.ari_client.hangup_channel(channel_id)
+            return
+
+        tools_cfg = getattr(self.config, "tools", {}) or {}
+        attended_cfg = tools_cfg.get("attended_transfer") if isinstance(tools_cfg, dict) else None
+        if not isinstance(attended_cfg, dict) or not bool(attended_cfg.get("enabled", False)):
+            logger.info("Attended transfer disabled - hanging up agent channel", call_id=caller_id, channel_id=channel_id)
+            await self.ari_client.hangup_channel(channel_id)
+            return
+
+        # Best-effort: bind agent channel to call for DTMF routing.
+        self.register_attended_transfer_agent_channel(caller_id, channel_id)
+
+        # Ensure session state is consistent.
+        try:
+            if not session.current_action or session.current_action.get("type") != "attended_transfer":
+                logger.info(
+                    "Attended transfer answered but no matching action; hanging up agent channel",
+                    call_id=caller_id,
+                    channel_id=channel_id,
+                )
+                await self.ari_client.hangup_channel(channel_id)
+                self._unregister_attended_transfer_agent_channel(channel_id)
+                return
+            session.current_action["answered"] = True
+            session.current_action["agent_channel_id"] = channel_id
+            await self._save_session(session)
+        except Exception:
+            logger.debug("Failed to mark attended transfer answered", call_id=caller_id, exc_info=True)
+
+        transfer_cfg = tools_cfg.get("transfer") if isinstance(tools_cfg, dict) else None
+        destinations = (transfer_cfg.get("destinations") or {}) if isinstance(transfer_cfg, dict) else {}
+        dest_cfg = destinations.get(destination_key) if isinstance(destinations, dict) else None
+        dest_desc = None
+        if isinstance(dest_cfg, dict):
+            dest_desc = str(dest_cfg.get("description") or destination_key)
+        else:
+            dest_desc = str(destination_key)
+
+        caller_display = session.caller_name or session.caller_number or "the caller"
+        context_name = getattr(session, "context_name", None) or "support"
+        template_vars = {
+            "caller_name": session.caller_name or "",
+            "caller_number": session.caller_number or "",
+            "caller_display": caller_display,
+            "context_name": context_name,
+            "destination_description": dest_desc,
+        }
+
+        announcement_template = str(
+            attended_cfg.get(
+                "announcement_template",
+                "Hi, this is Ava. I'm transferring {caller_display} regarding {context_name}.",
+            )
+            or ""
+        )
+        prompt_template = str(
+            attended_cfg.get(
+                "agent_accept_prompt_template",
+                "Press 1 to accept this transfer, or 2 to decline.",
+            )
+            or ""
+        )
+        caller_connected_prompt = str(attended_cfg.get("caller_connected_prompt", "") or "")
+        accept_digit = str(attended_cfg.get("accept_digit", "1") or "1")
+        decline_digit = str(attended_cfg.get("decline_digit", "2") or "2")
+        accept_timeout = float(attended_cfg.get("accept_timeout_seconds", 15) or 15)
+        tts_timeout = float(attended_cfg.get("tts_timeout_seconds", 8) or 8)
+
+        try:
+            announcement_text = announcement_template.format(**template_vars)
+        except Exception:
+            announcement_text = "Hi, this is Ava. I'm transferring the caller."
+        try:
+            prompt_text = prompt_template.format(**template_vars)
+        except Exception:
+            prompt_text = "Press 1 to accept, or 2 to decline."
+
+        logger.info(
+            "🔀 ATTENDED TRANSFER - Agent answered, starting announcement",
+            call_id=caller_id,
+            channel_id=channel_id,
+            destination_key=destination_key,
+        )
+
+        # Step A: Play one-way announcement to agent (hard requirement: Local AI Server TTS).
+        announcement_audio = await self._local_ai_server_tts(call_id=caller_id, text=announcement_text, timeout_sec=tts_timeout)
+        if not announcement_audio:
+            logger.warning("Attended transfer requires Local AI Server TTS; aborting", call_id=caller_id)
+            await self._attended_transfer_abort_and_resume(session, channel_id, reason="tts-unavailable")
+            return
+
+        await self._play_ulaw_bytes_on_channel_and_wait(
+            channel_id=channel_id,
+            audio_bytes=announcement_audio,
+            playback_id_prefix="attx-ann",
+            timeout_sec=max(3.0, tts_timeout * 4),
+        )
+
+        # Step B: Collect DTMF acceptance/decline (early digits during announcement are honored).
+        digit = self._attended_transfer_dtmf_digits.get(channel_id)
+        if digit not in {accept_digit, decline_digit}:
+            prompt_audio = await self._local_ai_server_tts(call_id=caller_id, text=prompt_text, timeout_sec=tts_timeout)
+            if not prompt_audio:
+                logger.warning("Attended transfer prompt TTS failed; aborting", call_id=caller_id)
+                await self._attended_transfer_abort_and_resume(session, channel_id, reason="tts-unavailable")
+                return
+            await self._play_ulaw_bytes_on_channel_and_wait(
+                channel_id=channel_id,
+                audio_bytes=prompt_audio,
+                playback_id_prefix="attx-prompt",
+                timeout_sec=max(3.0, tts_timeout * 4),
+            )
+            digit = await self._wait_for_attended_transfer_dtmf(channel_id, timeout_sec=accept_timeout)
+
+        accepted = digit == accept_digit
+        declined = digit == decline_digit or digit is None
+
+        # Persist decision (best effort).
+        try:
+            session = await self.session_store.get_by_call_id(caller_id)
+            if session and session.current_action and session.current_action.get("type") == "attended_transfer":
+                session.current_action["decision_digit"] = digit
+                session.current_action["decision"] = "accepted" if accepted else "declined"
+                await self._save_session(session)
+        except Exception:
+            logger.debug("Failed to persist attended transfer decision", call_id=caller_id, exc_info=True)
+
+        if not accepted or declined:
+            logger.info("🔀 ATTENDED TRANSFER - Declined/timeout, resuming caller", call_id=caller_id, digit=digit)
+            await self._attended_transfer_abort_and_resume(session, channel_id, reason="declined")
+            return
+
+        logger.info("🔀 ATTENDED TRANSFER - Accepted, bridging caller", call_id=caller_id, digit=digit)
+        await self._attended_transfer_finalize_bridge(
+            session,
+            agent_channel_id=channel_id,
+            destination_description=dest_desc,
+            caller_connected_prompt=caller_connected_prompt,
+            tts_timeout=tts_timeout,
+        )
+
+    async def _attended_transfer_abort_and_resume(self, session: "CallSession", agent_channel_id: str, *, reason: str) -> None:
+        call_id = session.call_id
+        try:
+            await self.ari_client.hangup_channel(agent_channel_id)
+        except Exception:
+            pass
+        try:
+            await self.ari_client.send_command(method="DELETE", resource=f"channels/{session.caller_channel_id}/moh")
+        except Exception:
+            pass
+        try:
+            session = await self.session_store.get_by_call_id(call_id) or session
+            if session.current_action and session.current_action.get("type") == "attended_transfer":
+                session.current_action = None
+            # Re-enable capture so the AI can resume.
+            try:
+                session.audio_capture_enabled = True
+            except Exception:
+                pass
+            await self._save_session(session)
+        except Exception:
+            logger.debug("Failed to resume caller after attended transfer abort", call_id=call_id, reason=reason, exc_info=True)
+        finally:
+            self._unregister_attended_transfer_agent_channel(agent_channel_id)
+
+    async def _attended_transfer_finalize_bridge(
+        self,
+        session: "CallSession",
+        *,
+        agent_channel_id: str,
+        destination_description: str,
+        caller_connected_prompt: str,
+        tts_timeout: float,
+    ) -> None:
+        call_id = session.call_id
+
+        # Stop MOH and optionally play "connecting you now" prompt to caller.
+        try:
+            await self.ari_client.send_command(method="DELETE", resource=f"channels/{session.caller_channel_id}/moh")
+        except Exception:
+            pass
+
+        if caller_connected_prompt.strip():
+            prompt_audio = await self._local_ai_server_tts(
+                call_id=call_id,
+                text=caller_connected_prompt.strip(),
+                timeout_sec=float(tts_timeout),
+            )
+            if prompt_audio:
+                await self._play_ulaw_bytes_on_channel_and_wait(
+                    channel_id=session.caller_channel_id,
+                    audio_bytes=prompt_audio,
+                    playback_id_prefix="attx-caller",
+                    timeout_sec=max(3.0, float(tts_timeout) * 4),
+                )
+
+        # Remove AI media from bridge and stop provider session (best effort).
+        try:
+            if session.external_media_id:
+                await self.ari_client.remove_channel_from_bridge(session.bridge_id, session.external_media_id)
+            if session.audiosocket_channel_id:
+                await self.ari_client.remove_channel_from_bridge(session.bridge_id, session.audiosocket_channel_id)
+        except Exception:
+            logger.debug("Failed to remove AI media channels during attended transfer", call_id=call_id, exc_info=True)
+
+        try:
+            start_task = self._provider_start_tasks.pop(call_id, None)
+            if start_task:
+                start_task.cancel()
+        except Exception:
+            pass
+        provider = self._call_providers.pop(call_id, None)
+        if provider and hasattr(provider, "stop_session"):
+            try:
+                await provider.stop_session()
+            except Exception:
+                logger.debug("Failed to stop provider session during attended transfer", call_id=call_id, exc_info=True)
+
+        # Bridge agent directly to caller bridge.
+        try:
+            await self.ari_client.add_channel_to_bridge(session.bridge_id, agent_channel_id)
+        except Exception:
+            logger.error("Failed to bridge agent channel during attended transfer", call_id=call_id, agent_channel_id=agent_channel_id, exc_info=True)
+            await self.ari_client.hangup_channel(agent_channel_id)
+            await self._attended_transfer_abort_and_resume(session, agent_channel_id, reason="bridge-failed")
+            return
+
+        # Persist transfer outcome for call history.
+        try:
+            session = await self.session_store.get_by_call_id(call_id) or session
+            session.transfer_destination = destination_description
+            if session.current_action and session.current_action.get("type") == "attended_transfer":
+                session.current_action["answered"] = True
+                session.current_action["agent_channel_id"] = agent_channel_id
+                session.current_action["decision"] = "accepted"
+            await self._save_session(session)
+        except Exception:
+            logger.debug("Failed to save attended transfer completion", call_id=call_id, exc_info=True)
+
     
     async def _handle_transfer_failed(self, channel_id: str, args: list):
         """
@@ -2104,7 +2558,10 @@ class Engine:
             logger.error("Error handling ChannelDestroyed", error=str(exc), exc_info=True)
 
     async def _handle_dtmf_received(self, event: dict):
-        """Handle ChannelDtmfReceived events (informational logging for now)."""
+        """Handle ChannelDtmfReceived events.
+
+        Used by attended_transfer to collect agent acceptance/decline digits.
+        """
         try:
             channel = event.get("channel", {}) or {}
             digit = event.get("digit")
@@ -2114,6 +2571,33 @@ class Engine:
                 channel_id=channel_id,
                 digit=digit,
             )
+
+            if not channel_id or not digit:
+                return
+
+            call_id = self._attended_transfer_agent_channel_to_call_id.get(channel_id)
+            if not call_id:
+                return
+
+            # Record first decision digit only (early DTMF during announcement is honored).
+            if channel_id not in self._attended_transfer_dtmf_digits:
+                self._attended_transfer_dtmf_digits[channel_id] = str(digit)
+
+                # Best-effort persist to session state for troubleshooting.
+                try:
+                    session = await self.session_store.get_by_call_id(call_id)
+                    if session and session.current_action and session.current_action.get("type") == "attended_transfer":
+                        session.current_action["decision_digit"] = str(digit)
+                        await self._save_session(session)
+                except Exception:
+                    logger.debug("Failed to persist attended transfer DTMF digit", call_id=call_id, exc_info=True)
+
+            waiter = self._attended_transfer_dtmf_waiters.get(channel_id)
+            if waiter and not waiter.done():
+                try:
+                    waiter.set_result(str(digit))
+                except Exception:
+                    pass
         except Exception as exc:
             logger.error("Error handling ChannelDtmfReceived", error=str(exc), exc_info=True)
 
@@ -8556,7 +9040,17 @@ class Engine:
             if not playback_id:
                 logger.debug("PlaybackFinished without playback id", playback_event=event)
                 return
-            await self.playback_manager.on_playback_finished(playback_id)
+            waiter = self._ari_playback_waiters.get(playback_id)
+            if waiter and not waiter.done():
+                try:
+                    waiter.set_result(True)
+                except Exception:
+                    pass
+
+            # PlaybackManager tracks/gates only engine-managed TTS playbacks.
+            # Attended transfer uses ad-hoc deterministic IDs; avoid warning spam for unknown IDs.
+            if playback_id not in self._ari_playback_waiters:
+                await self.playback_manager.on_playback_finished(playback_id)
         except Exception as exc:
             logger.error("Error in PlaybackFinished handler", error=str(exc), exc_info=True)
 

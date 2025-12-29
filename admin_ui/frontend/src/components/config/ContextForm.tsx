@@ -16,6 +16,7 @@ const ContextForm = ({ config, providers, availableTools, onChange, isNew }: Con
 
     const fallbackTools = [
         'transfer',
+        'attended_transfer',
         'cancel_transfer',
         'hangup_call',
         'leave_voicemail',

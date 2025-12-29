@@ -12,7 +12,7 @@
 
 The most powerful, flexible open-source AI voice agent for Asterisk/FreePBX. Featuring a **modular pipeline architecture** that lets you mix and match STT, LLM, and TTS providers, plus **5 production-ready golden baselines** validated for enterprise deployment.
 
-[Quick Start](#-quick-start) • [Features](#-features) • [Demo](#-demo) • [Documentation](#-documentation) • [Community](#-community)
+[Quick Start](#-quick-start) • [Features](#-features) • [Demo](#-demo) • [Docs](docs/README.md) • [Community](#-community)
 
 </div>
 
@@ -62,7 +62,7 @@ sudo ./preflight.sh --apply-fixes
 
 ```bash
 # Start the Admin UI container
-docker compose up -d admin-ui
+docker compose up -d --build admin-ui
 ```
 
 ### 3. Access the Dashboard
@@ -152,6 +152,32 @@ docker compose logs -f ai-engine
 - **Custom ARI port**: `ASTERISK_ARI_PORT` (no longer hardcoded)
 - **SSL verification toggle**: `ASTERISK_ARI_SSL_VERIFY=false` for self-signed or hostname mismatch environments
 
+### 📊 Call History & Analytics
+- **Full Call Logging**: Every call saved with conversation history, timing, and outcome
+- **Per-Call Debugging**: Review transcripts, tool executions, and errors from Admin UI
+- **Search & Filter**: Find calls by caller, provider, context, or date range
+- **Export**: Download call data as CSV or JSON
+
+### 🎤 Barge-In Improvements
+- **Immediate Interruption**: Agent audio stops instantly when caller speaks
+- **Provider-Owned Turn-Taking**: Full agents (Google, Deepgram, OpenAI, ElevenLabs) handle VAD natively
+- **Platform Flush**: Local playback clears immediately on interruption signal
+- **Transport Parity**: Works with both ExternalMedia RTP and AudioSocket
+
+### 🧠 Additional Model Support
+- **Faster Whisper**: High-accuracy STT backend with GPU acceleration
+- **MeloTTS**: New neural TTS option for local pipelines
+- **Model Hot-Swap**: Switch models via Dashboard without container restart
+
+### 🔌 MCP Tool Integration
+- **External Tools Framework**: Connect AI agents to external services via Model Context Protocol
+- **Admin UI Config**: Configure MCP servers from the web interface
+
+### 🔒 RTP Security Hardening
+- **Remote Endpoint Pinning**: Lock RTP streams to prevent audio hijacking
+- **Allowlist Support**: Restrict allowed remote hosts for ExternalMedia
+- **Cross-Talk Prevention**: SSRC-based routing ensures call isolation
+
 ### ✅ Config Management Determinism (Admin UI)
 - **Clear save vs apply**: apply plans and safer `.env` parsing/writing
 - **Env-driven runtime correctness**: compose avoids `${VAR:-default}` fallbacks that prevent UI env changes from taking effect
@@ -161,6 +187,10 @@ docker compose logs -f ai-engine
 
 ### 📞 Call Quality (Baseline)
 - **OpenAI Realtime audio tweak**: minor baseline adjustment for improved telephony alignment
+
+### 🚀 Pipeline-First Default
+- **`local_hybrid` Default**: Privacy-focused pipeline is now the out-of-box default
+- **Pipeline-Aware Readiness**: Health probes correctly reflect pipeline component status
 
 </details>
 
@@ -381,7 +411,7 @@ agent demo                # Demo features
 
 ---
 
-## ⚙️ Configuration
+## ⚙ Configuration
 
 ### Two-File Configuration
 - **[`config/ai-agent.yaml`](config/ai-agent.yaml)** - Golden baseline configs.
@@ -401,7 +431,7 @@ Per-call debugging is handled via **Admin UI → Call History**.
 
 ---
 
-## 🏗️ Project Architecture
+## 🏗 Project Architecture
 
 Two-container architecture for performance and scalability:
 
@@ -457,7 +487,7 @@ The `preflight.sh` script handles initial setup:
 
 ---
 
-## 🗺️ Documentation
+## 🗺 Documentation
 
 ### Getting Started
 - **[Docs Index](docs/README.md)**

@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Additional provider integrations
 - Enhanced monitoring features
 
-## [4.6.0] - TBD
+## [4.6.0] - 2025-12-29
 
 ### Added
 
@@ -21,15 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ASTERISK_ARI_SCHEME` (`http|https`) with `ws://` vs `wss://` alignment
   - `ASTERISK_ARI_SSL_VERIFY` toggle for self-signed or hostname mismatch environments
 - Pipeline robustness: invalid pipelines are detected and fall back deterministically instead of silently using placeholder adapters
+- Admin UI logging improvements: structured event support and improved Logs viewing UX
 
 ### Changed
 
 - Admin UI config management: safer `.env` parsing/writes and clearer apply guidance (“save vs apply” determinism)
+- Admin UI health checks: Tier 3/best-effort probe fallbacks with explicit warnings when configured overrides are unreachable
+- Admin UI container actions: safer `admin_ui` restart behavior from within the UI
 - Compose env semantics: `.env` is authoritative; avoid `${VAR:-default}` fallbacks in compose that prevent UI env changes from taking effect
 
 ### Fixed
 
 - Preflight: Debian-family best-effort detection improvements and Debian 12 Docker repo codename fallback (`bookworm`) when `VERSION_CODENAME` is missing
+- Admin UI Docker management hardening: restrict compose operations to AAVA services and reduce information exposure in error messages
 
 ### Docs
 

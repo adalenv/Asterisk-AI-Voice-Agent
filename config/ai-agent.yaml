@@ -989,7 +989,7 @@ providers:
       - llm
       - tts
     continuous_input: true
-    egress_pacer_enabled: true
+    egress_pacer_enabled: false
     egress_pacer_warmup_ms: 320
     enabled: true
     greeting: Hello, how can I help you today?
@@ -1001,10 +1001,10 @@ providers:
     max_response_output_tokens: 4096
     model: gpt-4o-realtime-preview-2024-12-17
     organization: ''
-    output_encoding: linear16
-    output_sample_rate_hz: 24000
+    output_encoding: mulaw
+    output_sample_rate_hz: 8000
     provider_input_encoding: linear16
-    provider_input_sample_rate_hz: 24000
+    provider_input_sample_rate_hz: 16000
     response_modalities:
       - audio
       - text

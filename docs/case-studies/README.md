@@ -49,7 +49,7 @@ Each case study includes:
 
 ## Related Documentation
 
-- **[Milestones](../milestones/)** - Project milestone tracking
+- **[Milestones](../contributing/milestones/)** - Project milestone tracking
 - **[Provider Setup Guides](../)** - Initial configuration guides
 - **[Monitoring Guide](../MONITORING_GUIDE.md)** - Production monitoring
 - **[Troubleshooting Guide](../TROUBLESHOOTING_GUIDE.md)** - Common issues and fixes

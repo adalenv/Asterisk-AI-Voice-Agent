@@ -25,7 +25,7 @@ def _build_app_config() -> AppConfig:
     pipelines = {
         "deepgram_only": {
             "stt": "deepgram_stt",
-            "llm": "local_llm",
+            "llm": "ollama_llm",
             "tts": "deepgram_tts",
             "options": {
                 "stt": {"language": "en-US"},

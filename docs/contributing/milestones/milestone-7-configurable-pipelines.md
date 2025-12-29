@@ -75,9 +75,9 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
 #### Phase 4A – Deepgram Cloud Components (Completed)
 
 - Files touched:
-  - [`src/pipelines/deepgram.py`](src/pipelines/deepgram.py): Implements `DeepgramSTTAdapter` and `DeepgramTTSAdapter` with WebSocket STT streaming, REST TTS synthesis, option merging, μ-law conversions, and latency instrumentation (`# Milestone7` annotations included throughout).
-  - [`src/pipelines/orchestrator.py`](src/pipelines/orchestrator.py): Hydrates `DeepgramProviderConfig`, auto-registers Deepgram factories, and injects provider/pipeline options into adapter construction.
-  - [`tests/test_pipeline_deepgram_adapters.py`](tests/test_pipeline_deepgram_adapters.py): Adds adapter and orchestrator coverage using mocked Deepgram endpoints.
+  - [`src/pipelines/deepgram.py`](../../../src/pipelines/deepgram.py): Implements `DeepgramSTTAdapter` and `DeepgramTTSAdapter` with WebSocket STT streaming, REST TTS synthesis, option merging, μ-law conversions, and latency instrumentation (`# Milestone7` annotations included throughout).
+  - [`src/pipelines/orchestrator.py`](../../../src/pipelines/orchestrator.py): Hydrates `DeepgramProviderConfig`, auto-registers Deepgram factories, and injects provider/pipeline options into adapter construction.
+  - [`tests/test_pipeline_deepgram_adapters.py`](../../../tests/test_pipeline_deepgram_adapters.py): Adds adapter and orchestrator coverage using mocked Deepgram endpoints.
 - Tests / validation:
   - `pytest tests/test_pipeline_deepgram_adapters.py` (requires project test dependencies; fails early if `pytest` is not installed).
 - Follow-ups / TODO:
@@ -88,12 +88,12 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
 #### Phase 4B – OpenAI Cloud Components (Completed)
 
 - Files touched:
-  - [`src/config.py`](src/config.py): Added `OpenAIProviderConfig` defaults to support pipeline option hydration.
-  - [`src/pipelines/openai.py`](src/pipelines/openai.py): Implements `OpenAISTTAdapter`, `OpenAILLMAdapter`, and `OpenAITTSAdapter` with Realtime WS, Chat Completions, and audio.speech integrations (`# Milestone7` markers included).
-  - [`src/pipelines/orchestrator.py`](src/pipelines/orchestrator.py): Hydrates OpenAI provider config, registers component factories, and falls back to placeholders when credentials are absent.
-  - [`src/pipelines/__init__.py`](src/pipelines/__init__.py): Exposes OpenAI adapters for reuse.
-  - [`config/ai-agent.yaml`](config/ai-agent.yaml): Documents OpenAI provider block with pipeline defaults.
-  - [`tests/test_pipeline_openai_adapters.py`](tests/test_pipeline_openai_adapters.py): Validates adapter option propagation, mocked WS/HTTP flows, and orchestrator registration.
+  - [`src/config.py`](../../../src/config.py): Added `OpenAIProviderConfig` defaults to support pipeline option hydration.
+  - [`src/pipelines/openai.py`](../../../src/pipelines/openai.py): Implements `OpenAISTTAdapter`, `OpenAILLMAdapter`, and `OpenAITTSAdapter` with Realtime WS, Chat Completions, and audio.speech integrations (`# Milestone7` markers included).
+  - [`src/pipelines/orchestrator.py`](../../../src/pipelines/orchestrator.py): Hydrates OpenAI provider config, registers component factories, and falls back to placeholders when credentials are absent.
+  - [`src/pipelines/__init__.py`](../../../src/pipelines/__init__.py): Exposes OpenAI adapters for reuse.
+  - [`config/ai-agent.yaml`](../../../config/ai-agent.yaml): Documents OpenAI provider block with pipeline defaults.
+  - [`tests/test_pipeline_openai_adapters.py`](../../../tests/test_pipeline_openai_adapters.py): Validates adapter option propagation, mocked WS/HTTP flows, and orchestrator registration.
 - Tests / validation:
   - `pytest tests/test_pipeline_openai_adapters.py` *(fails locally if `pytest` is not installed; install dev dependencies before rerunning).*
 - Follow-ups / TODO:
@@ -104,10 +104,10 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
 #### Phase 4C – Google Cloud Components (Completed)
 
 - Files touched:
-  - [`src/pipelines/google.py`](src/pipelines/google.py): Adds `GoogleSTTAdapter`, `GoogleLLMAdapter`, and `GoogleTTSAdapter` with REST-based Speech-to-Text / Text-to-Speech and Generative Language integrations, credential discovery (`GOOGLE_API_KEY` vs `GOOGLE_APPLICATION_CREDENTIALS`), option merging, and request/latency logging (`# Milestone7` markers included).
-  - [`src/pipelines/orchestrator.py`](src/pipelines/orchestrator.py): Hydrates `GoogleProviderConfig`, registers Google factories when credentials resolve, and gracefully retains placeholder adapters otherwise.
-  - [`src/pipelines/__init__.py`](src/pipelines/__init__.py): Exposes Google adapters for reuse.
-  - [`tests/test_pipeline_google_adapters.py`](tests/test_pipeline_google_adapters.py): Covers STT/LLM/TTS option propagation, mocked HTTP flows, and orchestrator fallback when credentials are missing.
+  - [`src/pipelines/google.py`](../../../src/pipelines/google.py): Adds `GoogleSTTAdapter`, `GoogleLLMAdapter`, and `GoogleTTSAdapter` with REST-based Speech-to-Text / Text-to-Speech and Generative Language integrations, credential discovery (`GOOGLE_API_KEY` vs `GOOGLE_APPLICATION_CREDENTIALS`), option merging, and request/latency logging (`# Milestone7` markers included).
+  - [`src/pipelines/orchestrator.py`](../../../src/pipelines/orchestrator.py): Hydrates `GoogleProviderConfig`, registers Google factories when credentials resolve, and gracefully retains placeholder adapters otherwise.
+  - [`src/pipelines/__init__.py`](../../../src/pipelines/__init__.py): Exposes Google adapters for reuse.
+  - [`tests/test_pipeline_google_adapters.py`](../../../tests/test_pipeline_google_adapters.py): Covers STT/LLM/TTS option propagation, mocked HTTP flows, and orchestrator fallback when credentials are missing.
 - Tests / validation:
   - `python3 -m pytest tests/test_pipeline_google_adapters.py`
 - Follow-ups / TODO:
@@ -120,7 +120,7 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
 - Files touched:
   - [`milestone-7-configurable-pipelines.md`](milestone-7-configurable-pipelines.md) — adds completion summary, validation checklist, and cross-links to pipeline assets.
   - [`architecture-deep-dive.md`](../architecture-deep-dive.md) — captures pipeline orchestrator flow, config schema, and adapter mapping tables.
-  - [`examples/pipelines/local_only.yaml`](examples/pipelines/local_only.yaml), [`examples/pipelines/hybrid_deepgram_openai.yaml`](examples/pipelines/hybrid_deepgram_openai.yaml), [`examples/pipelines/cloud_only_google.yaml`](examples/pipelines/cloud_only_google.yaml) — sample configurations with credential prerequisites and audio format notes.
+  - [`examples/pipelines/local_only.yaml`](../../../examples/pipelines/local_only.yaml), [`examples/pipelines/hybrid_deepgram_openai.yaml`](../../../examples/pipelines/hybrid_deepgram_openai.yaml), [`examples/pipelines/cloud_only_google.yaml`](../../../examples/pipelines/cloud_only_google.yaml) — sample configurations with credential prerequisites and audio format notes.
 - Summary:
   - Documented Deepgram, OpenAI, Google, and local adapters with references so operators can map YAML entries to the correct factories.
   - Published sample pipelines covering full-local, hybrid, and cloud-only mixes to accelerate provisioning and smoke tests.
@@ -142,11 +142,11 @@ Allow operators to mix and match STT, LLM, and TTS components (local or cloud) u
 
 ### 7.5 Local Provider Selective Components (Completed 2025-09-25)
 
-- Local pipeline adapters `LocalSTTAdapter`, `LocalLLMAdapter`, and `LocalTTSAdapter` implemented in [`src/pipelines/local.py`](src/pipelines/local.py) with dedicated connection lifecycles and WebSocket protocol handling (`mode: stt|llm|tts` messages, JSON payload parsing, μ-law streaming support).
+- Local pipeline adapters `LocalSTTAdapter`, `LocalLLMAdapter`, and `LocalTTSAdapter` implemented in [`src/pipelines/local.py`](../../../src/pipelines/local.py) with dedicated connection lifecycles and WebSocket protocol handling (`mode: stt|llm|tts` messages, JSON payload parsing, μ-law streaming support).
 - `PipelineOrchestrator` now hydrates `LocalProviderConfig`, registers factories (`local_stt`, `local_llm`, `local_tts`), and prefers concrete adapters whenever the local provider is enabled; placeholders remain only when the provider is disabled or misconfigured.
 - Engine integration reuses provider metadata so calls that select local pipelines via `active_pipeline` or `AI_PROVIDER` channel variables invoke adapter-driven STT/LLM/TTS flows instead of the legacy full-provider session.
-- Provider defaults (`ws_url`, timeouts, chunk cadence) surfaced in [`config/ai-agent.yaml`](config/ai-agent.yaml); environment variables (`LOCAL_WS_*`) allow deployment-specific tuning without code changes.
-- Added unit test coverage in [`tests/test_pipeline_local_adapters.py`](tests/test_pipeline_local_adapters.py) verifying STT/LLM/TTS WebSocket interactions and orchestrator registration.
+- Provider defaults (`ws_url`, timeouts, chunk cadence) surfaced in [`config/ai-agent.yaml`](../../../config/ai-agent.yaml); environment variables (`LOCAL_WS_*`) allow deployment-specific tuning without code changes.
+- Added unit test coverage in [`tests/test_pipeline_local_adapters.py`](../../../tests/test_pipeline_local_adapters.py) verifying STT/LLM/TTS WebSocket interactions and orchestrator registration.
 - Documentation (`docs/contributing/architecture-deep-dive.md`, this milestone file) updated with adapter mapping tables, pipeline references, and validation notes.
 - Tests / validation:
   - `pytest tests/test_pipeline_local_adapters.py` *(requires `pytest` to be installed in the environment; current execution failed with `command not found`, so rerun after installing dev dependencies).*

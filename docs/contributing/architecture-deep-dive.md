@@ -37,7 +37,7 @@ Three validated configurations ship production-ready:
    - Response time: 3-7 seconds
    - Privacy-focused (audio stays local)
 
-For deployment guidance, see [docs/PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md).
+For deployment guidance, see [docs/PRODUCTION_DEPLOYMENT.md](../PRODUCTION_DEPLOYMENT.md).
 
 ## Architecture Overview
 
@@ -106,11 +106,11 @@ The engine loads the active pipeline at startup (or reload) and instantiates the
 
 | Layer | Responsibilities | Key Files / Types |
 | ----- | ---------------- | ----------------- |
-| Configuration (`YAML`) | Declare named pipelines and provider blocks (`providers.local`, `providers.deepgram`, `providers.google`, `providers.openai`, etc.). Each pipeline specifies `stt`, `llm`, `tts`, and an `options` map passed verbatim to adapters. | [`config/ai-agent.yaml`](config/ai-agent.yaml), [`docs/contributing/milestones/milestone-7-configurable-pipelines.md`](docs/contributing/milestones/milestone-7-configurable-pipelines.md) |
-| Pydantic Models | Validate YAML, normalize legacy configs, and expose typed access via `PipelineEntry`, `ProviderConfig`, `PipelineOptions`. | [`src/config.py`](src/config.py) |
-| Orchestrator | Resolve the active pipeline, look up component factories, and hydrate adapters with provider + pipeline options. Handles hot reload by rebuilding component bindings while leaving in-flight calls untouched. | [`src/pipelines/orchestrator.py`](src/pipelines/orchestrator.py) |
-| Component Adapters | Implement the STT / LLM / TTS interfaces for each provider. Adapters honor selective roles (e.g., `local_stt` can operate without LLM/TTS) and surface capability metadata to the orchestrator. | [`src/pipelines/local.py`](src/providers/local.py) (via adapters automatically registered), [`src/pipelines/deepgram.py`](src/pipelines/deepgram.py), [`src/pipelines/openai.py`](src/pipelines/openai.py), [`src/pipelines/google.py`](src/pipelines/google.py) |
-| Engine Integration | `PipelineOrchestrator` injects the instantiated adapters into the conversation coordinator for new calls. Hot reload swaps adapters for subsequent calls after config validation succeeds. | [`src/engine.py`](src/engine.py), [`src/core/conversation_coordinator.py`](src/core/conversation_coordinator.py) |
+| Configuration (`YAML`) | Declare named pipelines and provider blocks (`providers.local`, `providers.deepgram`, `providers.google`, `providers.openai`, etc.). Each pipeline specifies `stt`, `llm`, `tts`, and an `options` map passed verbatim to adapters. | [`config/ai-agent.yaml`](../../config/ai-agent.yaml), [`docs/contributing/milestones/milestone-7-configurable-pipelines.md`](milestones/milestone-7-configurable-pipelines.md) |
+| Pydantic Models | Validate YAML, normalize legacy configs, and expose typed access via `PipelineEntry`, `ProviderConfig`, `PipelineOptions`. | [`src/config.py`](../../src/config.py) |
+| Orchestrator | Resolve the active pipeline, look up component factories, and hydrate adapters with provider + pipeline options. Handles hot reload by rebuilding component bindings while leaving in-flight calls untouched. | [`src/pipelines/orchestrator.py`](../../src/pipelines/orchestrator.py) |
+| Component Adapters | Implement the STT / LLM / TTS interfaces for each provider. Adapters honor selective roles (e.g., `local_stt` can operate without LLM/TTS) and surface capability metadata to the orchestrator. | [`src/pipelines/local.py`](../../src/pipelines/local.py) (via adapters automatically registered), [`src/pipelines/deepgram.py`](../../src/pipelines/deepgram.py), [`src/pipelines/openai.py`](../../src/pipelines/openai.py), [`src/pipelines/google.py`](../../src/pipelines/google.py) |
+| Engine Integration | `PipelineOrchestrator` injects the instantiated adapters into the conversation coordinator for new calls. Hot reload swaps adapters for subsequent calls after config validation succeeds. | [`src/engine.py`](../../src/engine.py), [`src/core/conversation_coordinator.py`](../../src/core/conversation_coordinator.py) |
 
 ##### Configuration Schema
 
@@ -245,12 +245,12 @@ Ongoing milestones and their acceptance criteria live in `docs/ROADMAP.md`. Upda
 
 ## Contributing
 
-- See the repository-level [Contributing Guide](../CONTRIBUTING.md) for branching strategy and PR workflow.
+- See the repository-level [Contributing Guide](../../CONTRIBUTING.md) for branching strategy and PR workflow.
 - Typical flow:
   - Fork and branch from `develop`.
   - Open a PR against `staging` with a clear description and testing notes.
   - Keep changes small and documented; update `docs/` where behavior changes.
-- License: MIT. See [LICENSE](../LICENSE).
+- License: MIT. See [LICENSE](../../LICENSE).
 
 ## Architecture Diagrams
 

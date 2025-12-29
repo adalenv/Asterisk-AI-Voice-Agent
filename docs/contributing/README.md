@@ -48,9 +48,9 @@ Technical specs for each provider:
 
 ## 🧪 Code Examples
 
-- **[Tool Examples](examples/)** - Creating custom tools
-- **[Provider Examples](examples/)** - Implementing custom providers
-- **[Testing Examples](examples/)** - Integration test patterns
+- **[Tool Examples](../../examples/)** - Creating custom tools
+- **[Provider Examples](../../examples/)** - Implementing custom providers
+- **[Testing Examples](../../tests/README.md)** - Integration/unit test patterns
 
 ## 🛠️ Tools & Workflows
 
@@ -99,7 +99,7 @@ For end-user and operator documentation, see the parent [/docs](../) directory:
 
 ## 🆘 Getting Help
 
-- **Join our Discord:** [https://discord.gg/CAVACtaY](https://discord.gg/CAVACtaY) - Community support and discussions
+- **Join our Discord:** [https://discord.gg/GME7sy5b2w](https://discord.gg/GME7sy5b2w) - Community support and discussions
 - **Stuck on something?** Check [Common Pitfalls](COMMON_PITFALLS.md)
 - **Architecture questions?** See [Architecture Deep Dive](architecture-deep-dive.md)
 - **Tool issues?** See [Tool Development](tool-development.md)

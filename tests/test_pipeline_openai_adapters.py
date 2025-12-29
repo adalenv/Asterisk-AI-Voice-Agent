@@ -163,7 +163,7 @@ async def test_openai_llm_adapter_chat_completion(monkeypatch):
 
     await adapter.start()
     response = await adapter.generate("call-1", "hello", {"system_prompt": "You are helpful."}, {})
-    assert response == "hi there"
+    assert response.text == "hi there"
 
     request = fake_session.requests[0]
     assert request["json"]["model"] == "gpt-4o-mini"

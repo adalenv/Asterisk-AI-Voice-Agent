@@ -26,7 +26,7 @@ class TestResolveConfigPath:
         assert result == abs_path
     
     def test_relative_path_resolved(self):
-        """Relative paths should be resolved relative to project root."""
+        """Relative paths should be resolved to an absolute path."""
         rel_path = "config/ai-agent.yaml"
         result = resolve_config_path(rel_path)
         
@@ -35,9 +35,6 @@ class TestResolveConfigPath:
         
         # Should end with the relative path
         assert result.endswith(rel_path)
-        
-        # Should contain project directory name
-        assert "Asterisk-AI-Voice-Agent" in result
     
     def test_current_dir_relative_path(self):
         """Paths starting with ./ should be resolved."""

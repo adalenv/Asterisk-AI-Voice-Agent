@@ -504,6 +504,18 @@ install_docker_debian() {
 }
 
 # ============================================================================
+# Podman Detection
+# ============================================================================
+is_podman() {
+    # Check if docker command is actually Podman
+    if command -v docker &>/dev/null; then
+        docker --version 2>/dev/null | grep -qi "podman" && return 0
+        docker version 2>/dev/null | grep -qi "podman" && return 0
+    fi
+    return 1
+}
+
+# ============================================================================
 # Docker Checks
 # ============================================================================
 check_docker() {
@@ -581,11 +593,23 @@ check_docker() {
         fi
         return 1
     fi
-    
+
+    # Detect Podman - skip Docker-specific version checks
+    if is_podman; then
+        PODMAN_VERSION=$(docker --version 2>/dev/null | sed -n 's/.*podman version \([0-9.]*\).*/\1/ip' || echo "unknown")
+        [ -z "$PODMAN_VERSION" ] && PODMAN_VERSION="unknown"
+        log_warn "Podman detected (version $PODMAN_VERSION) - Docker checks skipped"
+        log_info "  Podman compatibility is community-supported"
+        log_info "  Some Docker-specific features may not work as expected"
+        log_info "  If you encounter issues, consider using Docker instead"
+        # Skip version checks for Podman
+        return 0
+    fi
+
     # Version check (HARD FAIL below minimum)
     DOCKER_VERSION=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "0.0.0")
     DOCKER_MAJOR=$(echo "$DOCKER_VERSION" | cut -d. -f1)
-    
+
     if [ "$DOCKER_MAJOR" -lt 20 ]; then
         log_fail "Docker $DOCKER_VERSION too old (minimum: 20.10) - upgrade required"
         local DOCKER_INSTALL_CMD
@@ -667,12 +691,20 @@ docker compose "$@"' > /usr/local/bin/docker-compose
     # Parse version (e.g., "2.20.0" -> major=2, minor=20)
     COMPOSE_MAJOR=$(echo "$COMPOSE_VER" | cut -d. -f1)
     COMPOSE_MINOR=$(echo "$COMPOSE_VER" | cut -d. -f2)
-    
-    if [ "$COMPOSE_MAJOR" -eq 2 ] && [ "$COMPOSE_MINOR" -lt 20 ]; then
-        log_warn "Compose $COMPOSE_VER - upgrade to 2.20+ recommended (missing profiles, watch)"
-        log_info "  Docs: $COMPOSE_AAVA_DOCS_URL"
+
+    # Validate that version components are numeric before comparison
+    if [[ "$COMPOSE_MAJOR" =~ ^[0-9]+$ ]] && [[ "$COMPOSE_MINOR" =~ ^[0-9]+$ ]]; then
+        if [ "$COMPOSE_MAJOR" -eq 2 ] && [ "$COMPOSE_MINOR" -lt 20 ]; then
+            log_warn "Compose $COMPOSE_VER - upgrade to 2.20+ recommended (missing profiles, watch)"
+            log_info "  Docs: $COMPOSE_AAVA_DOCS_URL"
+        else
+            log_ok "Docker Compose: $COMPOSE_VER"
+        fi
     else
-        log_ok "Docker Compose: $COMPOSE_VER"
+        # Non-standard version (e.g., "dev") - skip validation
+        log_warn "Docker Compose version non-standard: $COMPOSE_VER"
+        log_info "  Skipping version check - ensure you have Compose 2.20+ features"
+        log_info "  Docs: $COMPOSE_AAVA_DOCS_URL"
     fi
     
     # Check buildx version (required >= 0.17 for compose build)
@@ -680,14 +712,21 @@ docker compose "$@"' > /usr/local/bin/docker-compose
         BUILDX_VER=$(docker buildx version 2>/dev/null | grep -oP 'v?\K[0-9]+\.[0-9]+' | head -1)
         BUILDX_MAJOR=$(echo "$BUILDX_VER" | cut -d. -f1)
         BUILDX_MINOR=$(echo "$BUILDX_VER" | cut -d. -f2)
-        
-        if [ "$BUILDX_MAJOR" -eq 0 ] && [ "$BUILDX_MINOR" -lt 17 ]; then
-            log_warn "Docker Buildx $BUILDX_VER - requires 0.17+ for compose build"
-            log_info "  Fix: curl -L https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx"
-            log_info "  Docs: $COMPOSE_AAVA_DOCS_URL"
-            FIX_CMDS+=("curl -L https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx")
-        else
-            log_ok "Docker Buildx: $BUILDX_VER"
+
+        # Validate that version components are numeric before comparison
+        if [[ "$BUILDX_MAJOR" =~ ^[0-9]+$ ]] && [[ "$BUILDX_MINOR" =~ ^[0-9]+$ ]]; then
+            if [ "$BUILDX_MAJOR" -eq 0 ] && [ "$BUILDX_MINOR" -lt 17 ]; then
+                log_warn "Docker Buildx $BUILDX_VER - requires 0.17+ for compose build"
+                log_info "  Fix: curl -L https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx"
+                log_info "  Docs: $COMPOSE_AAVA_DOCS_URL"
+                FIX_CMDS+=("curl -L https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx")
+            else
+                log_ok "Docker Buildx: $BUILDX_VER"
+            fi
+        elif [ -n "$BUILDX_VER" ]; then
+            # Version detected but non-standard format
+            log_warn "Docker Buildx version non-standard: $BUILDX_VER"
+            log_info "  Skipping version check - ensure you have Buildx 0.17+ features"
         fi
     fi
 }

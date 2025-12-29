@@ -7,7 +7,7 @@ import pytest
 from src.audio.resampler import convert_pcm16le_to_target_format
 from src.config import AppConfig, GoogleProviderConfig
 from src.pipelines.google import GoogleLLMAdapter, GoogleSTTAdapter, GoogleTTSAdapter
-from src.pipelines.orchestrator import PipelineOrchestrator
+from src.pipelines.orchestrator import PipelineOrchestrator, PipelineOrchestratorError
 
 
 def _build_app_config() -> AppConfig:
@@ -144,7 +144,7 @@ async def test_google_llm_adapter_generate(monkeypatch):
         {"system_prompt": "You are friendly."},
         {"temperature": 0.2},
     )
-    assert reply == "response from gemini"
+    assert reply.text == "response from gemini"
 
     request = fake_session.requests[0]
     assert request["params"]["key"] == "test-google-key"
@@ -189,13 +189,10 @@ async def test_google_orchestrator_falls_back_without_credentials(monkeypatch):
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
 
     orchestrator = PipelineOrchestrator(app_config)
-    await orchestrator.start()
-
-    resolution = orchestrator.get_pipeline("call-1")
-    assert resolution is not None
-    assert resolution.stt_adapter.__class__.__name__ == "PlaceholderSTTAdapter"
-    assert resolution.llm_adapter.__class__.__name__ == "PlaceholderLLMAdapter"
-    assert resolution.tts_adapter.__class__.__name__ == "PlaceholderTTSAdapter"
+    with pytest.raises(PipelineOrchestratorError) as exc_info:
+        await orchestrator.start()
+    assert "google_stack" in str(exc_info.value)
+    assert "cannot resolve" in str(exc_info.value).lower()
 
 
 @pytest.mark.asyncio

@@ -90,6 +90,6 @@ Each milestone document includes:
 
 ## Related Documentation
 
-- **[Case Studies](../case-studies/)** - Production-validated configurations
-- **[CHANGELOG.md](../../CHANGELOG.md)** - Detailed version history
-- **[ROADMAP.md](../ROADMAP.md)** - Future development plans
+- **[Case Studies](../../case-studies/)** - Production-validated configurations
+- **[CHANGELOG.md](../../../CHANGELOG.md)** - Detailed version history
+- **[ROADMAP.md](../../ROADMAP.md)** - Future development plans

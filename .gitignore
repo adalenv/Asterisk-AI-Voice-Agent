@@ -267,6 +267,9 @@ AVA.mdc
 .cursor/rules/asterisk_ai_voice_agent.mdc
 .windsurf/rules/asterisk_ai_voice_agent.md
 
+# Vite cache
+.vite/
+
 # Development artifacts (not for main branch)
 .agent/
 walkthrough.md

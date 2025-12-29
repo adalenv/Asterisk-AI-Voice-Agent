@@ -34,6 +34,30 @@ def _dotenv_value(key: str) -> Optional[str]:
         return None
 
 
+def _sanitize_for_log(value: str) -> str:
+    """Best-effort: prevent log injection via control characters."""
+    try:
+        return (value or "").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    except Exception:
+        return "<unprintable>"
+
+
+def _is_safe_container_identifier(value: str) -> bool:
+    """
+    Accept only Docker-like container identifiers (defense-in-depth).
+    This avoids passing arbitrary user input into logs or subprocess calls.
+    """
+    import re
+
+    if not value:
+        return False
+    # Disallow leading '-' to avoid option-like values when used as CLI args.
+    if value.startswith("-"):
+        return False
+    # Docker container names are typically [a-zA-Z0-9][a-zA-Z0-9_.-]*
+    return re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$", value) is not None
+
+
 def get_docker_compose_cmd() -> List[str]:
     """
     Find docker-compose binary dynamically.
@@ -169,6 +193,11 @@ async def start_container(container_id: str):
         "admin_ui": "admin-ui",
         "local_ai_server": "local-ai-server"
     }
+    container_name_map = {
+        "ai-engine": "ai_engine",
+        "admin-ui": "admin_ui",
+        "local-ai-server": "local_ai_server",
+    }
     
     service_name = service_map.get(container_id)
     
@@ -178,13 +207,21 @@ async def start_container(container_id: str):
             client = docker.from_env()
             container = client.containers.get(container_id)
             name = container.name.lstrip('/')
-            service_name = service_map.get(name, name)
+            service_name = service_map.get(name)
         except:
-            service_name = container_id
+            service_name = None
+
+    # If the caller used compose service names (ai-engine/admin-ui/local-ai-server)
+    if not service_name and container_id in container_name_map:
+        service_name = container_id
+
+    # Only allow starting AAVA services from Admin UI.
+    if service_name not in container_name_map:
+        raise HTTPException(status_code=400, detail="Only AAVA services can be started from Admin UI")
     
     project_root = os.getenv("PROJECT_ROOT", "/app/project")
     
-    logger.info(f"Starting {service_name} from {project_root}")
+    logger.info("Starting %s from %s", _sanitize_for_log(service_name), _sanitize_for_log(project_root))
     
     try:
         # Use docker compose with --build to ensure image exists
@@ -199,7 +236,12 @@ async def start_container(container_id: str):
             timeout=300  # 5 min timeout for potential build
         )
         
-        logger.debug(f"start returncode={result.returncode}, stdout={result.stdout}, stderr={result.stderr}")
+        logger.debug(
+            "start returncode=%s stdout=%s stderr=%s",
+            result.returncode,
+            (result.stdout or "")[:2000],
+            (result.stderr or "")[:2000],
+        )
         
         if result.returncode == 0:
             return {"status": "success", "output": result.stdout or "Container started"}
@@ -211,16 +253,10 @@ async def start_container(container_id: str):
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="Timeout waiting for container start")
     except FileNotFoundError:
-        # Fallback to Docker API if docker-compose not available
-        try:
-            client = docker.from_env()
-            container = client.containers.get(container_id)
-            container.start()
-            return {"status": "success", "method": "docker-api"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="docker-compose not found")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error starting service %s", _sanitize_for_log(str(service_name)), exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to start service")
 
 
 async def _check_active_calls() -> dict:
@@ -248,7 +284,7 @@ async def _check_active_calls() -> dict:
                 except httpx.ConnectError:
                     continue
     except Exception as e:
-        logger.debug(f"Could not check active calls: {e}")
+        logger.debug("Could not check active calls", exc_info=True)
     
     return {"active_calls": 0, "reachable": False}
 
@@ -280,15 +316,22 @@ async def restart_container(container_id: str, force: bool = False):
     }
     
     # Resolve container name
+    is_known = False
     container_name = container_id
     if container_id in service_map:
         # Input is already a container name like "ai_engine"
         container_name = container_id
+        is_known = True
     elif container_id in container_name_map:
         # Input is a service name like "ai-engine"
         container_name = container_name_map[container_id]
+        is_known = True
+
+    if not _is_safe_container_identifier(container_name):
+        raise HTTPException(status_code=400, detail=f"Invalid container id: {container_id!r}")
     
-    logger.info(f"Restarting container: {container_name}")
+    safe_container_name = _sanitize_for_log(container_name)
+    logger.info("Restarting container: %s", safe_container_name)
 
     # Check for active calls before restarting AI Engine (unless forced)
     if container_name == "ai_engine" and not force:
@@ -340,33 +383,40 @@ async def restart_container(container_id: str, force: bool = False):
         # Restart with 10 second timeout for graceful stop
         container.restart(timeout=10)
         
-        logger.info(f"Container {container_name} restarted successfully via Docker SDK")
+        logger.info("Container %s restarted successfully via Docker SDK", safe_container_name)
         return {
             "status": "success", 
             "method": "docker-sdk",
-            "output": f"Container {container_name} restarted"
+            "output": f"Container {safe_container_name} restarted"
         }
         
     except docker.errors.NotFound:
-        # Container doesn't exist, try to start it via docker-compose
-        logger.warning(f"Container {container_name} not found, attempting docker-compose up")
-        return await _start_via_compose(container_id, service_map)
+        # Container doesn't exist. Only allow compose-based start for known AAVA services.
+        logger.warning("Container %s not found", safe_container_name)
+        if is_known:
+            logger.warning("Attempting docker-compose up for %s", safe_container_name)
+            return await _start_via_compose(container_id, service_map)
+        raise HTTPException(status_code=404, detail=f"Container not found: {container_id}")
         
     except docker.errors.APIError as e:
-        logger.error(f"Docker API error restarting {container_name}: {e}")
-        # Fallback to docker-compose for recreation
-        return await _start_via_compose(container_id, service_map)
+        logger.error("Docker API error restarting %s: %s", safe_container_name, _sanitize_for_log(str(e)))
+        # Fallback to docker-compose only for known AAVA services.
+        if is_known:
+            return await _start_via_compose(container_id, service_map)
+        raise HTTPException(status_code=500, detail="Docker API error restarting container")
         
     except Exception as e:
-        logger.error(f"Error restarting container {container_name}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error restarting container %s", safe_container_name, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to restart container")
 
 
 async def _start_via_compose(container_id: str, service_map: dict):
     """Helper to start a container via docker-compose."""
     import subprocess
     
-    service_name = service_map.get(container_id, container_id)
+    service_name = service_map.get(container_id)
+    if not service_name:
+        raise HTTPException(status_code=400, detail="Unsupported service for compose start")
     project_root = os.getenv("PROJECT_ROOT", "/app/project")
     
     try:
@@ -2317,12 +2367,13 @@ async def test_ari_connection(request: AriTestRequest):
                 }
                 
     except httpx.ConnectError as e:
+        logger.debug("ARI connection error", exc_info=True)
         error_str = str(e).lower()
         # Check for SSL-specific errors
         if "ssl" in error_str or "certificate" in error_str:
             return {
                 "success": False,
-                "error": f"SSL certificate error - try disabling 'Verify SSL Certificate' for self-signed certs. Details: {str(e)}"
+                "error": "SSL certificate error - try disabling 'Verify SSL Certificate' for self-signed certs."
             }
         return {
             "success": False,
@@ -2334,14 +2385,15 @@ async def test_ari_connection(request: AriTestRequest):
             "error": f"Connection timeout - check if {request.host}:{request.port} is reachable"
         }
     except Exception as e:
+        logger.debug("ARI connection failed", exc_info=True)
         error_str = str(e).lower()
         # Check for SSL-specific errors in generic exceptions
         if "ssl" in error_str or "certificate" in error_str or "verify" in error_str:
             return {
                 "success": False,
-                "error": f"SSL certificate verification failed - uncheck 'Verify SSL Certificate' for self-signed certs or hostname mismatches. Details: {str(e)}"
+                "error": "SSL certificate verification failed - uncheck 'Verify SSL Certificate' for self-signed certs or hostname mismatches."
             }
         return {
             "success": False,
-            "error": f"Connection failed: {str(e)}"
+            "error": "Connection failed - check host/port/scheme and credentials."
         }

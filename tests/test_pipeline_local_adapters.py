@@ -147,7 +147,7 @@ async def test_local_llm_adapter_generate(monkeypatch):
     mock_ws.push(json.dumps({"type": "llm_response", "text": "assistant reply"}))
 
     response = await request_task
-    assert response == "assistant reply"
+    assert response.text == "assistant reply"
 
     llm_message = json.loads(mock_ws.sent[1])
     assert llm_message["type"] == "llm_request"

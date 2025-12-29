@@ -167,7 +167,7 @@ Before you begin, ensure your system meets the following requirements:
 - **Operating System**: A modern Linux distribution (e.g., Ubuntu 20.04+, CentOS 7+).
 - **Asterisk**: Version 18 or newer. FreePBX 15+ is also supported.
 - **ARI (Asterisk REST Interface)**: Enabled and configured on your Asterisk server.
-- **Docker**: Latest stable version of Docker and Docker Compose.
+- **Docker**: Latest stable version of Docker and Docker Compose. Podman is community-supported (aliased as `docker`) but not officially tested.
 - **Git**: Required to clone the project repository.
 - **Network Access**: Your server must be able to make outbound connections to the internet for Docker image downloads and API access to AI providers.
 

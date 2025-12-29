@@ -6,7 +6,7 @@ name: "Trivy"
 
 on:
   push:
-    branches: [ "main", "staging", "develop" ]
+    branches: [ "main", "staging" ]
     paths:
       - 'Dockerfile'
       - 'requirements.txt'
@@ -14,7 +14,7 @@ on:
       - 'local_ai_server/requirements*.txt'
       - '.github/workflows/trivy.yml'
   pull_request:
-    branches: [ "main", "staging", "develop" ]
+    branches: [ "main", "staging" ]
     paths:
       - 'Dockerfile'
       - 'requirements.txt'

@@ -130,6 +130,7 @@ const ToolForm = ({ config, onChange }: ToolFormProps) => {
                                             <div className="font-medium text-sm">{key}</div>
                                             <div className="text-xs text-muted-foreground">
                                                 {dest.type} • {dest.target} • {dest.description}
+                                                {dest.type === 'extension' && dest.attended_allowed ? ' • attended' : ''}
                                             </div>
                                         </div>
                                         <div className="flex items-center gap-1">

@@ -63,9 +63,20 @@ class AttendedTransferTool(Tool):
             return {"status": "failed", "message": "Attended transfer is only supported for extension destinations"}
 
         if not bool(dest_cfg.get("attended_allowed", False)):
+            allowed = [
+                k
+                for k, v in destinations.items()
+                if isinstance(v, dict)
+                and v.get("type") == "extension"
+                and bool(v.get("attended_allowed", False))
+            ]
             return {
                 "status": "failed",
-                "message": f"Attended transfer is not allowed for destination: {destination}",
+                "message": (
+                    f"Attended transfer is not enabled for destination: {destination}. "
+                    + (f"Allowed attended destinations: {', '.join(sorted(allowed))}. " if allowed else "")
+                    + "Enable it in Tools → Transfer Destinations (Allow Attended Transfer), then retry."
+                ),
             }
 
         extension = str(dest_cfg.get("target") or "").strip()

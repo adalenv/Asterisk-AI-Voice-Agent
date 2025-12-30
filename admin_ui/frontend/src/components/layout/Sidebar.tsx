@@ -80,6 +80,7 @@ const Sidebar = () => {
                 <SidebarGroup title="Core Configuration">
                     <SidebarItem to="/providers" icon={Server} label="Providers" />
                     <SidebarItem to="/pipelines" icon={Workflow} label="Pipelines" />
+                    <SidebarItem to="/callflow" icon={Workflow} label="Call Flow" />
                     <SidebarItem to="/contexts" icon={MessageSquare} label="Contexts" />
                     <SidebarItem to="/profiles" icon={Sliders} label="Audio Profiles" />
                     <SidebarItem to="/tools" icon={Wrench} label="Tools" />

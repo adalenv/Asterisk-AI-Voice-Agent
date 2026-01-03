@@ -313,6 +313,7 @@ class ARIClient:
         app: str,
         app_args: str = "",
         timeout: int = 60,
+        caller_id: str = "",
         channel_vars: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
@@ -328,6 +329,9 @@ class ARIClient:
         }
         if app_args:
             params["appArgs"] = str(app_args)
+        if caller_id:
+            # ARI uses the same callerId format as dialplan: "Name <Number>" or just "Number".
+            params["callerId"] = str(caller_id)
         if channel_vars:
             params["channelVars"] = channel_vars
         return await self.send_command("POST", "channels", params=params)

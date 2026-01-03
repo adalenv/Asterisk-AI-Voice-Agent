@@ -232,6 +232,8 @@ class Engine:
         self._outbound_attempt_amd: Dict[str, Dict[str, Optional[str]]] = {}
         self._outbound_extension_identity = str(os.getenv("AAVA_OUTBOUND_EXTENSION_IDENTITY", "6789")).strip() or "6789"
         self._outbound_amd_context = str(os.getenv("AAVA_OUTBOUND_AMD_CONTEXT", "aava-outbound-amd")).strip() or "aava-outbound-amd"
+        self._outbound_pjsip_endpoint_cache: Dict[str, Dict[str, Any]] = {}
+        self._outbound_pjsip_endpoint_cache_ttl_seconds = float(os.getenv("AAVA_OUTBOUND_PJSIP_ENDPOINT_CACHE_TTL_SECONDS", "300") or "300")
         
         # Initialize streaming playback manager
         streaming_config = {}
@@ -1133,6 +1135,7 @@ class Engine:
 
         caller_id_num = self._outbound_extension_identity
         caller_id_name = str(os.getenv("AAVA_OUTBOUND_CALLERID_NAME", "Asterisk AI")).strip() or "Asterisk AI"
+        caller_id_header = f"{caller_id_name} <{caller_id_num}>"
 
         channel_vars: Dict[str, Any] = {
             "AAVA_OUTBOUND": "1",
@@ -1193,7 +1196,7 @@ class Engine:
             if key in channel_vars and f"__{key}" not in channel_vars:
                 channel_vars[f"__{key}"] = channel_vars[key]
 
-        endpoint = f"Local/{dial_phone}@from-internal"
+        endpoint = await self._outbound_choose_endpoint(dial_phone)
         app_args = f"outbound,{attempt_id},{campaign_id},{lead_id}"
 
         logger.info(
@@ -1210,6 +1213,7 @@ class Engine:
             app=self.config.asterisk.app_name,
             app_args=app_args,
             timeout=60,
+            caller_id=caller_id_header,
             channel_vars=channel_vars,
         )
 
@@ -1240,6 +1244,47 @@ class Engine:
         meta["originated_at_ts"] = time.time()
         self._outbound_attempt_meta_by_attempt_id[attempt_id] = meta
         self._outbound_attempt_meta_by_channel_id[str(channel_id)] = meta
+
+    async def _outbound_choose_endpoint(self, dial_phone: str) -> str:
+        """
+        Choose best endpoint for outbound dialing.
+
+        - Default: `Local/<number>@from-internal` so FreePBX handles outbound routing/trunks.
+        - If `<number>` matches a live PJSIP endpoint resource (internal extension), dial `PJSIP/<number>`
+          directly so caller-id is deterministic (FreePBX may not recognize our virtual identity).
+        """
+        phone = (dial_phone or "").strip()
+        if not phone:
+            return f"Local/{dial_phone}@from-internal"
+
+        ttl = self._outbound_pjsip_endpoint_cache_ttl_seconds
+        now = time.monotonic()
+        cached = self._outbound_pjsip_endpoint_cache.get(phone)
+        if cached and (now - float(cached.get("ts") or 0.0)) < ttl:
+            if bool(cached.get("exists")):
+                return f"PJSIP/{phone}"
+            return f"Local/{phone}@from-internal"
+
+        exists = False
+        try:
+            resp = await self.ari_client.send_command(
+                "GET",
+                f"endpoints/PJSIP/{phone}",
+                tolerate_statuses=[404],
+            )
+            if isinstance(resp, dict) and int(resp.get("status") or 0) == 404:
+                exists = False
+            else:
+                # ARI returns endpoint JSON when it exists.
+                exists = isinstance(resp, dict) and ("resource" in resp or "technology" in resp or "state" in resp)
+        except Exception:
+            # If ARI is transiently unavailable, keep default FreePBX routing.
+            exists = False
+
+        self._outbound_pjsip_endpoint_cache[phone] = {"exists": bool(exists), "ts": now}
+        if exists:
+            return f"PJSIP/{phone}"
+        return f"Local/{phone}@from-internal"
 
     async def _outbound_cleanup_stale_attempts(self) -> None:
         """

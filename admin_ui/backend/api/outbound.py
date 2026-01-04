@@ -222,9 +222,9 @@ async def download_sample_csv():
     """
     csv_text = (
         "name,phone_number,context,timezone,caller_id,custom_vars\n"
-        "Extension Test,2765,,,6789,\"{\"\"account_id\"\":\"\"A-1001\"\",\"\"note\"\":\"\"Call internal extension\"\"}\"\n"
-        "Alice Example,+15551234567,,,6789,\"{\"\"account_id\"\":\"\"A-1002\"\",\"\"note\"\":\"\"Follow up from web form\"\"}\"\n"
-        "Bob Example,+15557654321,demo_outbound,America/New_York,6789,\"{\"\"account_id\"\":\"\"A-1003\"\",\"\"note\"\":\"\"Interested in outbound dialer\"\"}\"\n"
+        "Extension Test,2765,demo_outbound,America/Phoenix,6789,\"{\"\"name\"\":\"\"Extension Test\"\",\"\"note\"\":\"\"Call internal extension\"\"}\"\n"
+        "Alice Example,+15557654321,demo_outbound,America/Phoenix,6789,\"{\"\"name\"\":\"\"Alice Example\"\",\"\"account_id\"\":\"\"A-1002\"\",\"\"note\"\":\"\"US lead example\"\"}\"\n"
+        "International Example,+447700900123,demo_outbound,America/Phoenix,6789,\"{\"\"name\"\":\"\"International Example\"\",\"\"account_id\"\":\"\"A-1003\"\",\"\"note\"\":\"\"International lead example\"\"}\"\n"
     )
     return Response(
         content=csv_text,

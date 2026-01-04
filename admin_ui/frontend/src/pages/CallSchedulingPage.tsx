@@ -1591,6 +1591,10 @@ const CallSchedulingPage = () => {
                                         Import leads from CSV. Default behavior is <span className="font-mono">skip_existing</span>.
                                         {campaignModalMode === 'create' ? ' Choose a CSV now; it will import after Create.' : ''}
                                     </div>
+                                    <div className="text-xs text-muted-foreground">
+                                        Note: If a CSV row is missing/blank (or invalid) for <span className="font-mono">context</span> or{' '}
+                                        <span className="font-mono">timezone</span>, the campaign defaults will be used and a warning will be shown.
+                                    </div>
                                     <div className="flex items-center gap-2 flex-wrap">
                                         <button
                                             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border hover:bg-muted text-sm"

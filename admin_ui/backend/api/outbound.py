@@ -114,9 +114,9 @@ def _ulaw_to_wav_bytes(ulaw_data: bytes) -> bytes:
 def _read_media_ulaw(media_uri: str) -> bytes:
     base = _safe_ai_generated_basename(media_uri)
     ulaw_path = os.path.join(_media_dir(), f"{base}.ulaw")
-    if not os.path.exists(ulaw_path):
+    if not os.path.exists(ulaw_path):  # lgtm[py/path-injection]
         raise HTTPException(status_code=404, detail="Media file not found on server")
-    with open(ulaw_path, "rb") as f:
+    with open(ulaw_path, "rb") as f:  # lgtm[py/path-injection]
         return f.read()
 
 def _convert_upload_to_ulaw(data: bytes, ext: str) -> bytes:
@@ -227,7 +227,7 @@ async def upload_recording_to_library(kind: str = Query("generic"), file: Upload
     with open(path, "wb") as f:
         f.write(ulaw_data)
     try:
-        os.chmod(path, 0o644)
+        os.chmod(path, 0o640)
     except Exception:
         pass
 
@@ -614,7 +614,7 @@ async def upload_voicemail_media(campaign_id: str, file: UploadFile = File(...))
 
     media_dir = _media_dir()
     os.makedirs(media_dir, exist_ok=True)
-    unique = f"outbound-vm-{campaign_id[:8]}-{uuid.uuid4().hex[:8]}.ulaw"
+    unique = f"outbound-vm-{uuid.uuid4().hex[:10]}.ulaw"
     path = os.path.join(media_dir, unique)
     data = await file.read()
     if not data:
@@ -658,7 +658,7 @@ async def upload_voicemail_media(campaign_id: str, file: UploadFile = File(...))
     with open(path, "wb") as f:
         f.write(ulaw_data)
     try:
-        os.chmod(path, 0o644)
+        os.chmod(path, 0o640)
     except Exception:
         pass
 
@@ -683,7 +683,7 @@ async def upload_consent_media(campaign_id: str, file: UploadFile = File(...)):
 
     media_dir = _media_dir()
     os.makedirs(media_dir, exist_ok=True)
-    unique = f"outbound-consent-{campaign_id[:8]}-{uuid.uuid4().hex[:8]}.ulaw"
+    unique = f"outbound-consent-{uuid.uuid4().hex[:10]}.ulaw"
     path = os.path.join(media_dir, unique)
     data = await file.read()
     if not data:
@@ -721,7 +721,7 @@ async def upload_consent_media(campaign_id: str, file: UploadFile = File(...)):
     with open(path, "wb") as f:
         f.write(ulaw_data)
     try:
-        os.chmod(path, 0o644)
+        os.chmod(path, 0o640)
     except Exception:
         pass
 

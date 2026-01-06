@@ -3197,7 +3197,7 @@ class Engine:
             with open(audio_file, "wb") as f:
                 f.write(audio_bytes)
             try:
-                os.chmod(audio_file, 0o644)
+                os.chmod(audio_file, 0o640)
             except Exception:
                 pass
 

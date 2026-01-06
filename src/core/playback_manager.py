@@ -307,7 +307,7 @@ class PlaybackManager:
             # No chown needed - appuser is member of asterisk group
             try:
                 # Group-readable so asterisk group members can access
-                os.chmod(file_path, 0o644)
+                os.chmod(file_path, 0o640)
             except Exception:
                 pass
             

@@ -1179,6 +1179,27 @@ check_asterisk_uid_gid() {
             FIX_CMDS+=("sudo chmod 2775 $DATA_DIR")
         fi
 
+        # If the DB already exists (or Admin UI created WAL/SHM), ensure it is group-writable.
+        # Otherwise ai-engine (runs as appuser) may fail with:
+        #   sqlite3.OperationalError: attempt to write a readonly database
+        local CH_DB="$DATA_DIR/call_history.db"
+        for f in "$CH_DB" "$CH_DB-wal" "$CH_DB-shm"; do
+            if [ -f "$f" ]; then
+                if sudo chgrp "$AST_GID" "$f" 2>/dev/null; then
+                    log_ok "Set call history file group to asterisk: $f"
+                else
+                    log_warn "Could not set call history file group (may need sudo): $f"
+                    FIX_CMDS+=("sudo chgrp $AST_GID $f")
+                fi
+                if sudo chmod 664 "$f" 2>/dev/null; then
+                    log_ok "Set call history file permissions (group-writable): $f"
+                else
+                    log_warn "Could not set call history file permissions (may need sudo): $f"
+                    FIX_CMDS+=("sudo chmod 664 $f")
+                fi
+            fi
+        done
+
         # Create the Asterisk sounds symlink so Asterisk can serve generated audio.
         # Only do this when Asterisk sounds directory exists on host.
         if [ -d "/var/lib/asterisk/sounds" ]; then

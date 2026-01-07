@@ -1,5 +1,6 @@
 # --- Stage 1: Builder (Dependencies) ---
-FROM python:3.11 as builder
+# Note: Using trixie (Debian 13) for glibc compatibility with Kroko binary
+FROM python:3.11-slim-trixie as builder
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Build Args - Conditionally include backends (AAVA-112)
@@ -80,7 +81,8 @@ RUN if [ "$INCLUDE_KOKORO" = "true" ]; then \
     fi
 
 # --- Stage 2: Final Runtime Image ---
-FROM python:3.11-slim-bookworm
+# Using trixie (Debian 13) for Kroko binary compatibility (requires glibc 2.38+)
+FROM python:3.11-slim-trixie
 
 # Build argument to optionally include Kroko embedded server
 ARG INCLUDE_KROKO_EMBEDDED=false

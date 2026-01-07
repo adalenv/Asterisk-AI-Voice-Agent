@@ -66,6 +66,7 @@ services:
         - INCLUDE_FASTER_WHISPER=${INCLUDE_FASTER_WHISPER:-false}
         - INCLUDE_WHISPER_CPP=${INCLUDE_WHISPER_CPP:-false}
         - INCLUDE_MELOTTS=${INCLUDE_MELOTTS:-false}
+        - INCLUDE_LLAMA=${INCLUDE_LLAMA:-true}
     container_name: local_ai_server
     network_mode: host
     env_file:

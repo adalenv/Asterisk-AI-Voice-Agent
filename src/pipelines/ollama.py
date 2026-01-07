@@ -214,8 +214,42 @@ class OllamaLLMAdapter(LLMComponent):
             if system_prompt:
                 messages.insert(0, {"role": "system", "content": system_prompt})
         
-        # Add user message
-        messages.append({"role": "user", "content": transcript})
+        # Handle prior_messages from context (includes tool results)
+        prior_messages = context.get("prior_messages", [])
+        if prior_messages:
+            # Sync session messages with prior_messages (which includes tool results)
+            # Convert tool messages to user messages for Ollama compatibility
+            for pm in prior_messages:
+                role = pm.get("role")
+                content = pm.get("content")
+                
+                # Skip if already in messages or no content
+                if role == "system":
+                    continue  # System already handled above
+                elif role == "tool":
+                    # Convert tool result to a user-style message Ollama understands
+                    tool_content = content or "Tool executed successfully."
+                    # Add as assistant message first acknowledging the tool was called
+                    messages.append({
+                        "role": "assistant", 
+                        "content": "I have the information from the tool."
+                    })
+                    # Then add the result as user message with VERY explicit instructions
+                    messages.append({
+                        "role": "user",
+                        "content": f"[SYSTEM] The tool returned: {tool_content}\n\nNow say this information to the caller in a natural way. Do not add extra commentary."
+                    })
+                elif role == "assistant" and pm.get("tool_calls"):
+                    # Skip assistant tool_call messages (we handle the result above)
+                    continue
+                elif content and role in ("user", "assistant"):
+                    # Add regular messages if not duplicate
+                    if not any(m.get("content") == content and m.get("role") == role for m in messages):
+                        messages.append({"role": role, "content": content})
+        
+        # Add user message only if there's actual transcript
+        if transcript and transcript.strip():
+            messages.append({"role": "user", "content": transcript})
         
         # Prepare API request
         await self._ensure_session()

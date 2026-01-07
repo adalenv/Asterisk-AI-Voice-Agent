@@ -2909,7 +2909,10 @@ class StreamingPlaybackManager:
                 jitter_buffer = self.jitter_buffers[call_id]
                 while not jitter_buffer.empty():
                     chunk = jitter_buffer.get_nowait()
-                    if chunk:
+                    # Skip sentinel objects and non-bytes data
+                    if chunk is _JITTER_SENTINEL:
+                        continue
+                    if chunk and isinstance(chunk, (bytes, bytearray)):
                         remaining_audio.extend(chunk)
                         self._decrement_buffered_bytes(call_id, len(chunk))
             

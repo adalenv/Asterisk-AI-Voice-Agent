@@ -572,12 +572,21 @@ class PipelineOrchestrator:
             logger.debug("ElevenLabs pipeline adapters not registered - API key unavailable")
 
         # Ollama LLM adapter - for self-hosted local LLMs
-        ollama_llm_factory = self._make_ollama_llm_factory()
+        # Read config from providers.ollama_llm in YAML if available
+        ollama_provider_config = {}
+        providers = getattr(self.config, "providers", {}) or {}
+        if isinstance(providers, dict) and "ollama_llm" in providers:
+            ollama_cfg = providers.get("ollama_llm", {})
+            if isinstance(ollama_cfg, dict) and ollama_cfg.get("enabled", True) is not False:
+                ollama_provider_config = dict(ollama_cfg)
+        
+        ollama_llm_factory = self._make_ollama_llm_factory(ollama_provider_config)
         self.register_factory("ollama_llm", ollama_llm_factory)
+        configured_url = ollama_provider_config.get("base_url", "http://localhost:11434")
         logger.info(
             "Ollama LLM adapter registered",
             llm_factory="ollama_llm",
-            default_endpoint="http://localhost:11434",
+            configured_endpoint=configured_url,
             note="Self-hosted LLM with optional tool calling",
         )
 
@@ -618,12 +627,18 @@ class PipelineOrchestrator:
             llm_factory = self._make_openai_llm_factory(provider_cfg)
             self.register_factory(str(name), llm_factory)
 
-    def _make_ollama_llm_factory(self) -> ComponentFactory:
+    def _make_ollama_llm_factory(self, provider_config: Dict[str, Any]) -> ComponentFactory:
         """Create factory for Ollama LLM adapter (self-hosted local models)."""
+        # Merge provider config with pipeline options at runtime
+        base_config = dict(provider_config)
+        
         def factory(component_key: str, options: Dict[str, Any]) -> Component:
+            # Provider config from YAML takes precedence, runtime options can override
+            merged = dict(base_config)
+            merged.update(options or {})
             return OllamaLLMAdapter(
                 self.config,
-                options,
+                merged,
             )
         return factory
 

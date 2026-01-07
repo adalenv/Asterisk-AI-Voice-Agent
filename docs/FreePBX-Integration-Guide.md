@@ -8,10 +8,10 @@ The Asterisk AI Voice Agent integrates with FreePBX using the **Asterisk REST In
 
 If you’re setting this up for the first time, follow the canonical “first successful call” flow first:
 
-- `INSTALLATION.md`
-- `Configuration-Reference.md` → "Call Selection & Precedence (Provider / Pipeline / Context)"
-- `Transport-Mode-Compatibility.md`
-- `OUTBOUND_CALLING.md` (alpha feature: outbound campaign dialer)
+- [INSTALLATION.md](INSTALLATION.md)
+- [Configuration-Reference.md](Configuration-Reference.md) → "Call Selection & Precedence (Provider / Pipeline / Context)"
+- [Transport-Mode-Compatibility.md](Transport-Mode-Compatibility.md)
+- [OUTBOUND_CALLING.md](OUTBOUND_CALLING.md) (alpha feature: outbound campaign dialer)
 
 This guide focuses on FreePBX integration mechanics (ARI user, dialplan routing, networking).
 
@@ -254,8 +254,8 @@ You can customize agent behavior per-call using Asterisk channel variables:
 
 | Variable | Description | Example Values | Required? |
 |----------|-------------|----------------|-----------|
-| `AI_PROVIDER` | Override which provider/pipeline to use | `deepgram`, `openai_realtime`, `local_hybrid` | No (uses `default_provider` from config) |
-| `AI_CONTEXT` | Select custom greeting and system prompt | `demo_deepgram`, `demo_openai`, `sales`, `support` | No (uses `default` context) |
+| `AI_PROVIDER` | Override which provider/pipeline to use | `google_live`, `deepgram`, `openai_realtime`, `local_hybrid` | No (uses `default_provider` from config) |
+| `AI_CONTEXT` | Select custom greeting and system prompt | `sales-agent`, `demo_google_live`, `sales`, `support` | No (uses `default` context) |
 | `AI_GREETING` | Override the greeting for this call | `"Hello! Welcome to our sales team."` | No (deprecated - use AI_CONTEXT instead) |
 | `AI_PERSONA` | Override the AI persona/instructions | `"You are a helpful billing assistant."` | No (deprecated - use AI_CONTEXT instead) |
 | `CALLERID(name)` | Caller's name (automatically available to AI) | Any string | No |

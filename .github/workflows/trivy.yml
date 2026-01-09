@@ -23,6 +23,7 @@ on:
   schedule:
     # Run weekly on Monday at 7am UTC (after CodeQL)
     - cron: '0 7 * * 1'
+  workflow_dispatch:
 
 jobs:
   scan:
@@ -43,6 +44,7 @@ jobs:
     # PR/branch scanning uses a minimal local-ai-server build to keep scans fast and
     # avoid exceeding GitHub runner disk limits. A fuller scan runs on the schedule.
     - name: Build local-ai-server image (ci-min)
+      if: github.event_name != 'schedule'
       run: |
         docker build -t local-ai-server:${{ github.sha }} ./local_ai_server \
           --build-arg INCLUDE_VOSK=true \
@@ -57,7 +59,7 @@ jobs:
       run: docker build -t local-ai-server-full:${{ github.sha }} ./local_ai_server
 
     - name: Scan ai-engine image
-      uses: aquasecurity/trivy-action@master
+      uses: aquasecurity/trivy-action@0.33.1
       with:
         image-ref: 'ai-engine:${{ github.sha }}'
         format: 'sarif'
@@ -70,7 +72,8 @@ jobs:
         timeout: '15m'
 
     - name: Scan local-ai-server image
-      uses: aquasecurity/trivy-action@master
+      if: github.event_name != 'schedule'
+      uses: aquasecurity/trivy-action@0.33.1
       with:
         image-ref: 'local-ai-server:${{ github.sha }}'
         format: 'sarif'
@@ -84,7 +87,7 @@ jobs:
 
     - name: Scan local-ai-server image (full, scheduled)
       if: github.event_name == 'schedule'
-      uses: aquasecurity/trivy-action@master
+      uses: aquasecurity/trivy-action@0.33.1
       with:
         image-ref: 'local-ai-server-full:${{ github.sha }}'
         format: 'sarif'
@@ -105,7 +108,7 @@ jobs:
 
     - name: Upload local-ai-server results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
-      if: always()
+      if: always() && github.event_name != 'schedule'
       with:
         sarif_file: 'trivy-local-ai-server.sarif'
         category: 'trivy-local-ai-server'

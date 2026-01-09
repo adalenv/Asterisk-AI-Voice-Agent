@@ -3,6 +3,7 @@ import Editor from '@monaco-editor/react';
 import axios from 'axios';
 import { Save, Download, AlertCircle, Settings, Server, Trash2, RefreshCw, Loader2 } from 'lucide-react';
 import yaml from 'js-yaml';
+import { sanitizeConfigForSave } from '../utils/configSanitizers';
 
 // Import Config Components
 import GeneralConfig from '../components/config/GeneralConfig';
@@ -99,7 +100,8 @@ const ConfigEditor = () => {
                     // If invalid YAML, backend might reject it
                 }
             } else {
-                contentToSave = yaml.dump(parsedConfig);
+                const sanitized = sanitizeConfigForSave(parsedConfig);
+                contentToSave = yaml.dump(sanitized);
                 setYamlContent(contentToSave);
             }
 
@@ -122,7 +124,7 @@ const ConfigEditor = () => {
                 setApplyMethod(recommended === 'hot_reload' ? 'hot_reload' : 'restart');
                 setPendingApply(true);
             } else if (response.data?.restart_required) {
-                setApplyPlan([{ service: 'ai-engine', method: 'restart', endpoint: '/api/system/containers/ai_engine/restart' }]);
+                setApplyPlan([{ service: 'ai_engine', method: 'restart', endpoint: '/api/system/containers/ai_engine/restart' }]);
                 setApplyMethod('restart');
                 setPendingApply(true);
             } else {
@@ -181,7 +183,7 @@ const ConfigEditor = () => {
                 if (resp.data?.restart_required || resp.data?.status === 'partial') {
                     setWarning('Hot reload completed but some changes still require an AI Engine restart.');
                     setTimeout(() => setWarning(null), 15000);
-                    setApplyPlan([{ service: 'ai-engine', method: 'restart', endpoint: '/api/system/containers/ai_engine/restart' }]);
+                    setApplyPlan([{ service: 'ai_engine', method: 'restart', endpoint: '/api/system/containers/ai_engine/restart' }]);
                     setApplyMethod('restart');
                     setPendingApply(true);
                     return;
@@ -207,7 +209,7 @@ const ConfigEditor = () => {
     // When switching TO YAML tab, ensure it's up to date with parsedConfig
     const handleTabChange = (tab: any) => {
         if (tab === 'yaml') {
-            setYamlContent(yaml.dump(parsedConfig));
+            setYamlContent(yaml.dump(sanitizeConfigForSave(parsedConfig)));
         } else if (activeTab === 'yaml' && tab !== 'yaml') {
             // If switching FROM yaml, parse it back to object
             try {

@@ -338,7 +338,7 @@ const Wizard = () => {
             const res = await axios.get('/api/system/health');
             const status = res.data?.local_ai_server?.status;
             if (status !== 'connected') {
-                throw new Error('Local AI Server is not reachable. Please start the local-ai-server container and retry.');
+                throw new Error('Local AI Server is not reachable. Please start the local_ai_server container and retry.');
             }
         } catch (err: any) {
             throw new Error(err?.message || 'Local AI Server health check failed.');
@@ -866,7 +866,7 @@ const Wizard = () => {
                                                         <strong>Note:</strong> Groq does not support function/tool calling reliably.
                                                     </p>
                                                     <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                                                        Tools are disabled by default. Do not enable tools_enabled in the provider config.
+                                                        Tools are allowlisted per Context. If you use Groq as the LLM, keep context tools empty.
                                                     </p>
                                                 </div>
                                             )}
@@ -2121,7 +2121,7 @@ exten => s,1,NoOp(AI Agent - Local Full)
                                 </p>
                                 {!engineStatus.exists && (
                                     <pre className="bg-black text-green-400 p-3 rounded-md text-xs font-mono mb-4 overflow-x-auto">
-                                        docker-compose up -d ai-engine
+                                        docker compose up -d ai_engine
                                     </pre>
                                 )}
                                 <button

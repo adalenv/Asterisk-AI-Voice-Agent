@@ -135,9 +135,15 @@ print_fix_and_docs() {
 }
 
 # Parse args
+LOCAL_AI_MODE_OVERRIDE=""
+PERSIST_MEDIA_MOUNT=false
 for arg in "$@"; do
     case $arg in
         --apply-fixes) APPLY_FIXES=true ;;
+        --local-ai-mode=*) LOCAL_AI_MODE_OVERRIDE="${arg#*=}" ;;
+        --local-ai-minimal) LOCAL_AI_MODE_OVERRIDE="minimal" ;;
+        --local-ai-full) LOCAL_AI_MODE_OVERRIDE="full" ;;
+        --persist-media-mount) PERSIST_MEDIA_MOUNT=true ;;
         --help|-h) 
             echo "AAVA Pre-flight Check"
             echo ""
@@ -145,6 +151,10 @@ for arg in "$@"; do
             echo ""
             echo "Options:"
             echo "  --apply-fixes  Apply fixes automatically (requires root/sudo)"
+            echo "  --local-ai-mode=MODE  Set LOCAL_AI_MODE in .env (MODE=full|minimal)"
+            echo "  --local-ai-minimal    Shortcut for --local-ai-mode=minimal"
+            echo "  --local-ai-full       Shortcut for --local-ai-mode=full"
+            echo "  --persist-media-mount Persist Asterisk sounds bind mount in /etc/fstab when needed"
             echo "  --help         Show this help message"
             echo ""
             echo "Exit codes:"
@@ -636,7 +646,7 @@ check_docker() {
         ROOTLESS_DOCS="$(github_docs_url "$(platform_yaml_get docker.rootless_docs || echo "docs/CROSS_PLATFORM_PLAN.md")" 2>/dev/null || true)"
         log_info "  Admin UI (rootless) tip:"
         log_info "    export DOCKER_SOCK=$ROOTLESS_SOCKET"
-        log_info "    ${COMPOSE_CMD:-docker compose} up -d --force-recreate admin-ui"
+        log_info "    ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d --force-recreate admin_ui"
         [ -n "$ROOTLESS_DOCS" ] && log_info "    Docs: $ROOTLESS_DOCS"
     fi
 }
@@ -654,7 +664,7 @@ check_compose() {
         COMPOSE_CMD="docker compose"
         COMPOSE_VER=$(docker compose version --short 2>/dev/null | sed 's/^v//')
         
-        # Create docker-compose wrapper if it doesn't exist (needed for admin-ui)
+        # Create docker-compose wrapper if it doesn't exist (needed for Admin UI)
         if ! command -v docker-compose &>/dev/null; then
             if [ "$APPLY_FIXES" = true ]; then
                 # Remove if it's a directory (broken state)
@@ -665,7 +675,7 @@ docker compose "$@"' > /usr/local/bin/docker-compose
                 chmod +x /usr/local/bin/docker-compose
                 log_ok "Created docker-compose wrapper for compatibility"
             else
-                log_warn "docker-compose command not found (admin-ui needs this)"
+                log_warn "docker-compose command not found (Admin UI needs this)"
                 FIX_CMDS+=("echo '#!/bin/bash\ndocker compose \"\$@\"' > /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose")
                 log_info "  Docs: $COMPOSE_AAVA_DOCS_URL"
             fi
@@ -734,9 +744,9 @@ docker compose "$@"' > /usr/local/bin/docker-compose
         if [[ "$BUILDX_MAJOR" =~ ^[0-9]+$ ]] && [[ "$BUILDX_MINOR" =~ ^[0-9]+$ ]]; then
             if [ "$BUILDX_MAJOR" -eq 0 ] && [ "$BUILDX_MINOR" -lt 17 ]; then
                 log_warn "Docker Buildx $BUILDX_VER - requires 0.17+ for compose build"
-                log_info "  Fix: curl -L https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx"
+                log_info "  Fix: mkdir -p /usr/local/lib/docker/cli-plugins && curl -L https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx"
                 log_info "  Docs: $COMPOSE_AAVA_DOCS_URL"
-                FIX_CMDS+=("curl -L https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx")
+                FIX_CMDS+=("mkdir -p /usr/local/lib/docker/cli-plugins && curl -L https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx")
             else
                 log_ok "Docker Buildx: $BUILDX_VER"
             fi
@@ -901,6 +911,25 @@ check_env() {
         log_warn ".env.example not found"
     fi
 
+    if [ -n "$LOCAL_AI_MODE_OVERRIDE" ] && [ -f "$SCRIPT_DIR/.env" ]; then
+        local mode
+        mode="$(echo "$LOCAL_AI_MODE_OVERRIDE" | tr '[:upper:]' '[:lower:]' | tr -d '\r' | xargs 2>/dev/null || echo "$LOCAL_AI_MODE_OVERRIDE")"
+        if [ "$mode" != "full" ] && [ "$mode" != "minimal" ]; then
+            log_warn "Invalid --local-ai-mode value: $LOCAL_AI_MODE_OVERRIDE (expected full|minimal)"
+        else
+            if grep -qE '^[# ]*LOCAL_AI_MODE=' "$SCRIPT_DIR/.env"; then
+                sed -i.bak "s/^[# ]*LOCAL_AI_MODE=.*/LOCAL_AI_MODE=${mode}/" "$SCRIPT_DIR/.env" 2>/dev/null || \
+                    sed -i '' "s/^[# ]*LOCAL_AI_MODE=.*/LOCAL_AI_MODE=${mode}/" "$SCRIPT_DIR/.env"
+            else
+                echo "" >> "$SCRIPT_DIR/.env"
+                echo "LOCAL_AI_MODE=${mode}" >> "$SCRIPT_DIR/.env"
+            fi
+            rm -f "$SCRIPT_DIR/.env.bak" 2>/dev/null || true
+            log_ok "Set LOCAL_AI_MODE=${mode} in .env"
+            log_info "  Recreate local_ai_server container to apply .env changes"
+        fi
+    fi
+
     # Ensure JWT_SECRET is non-empty when Admin UI is remotely accessible by default.
     # This is a repo-local change and safe to apply automatically.
     if [ -f "$SCRIPT_DIR/.env" ]; then
@@ -938,6 +967,53 @@ check_env() {
             else
                 log_warn "JWT_SECRET is missing and could not be generated automatically"
                 log_info "  Set JWT_SECRET in .env (recommended: openssl rand -hex 32)"
+            fi
+        fi
+    fi
+
+    # Ensure Admin UI can control containers by mounting the correct Docker socket.
+    # docker-compose.yml mounts `${DOCKER_SOCK:-/var/run/docker.sock}` into admin_ui as `/var/run/docker.sock`.
+    # On rootless Docker/Podman, `/var/run/docker.sock` is usually absent, so we must persist DOCKER_SOCK in `.env`.
+    if [ -f "$SCRIPT_DIR/.env" ]; then
+        local current_sock desired_sock
+        current_sock="$(grep -E '^[# ]*DOCKER_SOCK=' "$SCRIPT_DIR/.env" | tail -n1 | sed -E 's/^[# ]*DOCKER_SOCK=//')"
+        current_sock="$(echo "$current_sock" | tr -d '\r' | xargs 2>/dev/null || echo "$current_sock")"
+
+        desired_sock=""
+        # Prefer explicit unix socket from DOCKER_HOST when present.
+        if [ -n "${DOCKER_HOST:-}" ] && [[ "${DOCKER_HOST}" == unix://* ]]; then
+            desired_sock="${DOCKER_HOST#unix://}"
+        elif [ "$DOCKER_ROOTLESS" = true ]; then
+            desired_sock="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock"
+        elif is_podman; then
+            # Podman (rootless) commonly exposes a Docker-compatible socket here.
+            if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ]; then
+                desired_sock="$XDG_RUNTIME_DIR/podman/podman.sock"
+            fi
+        fi
+
+        # Only write DOCKER_SOCK when needed (non-default socket, missing/invalid config).
+        # Do not override an explicit, valid value.
+        if [ -n "$desired_sock" ] && [ "$desired_sock" != "/var/run/docker.sock" ]; then
+            local needs_update=false
+            if [ -z "$current_sock" ]; then
+                needs_update=true
+            elif [ ! -S "$current_sock" ]; then
+                needs_update=true
+            fi
+
+            if [ "$needs_update" = true ]; then
+                if grep -qE '^[# ]*DOCKER_SOCK=' "$SCRIPT_DIR/.env"; then
+                    sed -i.bak "s|^[# ]*DOCKER_SOCK=.*|DOCKER_SOCK=${desired_sock}|" "$SCRIPT_DIR/.env" 2>/dev/null || \
+                        sed -i '' "s|^[# ]*DOCKER_SOCK=.*|DOCKER_SOCK=${desired_sock}|" "$SCRIPT_DIR/.env"
+                else
+                    echo "" >> "$SCRIPT_DIR/.env"
+                    echo "DOCKER_SOCK=${desired_sock}" >> "$SCRIPT_DIR/.env"
+                fi
+                rm -f "$SCRIPT_DIR/.env.bak" 2>/dev/null || true
+                log_ok "Set DOCKER_SOCK in .env for Admin UI container control"
+                log_info "  DOCKER_SOCK=${desired_sock}"
+                log_info "  Recreate admin_ui to apply: ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d --force-recreate admin_ui"
             fi
         fi
     fi
@@ -1047,7 +1123,20 @@ check_asterisk_uid_gid() {
     
     # Set up media directory with setgid bit for group permission inheritance
     MEDIA_DIR="$SCRIPT_DIR/asterisk_media/ai-generated"
+    DATA_DIR="$SCRIPT_DIR/data"
     ASTERISK_SOUNDS_LINK="/var/lib/asterisk/sounds/ai-generated"
+
+    # Detect when Asterisk can't traverse the media directory path. Common pitfall:
+    # project lives under /root (0700), so Asterisk sees "file does not exist" for ai-generated sounds.
+    local use_bind_mount=false
+    if [ -d "/var/lib/asterisk/sounds" ] && id asterisk &>/dev/null; then
+        if ! sudo -u asterisk test -x "$MEDIA_DIR" 2>/dev/null; then
+            use_bind_mount=true
+            log_warn "Asterisk user cannot access media directory path; file playback via symlink may fail"
+            log_info "  media_dir=$MEDIA_DIR"
+            log_info "  Fix: use a bind mount at $ASTERISK_SOUNDS_LINK (avoids /root traversal)."
+        fi
+    fi
     if [ "$APPLY_FIXES" = true ]; then
         # Create directory if it doesn't exist
         mkdir -p "$MEDIA_DIR" 2>/dev/null
@@ -1073,18 +1162,103 @@ check_asterisk_uid_gid() {
         sudo chgrp "$AST_GID" "$MEDIA_PARENT" 2>/dev/null
         sudo chmod 2775 "$MEDIA_PARENT" 2>/dev/null
 
+        # Ensure data directory is writable by the container runtime user (appuser in asterisk group).
+        # This is required for persistent SQLite call history across container recreates.
+        mkdir -p "$DATA_DIR" 2>/dev/null
+        touch "$DATA_DIR/.gitkeep" 2>/dev/null || true
+        if sudo chgrp "$AST_GID" "$DATA_DIR" 2>/dev/null; then
+            log_ok "Set data directory group to asterisk (GID=$AST_GID)"
+        else
+            log_warn "Could not set data directory group (may need sudo)"
+            FIX_CMDS+=("sudo chgrp $AST_GID $DATA_DIR")
+        fi
+        if sudo chmod 2775 "$DATA_DIR" 2>/dev/null; then
+            log_ok "Set data directory permissions (setgid enabled)"
+        else
+            log_warn "Could not set data directory permissions (may need sudo)"
+            FIX_CMDS+=("sudo chmod 2775 $DATA_DIR")
+        fi
+
+        # If the DB already exists (or Admin UI created WAL/SHM), ensure it is group-writable.
+        # Otherwise ai-engine (runs as appuser) may fail with:
+        #   sqlite3.OperationalError: attempt to write a readonly database
+        local CH_DB="$DATA_DIR/call_history.db"
+        for f in "$CH_DB" "$CH_DB-wal" "$CH_DB-shm"; do
+            if [ -f "$f" ]; then
+                if sudo chgrp "$AST_GID" "$f" 2>/dev/null; then
+                    log_ok "Set call history file group to asterisk: $f"
+                else
+                    log_warn "Could not set call history file group (may need sudo): $f"
+                    FIX_CMDS+=("sudo chgrp $AST_GID $f")
+                fi
+                if sudo chmod 664 "$f" 2>/dev/null; then
+                    log_ok "Set call history file permissions (group-writable): $f"
+                else
+                    log_warn "Could not set call history file permissions (may need sudo): $f"
+                    FIX_CMDS+=("sudo chmod 664 $f")
+                fi
+            fi
+        done
+
         # Create the Asterisk sounds symlink so Asterisk can serve generated audio.
         # Only do this when Asterisk sounds directory exists on host.
         if [ -d "/var/lib/asterisk/sounds" ]; then
-            if [ -e "$ASTERISK_SOUNDS_LINK" ] && [ ! -L "$ASTERISK_SOUNDS_LINK" ]; then
-                log_warn "Asterisk sounds path exists but is not a symlink: $ASTERISK_SOUNDS_LINK"
-                log_info "  Fix manually: sudo mv $ASTERISK_SOUNDS_LINK ${ASTERISK_SOUNDS_LINK}.bak && sudo ln -sf $MEDIA_DIR $ASTERISK_SOUNDS_LINK"
+            if [ "$use_bind_mount" = true ]; then
+                # Clean up accidental nested symlink: <media_dir>/ai-generated -> <media_dir>
+                if [ -L "$MEDIA_DIR/ai-generated" ]; then
+                    local resolved
+                    resolved="$(readlink -f "$MEDIA_DIR/ai-generated" 2>/dev/null || true)"
+                    if [ "$resolved" = "$MEDIA_DIR" ]; then
+                        rm -f "$MEDIA_DIR/ai-generated" 2>/dev/null || sudo rm -f "$MEDIA_DIR/ai-generated" 2>/dev/null || true
+                    fi
+                fi
+
+                # Replace any existing symlink at the mountpoint.
+                if [ -L "$ASTERISK_SOUNDS_LINK" ]; then
+                    rm -f "$ASTERISK_SOUNDS_LINK" 2>/dev/null || sudo rm -f "$ASTERISK_SOUNDS_LINK" 2>/dev/null || true
+                fi
+                mkdir -p "$ASTERISK_SOUNDS_LINK" 2>/dev/null || sudo mkdir -p "$ASTERISK_SOUNDS_LINK" 2>/dev/null || true
+
+                if mountpoint -q "$ASTERISK_SOUNDS_LINK" 2>/dev/null; then
+                    log_ok "Asterisk sounds bind mount already present: $ASTERISK_SOUNDS_LINK"
+                elif sudo mount --bind "$MEDIA_DIR" "$ASTERISK_SOUNDS_LINK" 2>/dev/null; then
+                    log_ok "Asterisk sounds bind mount: $ASTERISK_SOUNDS_LINK ⇢ $MEDIA_DIR"
+                else
+                    log_warn "Could not create Asterisk sounds bind mount (may need sudo)"
+                    FIX_CMDS+=("sudo mount --bind $MEDIA_DIR $ASTERISK_SOUNDS_LINK")
+                fi
+
+                # Optional: persist bind mount across reboots.
+                local fstab_line="$MEDIA_DIR $ASTERISK_SOUNDS_LINK none bind 0 0"
+                if [ "$PERSIST_MEDIA_MOUNT" = true ]; then
+                    if [ -f /etc/fstab ] && ! grep -Fqs "$fstab_line" /etc/fstab 2>/dev/null; then
+                        {
+                            echo ""
+                            echo "# AAVA: expose generated audio to Asterisk (bind mount)"
+                            echo "$fstab_line"
+                        } | sudo tee -a /etc/fstab >/dev/null 2>&1 || true
+                        log_ok "Persisted media bind mount in /etc/fstab"
+                    fi
+                else
+                    log_info "To persist this bind mount after reboot, add to /etc/fstab:"
+                    log_info "  $fstab_line"
+                    log_info "Or rerun: ./preflight.sh --apply-fixes --persist-media-mount"
+                fi
             else
-                if ln -sf "$MEDIA_DIR" "$ASTERISK_SOUNDS_LINK" 2>/dev/null; then
+                # Symlink mode (works when Asterisk can traverse MEDIA_DIR)
+                if [ -e "$ASTERISK_SOUNDS_LINK" ] && [ ! -L "$ASTERISK_SOUNDS_LINK" ]; then
+                    if [ -d "$ASTERISK_SOUNDS_LINK" ] && [ -z "$(ls -A "$ASTERISK_SOUNDS_LINK" 2>/dev/null)" ]; then
+                        rmdir "$ASTERISK_SOUNDS_LINK" 2>/dev/null || sudo rmdir "$ASTERISK_SOUNDS_LINK" 2>/dev/null || true
+                    else
+                        log_warn "Asterisk sounds path exists but is not a symlink: $ASTERISK_SOUNDS_LINK"
+                        log_info "  Fix manually: sudo mv $ASTERISK_SOUNDS_LINK ${ASTERISK_SOUNDS_LINK}.bak && sudo ln -sfn $MEDIA_DIR $ASTERISK_SOUNDS_LINK"
+                    fi
+                fi
+                if ln -sfn "$MEDIA_DIR" "$ASTERISK_SOUNDS_LINK" 2>/dev/null; then
                     log_ok "Asterisk sounds symlink: $ASTERISK_SOUNDS_LINK → $MEDIA_DIR"
                 else
                     log_warn "Could not create Asterisk sounds symlink (may need sudo)"
-                    FIX_CMDS+=("sudo ln -sf $MEDIA_DIR $ASTERISK_SOUNDS_LINK")
+                    FIX_CMDS+=("sudo ln -sfn $MEDIA_DIR $ASTERISK_SOUNDS_LINK")
                 fi
             fi
         fi
@@ -1095,8 +1269,20 @@ check_asterisk_uid_gid() {
         fi
         FIX_CMDS+=("sudo chgrp $AST_GID $MEDIA_DIR")
         FIX_CMDS+=("sudo chmod 2775 $MEDIA_DIR  # setgid for group inheritance")
+        if [ ! -d "$DATA_DIR" ]; then
+            FIX_CMDS+=("mkdir -p $DATA_DIR && touch $DATA_DIR/.gitkeep")
+        fi
+        FIX_CMDS+=("sudo chgrp $AST_GID $DATA_DIR")
+        FIX_CMDS+=("sudo chmod 2775 $DATA_DIR  # setgid for group inheritance (SQLite call history)")
         if [ -d "/var/lib/asterisk/sounds" ]; then
-            FIX_CMDS+=("sudo ln -sf $MEDIA_DIR $ASTERISK_SOUNDS_LINK  # allow Asterisk to serve generated audio")
+            if [ "$use_bind_mount" = true ]; then
+                FIX_CMDS+=("sudo rm -f $ASTERISK_SOUNDS_LINK && sudo mkdir -p $ASTERISK_SOUNDS_LINK")
+                FIX_CMDS+=("sudo mount --bind $MEDIA_DIR $ASTERISK_SOUNDS_LINK  # avoid /root traversal issues")
+                FIX_CMDS+=("# Optional persistence:")
+                FIX_CMDS+=("# echo '$MEDIA_DIR $ASTERISK_SOUNDS_LINK none bind 0 0' | sudo tee -a /etc/fstab")
+            else
+                FIX_CMDS+=("sudo ln -sfn $MEDIA_DIR $ASTERISK_SOUNDS_LINK  # allow Asterisk to serve generated audio")
+            fi
         fi
     fi
     
@@ -1162,6 +1348,132 @@ check_asterisk_uid_gid() {
             FIX_CMDS+=("echo 'ASTERISK_UID=$AST_UID' >> $SCRIPT_DIR/.env")
             FIX_CMDS+=("echo 'ASTERISK_GID=$AST_GID' >> $SCRIPT_DIR/.env")
         fi
+    fi
+}
+
+# ============================================================================
+# GPU Detection (AAVA-140)
+# ============================================================================
+check_gpu() {
+    GPU_AVAILABLE=false
+    GPU_NAME=""
+    GPU_PASSTHROUGH_OK=false
+    
+    # Step 1: Check if nvidia-smi exists on host
+    if ! command -v nvidia-smi &>/dev/null; then
+        log_info "No NVIDIA GPU detected (nvidia-smi not found)"
+        update_env_gpu "false"
+        return 0
+    fi
+    
+    # Step 2: Check if nvidia-smi works (driver loaded)
+    if ! nvidia-smi &>/dev/null; then
+        log_warn "NVIDIA driver not working (nvidia-smi failed)"
+        log_info "  Check driver status: nvidia-smi"
+        log_info "  Install drivers: https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes/"
+        update_env_gpu "false"
+        return 0
+    fi
+    
+    # GPU detected!
+    GPU_AVAILABLE=true
+    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | xargs)
+    GPU_MEMORY=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1 | xargs)
+    log_ok "NVIDIA GPU detected: $GPU_NAME ($GPU_MEMORY)"
+    
+    # Step 3: Check nvidia-container-toolkit
+    if ! command -v nvidia-container-cli &>/dev/null; then
+        log_warn "nvidia-container-toolkit not installed"
+        log_info "  GPU detected but Docker cannot use it without the toolkit"
+        
+        # Offer install instructions based on OS
+        case "$OS_FAMILY" in
+            debian)
+                log_info "  Install with:"
+                log_info "    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
+                log_info "    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \\"
+                log_info "      sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \\"
+                log_info "      sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list"
+                log_info "    sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit"
+                log_info "    sudo nvidia-ctk runtime configure --runtime=docker"
+                log_info "    sudo systemctl restart docker"
+                ;;
+            rhel)
+                log_info "  Install with:"
+                log_info "    curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | \\"
+                log_info "      sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo"
+                log_info "    sudo yum install -y nvidia-container-toolkit"
+                log_info "    sudo nvidia-ctk runtime configure --runtime=docker"
+                log_info "    sudo systemctl restart docker"
+                ;;
+        esac
+        log_info "  Docs: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
+        update_env_gpu "true"  # GPU exists, just toolkit missing
+        return 0
+    fi
+    
+    log_ok "nvidia-container-toolkit installed"
+    
+    # Step 4: Test Docker GPU passthrough
+    log_info "Testing Docker GPU passthrough..."
+    if docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi &>/dev/null 2>&1; then
+        GPU_PASSTHROUGH_OK=true
+        log_ok "Docker GPU passthrough working"
+        update_env_gpu "true"
+        
+        # Inform user - GPU detection works via .env, no workflow change needed
+        log_info ""
+        log_info "  GPU will be detected by Setup Wizard automatically (via GPU_AVAILABLE in .env)"
+        log_info ""
+        log_info "  To use GPU for LLM inference (optional, faster responses):"
+        log_info "    1. Set LOCAL_LLM_GPU_LAYERS=-1 in .env"
+        log_info "    2. Start local_ai_server with GPU override:"
+        log_info "       ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent -f docker-compose.yml -f docker-compose.gpu.yml up -d local_ai_server"
+    else
+        log_warn "Docker GPU passthrough test failed"
+        log_info "  GPU detected and toolkit installed, but Docker cannot access GPU"
+        log_info "  Try: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+        update_env_gpu "true"  # GPU exists, passthrough just needs config
+    fi
+}
+
+# Helper: Update GPU_AVAILABLE in .env
+update_env_gpu() {
+    local gpu_value="$1"
+    
+    [ ! -f "$SCRIPT_DIR/.env" ] && return 0
+    
+    # Check if GPU_AVAILABLE already set correctly
+    local current_value
+    current_value="$(grep -E '^GPU_AVAILABLE=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+    
+    if [ "$current_value" = "$gpu_value" ]; then
+        return 0  # Already correct
+    fi
+    
+    # Update or add GPU_AVAILABLE
+    if grep -qE '^#?GPU_AVAILABLE=' "$SCRIPT_DIR/.env" 2>/dev/null; then
+        # Update existing line
+        sed -i.bak "s/^#*GPU_AVAILABLE=.*/GPU_AVAILABLE=$gpu_value/" "$SCRIPT_DIR/.env" 2>/dev/null || \
+            sed -i '' "s/^#*GPU_AVAILABLE=.*/GPU_AVAILABLE=$gpu_value/" "$SCRIPT_DIR/.env"
+        rm -f "$SCRIPT_DIR/.env.bak" 2>/dev/null
+    else
+        # Add new line in GPU section (after LOCAL_LLM_GPU_LAYERS or at end)
+        if grep -q "LOCAL_LLM_GPU_LAYERS" "$SCRIPT_DIR/.env" 2>/dev/null; then
+            sed -i.bak "/LOCAL_LLM_GPU_LAYERS/a\\
+GPU_AVAILABLE=$gpu_value" "$SCRIPT_DIR/.env" 2>/dev/null || \
+                sed -i '' "/LOCAL_LLM_GPU_LAYERS/a\\
+GPU_AVAILABLE=$gpu_value" "$SCRIPT_DIR/.env"
+            rm -f "$SCRIPT_DIR/.env.bak" 2>/dev/null
+        else
+            echo "" >> "$SCRIPT_DIR/.env"
+            echo "# GPU detected by preflight.sh (AAVA-140)" >> "$SCRIPT_DIR/.env"
+            echo "GPU_AVAILABLE=$gpu_value" >> "$SCRIPT_DIR/.env"
+        fi
+    fi
+    
+    if [ "$gpu_value" = "true" ]; then
+        log_ok "Set GPU_AVAILABLE=true in .env"
     fi
 }
 
@@ -1275,8 +1587,23 @@ print_summary() {
         echo ""
         echo "Next steps:"
         echo ""
+        echo "  Tip (file playback):"
+        echo "     If Asterisk file playback fails with 'File ... does not exist' and your project is under /root,"
+        echo "     run: sudo ./preflight.sh --apply-fixes --persist-media-mount"
+        echo ""
+        echo "  Tip (local AI build mode):"
+        echo "     Local AI Server is optional (only needed for local_hybrid/local_only pipelines)."
+        echo "     Note: local_ai_server is based on Debian trixie intentionally (for embedded Kroko compatibility)."
+        echo "           admin_ui and ai_engine are based on Debian bookworm."
+        echo "     Use a smaller image for most users:"
+        echo "       sudo ./preflight.sh --apply-fixes --local-ai-minimal"
+        echo "     Or enable the full build (more models / larger image):"
+        echo "       sudo ./preflight.sh --apply-fixes --local-ai-full"
+        echo "     After changing LOCAL_AI_MODE, rebuild/recreate local_ai_server:"
+        echo "       ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d --build --force-recreate local_ai_server"
+        echo ""
         echo "  1. Start the Admin UI:"
-        echo "     ${COMPOSE_CMD:-docker compose} up -d admin-ui"
+        echo "     ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d admin_ui"
         echo ""
         if [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_TTY:-}" ]; then
             echo "  2. Access the Admin UI:"
@@ -1285,17 +1612,28 @@ print_summary() {
             echo "  2. Open: http://localhost:3003"
         fi
         echo ""
-        echo "  3. Complete the Setup Wizard, then start ai-engine:"
-        echo "     ${COMPOSE_CMD:-docker compose} up -d ai-engine"
+        echo "  3. Complete the Setup Wizard, then start ai_engine:"
+        echo "     ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d ai_engine"
         echo ""
         echo "  4. For local_hybrid or local_only pipeline, also start:"
-        echo "     ${COMPOSE_CMD:-docker compose} up -d local-ai-server"
+        echo "     ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d local_ai_server"
         echo ""
     elif [ ${#FAILURES[@]} -eq 0 ]; then
         touch "$SCRIPT_DIR/.preflight-ok"
         echo -e "${YELLOW}Checks passed with warnings.${NC}"
         echo ""
         echo "You can proceed, but consider addressing the warnings above."
+        echo ""
+        echo "Tip (local AI build mode):"
+        echo "  Local AI Server is optional (only needed for local_hybrid/local_only pipelines)."
+        echo "  Note: local_ai_server is based on Debian trixie intentionally (for embedded Kroko compatibility)."
+        echo "        admin_ui and ai_engine are based on Debian bookworm."
+        echo "  Use a smaller image for most users:"
+        echo "    sudo ./preflight.sh --apply-fixes --local-ai-minimal"
+        echo "  Or enable the full build (more models / larger image):"
+        echo "    sudo ./preflight.sh --apply-fixes --local-ai-full"
+        echo "  After changing LOCAL_AI_MODE, rebuild/recreate local_ai_server:"
+        echo "    ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d --build --force-recreate local_ai_server"
         echo ""
         echo "╔═══════════════════════════════════════════════════════════════════════════╗"
         echo "║  ⚠️  SECURITY NOTICE                                                       ║"
@@ -1309,8 +1647,12 @@ print_summary() {
         echo ""
         echo "Next steps:"
         echo ""
+        echo "  Tip (file playback):"
+        echo "     If Asterisk file playback fails with 'File ... does not exist' and your project is under /root,"
+        echo "     run: sudo ./preflight.sh --apply-fixes --persist-media-mount"
+        echo ""
         echo "  1. Start the Admin UI:"
-        echo "     ${COMPOSE_CMD:-docker compose} up -d admin-ui"
+        echo "     ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d admin_ui"
         echo ""
         if [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_TTY:-}" ]; then
             echo "  2. Access the Admin UI:"
@@ -1319,11 +1661,11 @@ print_summary() {
             echo "  2. Open: http://localhost:3003"
         fi
         echo ""
-        echo "  3. Complete the Setup Wizard, then start ai-engine:"
-        echo "     ${COMPOSE_CMD:-docker compose} up -d ai-engine"
+        echo "  3. Complete the Setup Wizard, then start ai_engine:"
+        echo "     ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d ai_engine"
         echo ""
         echo "  4. For local_hybrid or local_only pipeline, also start:"
-        echo "     ${COMPOSE_CMD:-docker compose} up -d local-ai-server"
+        echo "     ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d local_ai_server"
         echo ""
     else
         echo -e "${RED}Cannot proceed - fix failures above first.${NC}"
@@ -1353,6 +1695,7 @@ main() {
     check_env
     check_asterisk
     check_asterisk_uid_gid
+    check_gpu
     check_ports
     
     # Apply fixes if requested

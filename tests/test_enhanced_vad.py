@@ -363,16 +363,18 @@ class TestVADIntegration:
         await vad_manager.reset_call(call2_id)
     
     @pytest.mark.asyncio 
-    async def test_fallback_periodic_forwarding(self):
+    async def test_fallback_periodic_forwarding(self, monkeypatch):
         """Test that fallback forwards real audio at configured cadence."""
         vad_manager = EnhancedVADManager(energy_threshold=1500)
 
+        now = 1_000_000.0
+        monkeypatch.setattr(time, "time", lambda: now)
+
         class MockSession:
             def __init__(self):
-                now = time.time()
                 self.vad_state = {
-                    'last_speech_time': now - 3.0,
-                    'fallback_state': {'last_fallback_ts': now - 1.0}
+                    'last_speech_time': time.time() - 3.0,
+                    'fallback_state': {'last_fallback_ts': time.time() - 1.0}
                 }
                 self.call_id = "fallback_test"
 
@@ -385,7 +387,7 @@ class TestVADIntegration:
         for _ in range(20):
             if Engine._should_use_vad_fallback(engine, session):
                 fallback_hits += 1
-            time.sleep(0.05)
+            now += 0.05
 
         assert fallback_hits > 0
         assert fallback_hits <= 5

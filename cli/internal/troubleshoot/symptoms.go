@@ -64,7 +64,7 @@ func (sc *SymptomChecker) analyzeNoAudio(analysis *Analysis, logData string) {
 		analysis.SymptomAnalysis.Actions = append(analysis.SymptomAnalysis.Actions,
 			"Check network configuration")
 		analysis.SymptomAnalysis.Actions = append(analysis.SymptomAnalysis.Actions,
-			"Verify Asterisk and ai-engine can communicate")
+			"Verify Asterisk and ai_engine can communicate")
 	}
 
 	// Check for media path issues

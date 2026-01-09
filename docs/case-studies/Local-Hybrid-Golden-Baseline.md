@@ -626,7 +626,7 @@ Local TTS audio chunk → latency_ms=>3000 (system overloaded)
 
 5. **Deploy**:
    ```bash
-   docker-compose up -d --build ai-engine local-ai-server
+   docker compose up -d --build ai_engine local_ai_server
    ```
 
 6. **Verify Models Loaded**:

@@ -2,9 +2,9 @@
 
 # Asterisk AI Voice Agent
 
-![Version](https://img.shields.io/badge/version-4.6.0-blue.svg)
+![Version](https://img.shields.io/badge/version-5.0.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-compose-blue.svg)
 ![Asterisk](https://img.shields.io/badge/asterisk-18+-orange.svg)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/hkjarral/Asterisk-AI-Voice-Agent)
@@ -21,7 +21,7 @@ The most powerful, flexible open-source AI voice agent for Asterisk/FreePBX. Fea
 ## 📖 Table of Contents
 
 - [🚀 Quick Start](#-quick-start)
-- [🎉 What's New](#-whats-new-in-v460)
+- [🎉 What's New](#-whats-new-in-v500)
 - [🌟 Why Asterisk AI Voice Agent?](#-why-asterisk-ai-voice-agent)
 - [✨ Features](#-features)
 - [🎥 Demo](#-demo)
@@ -62,7 +62,7 @@ sudo ./preflight.sh --apply-fixes
 
 ```bash
 # Start the Admin UI container
-docker compose up -d --build admin-ui
+docker compose up -d --build admin_ui
 ```
 
 ### 3. Access the Dashboard
@@ -80,15 +80,15 @@ Follow the **Setup Wizard** to configure your providers and make a test call.
 ### 4. Verify Installation
 
 ```bash
-# Start ai-engine (required for health checks)
-docker compose up -d --build ai-engine
+# Start ai_engine (required for health checks)
+docker compose up -d --build ai_engine
 
-# Check ai-engine health
+# Check ai_engine health
 curl http://localhost:15000/health
 # Expected: {"status":"healthy"}
 
 # View logs for any errors
-docker compose logs ai-engine | tail -20
+docker compose logs ai_engine | tail -20
 ```
 
 ### 5. Connect Asterisk
@@ -107,8 +107,10 @@ For users who prefer the command line or need headless setup.
 ### Option A: Interactive CLI
 ```bash
 ./install.sh
-agent quickstart
+agent init
 ```
+
+> Note: `agent quickstart` is still available for backward compatibility, but `agent init` is the recommended CLI wizard for v5+.
 
 ### Option B: Manual Setup
 ```bash
@@ -124,10 +126,19 @@ docker compose up -d
 Add this to your FreePBX (`extensions_custom.conf`):
 ```asterisk
 [from-ai-agent]
-exten => s,1,NoOp(Asterisk AI Voice Agent v4.6.0)
+exten => s,1,NoOp(Asterisk AI Voice Agent v5.0.0)
+ ; Optional per-call overrides:
+ ; - AI_PROVIDER selects a provider/pipeline (otherwise uses default_provider from ai-agent.yaml)
+ ; - AI_CONTEXT selects a context/persona (otherwise uses default context)
+ same => n,Set(AI_PROVIDER=google_live)
+ same => n,Set(AI_CONTEXT=sales-agent)
  same => n,Stasis(asterisk-ai-voice-agent)
  same => n,Hangup()
 ```
+Notes:
+- `AI_PROVIDER` is optional. If unset, the engine follows normal precedence (context provider → default_provider).
+- `AI_CONTEXT` is optional. Use it to change greeting/persona without changing your default provider/pipeline.
+- See `docs/FreePBX-Integration-Guide.md` for channel variable precedence and examples.
 
 ### Test Your Agent
 **Health check:**
@@ -137,60 +148,31 @@ agent doctor
 
 **View logs:**
 ```bash
-docker compose logs -f ai-engine
+docker compose logs -f ai_engine
 ```
 
 ---
 
-## 🎉 What's New in v4.6.0
+## 🎉 What's New in v5.0.0
 
 <details open>
 <summary><b>Latest Updates</b></summary>
 
-### 🔒 Remote Asterisk + Secure ARI Support
-- **HTTPS/WSS ARI**: Configure `ASTERISK_ARI_SCHEME=https` for secure WebSocket events
-- **Custom ARI port**: `ASTERISK_ARI_PORT` (no longer hardcoded)
-- **SSL verification toggle**: `ASTERISK_ARI_SSL_VERIFY=false` for self-signed or hostname mismatch environments
+### 📞 Outbound Campaign Dialer (Alpha)
+- **Call Scheduling UI**: create campaigns, import leads, view outcomes
+- **Campaign scheduler**: pacing + concurrency (1–5)
+- **Voicemail detection**: Asterisk `AMD()` + voicemail drop
+- **Consent gate (optional)**: DTMF `1` accept / `2` deny
+- Docs: [docs/OUTBOUND_CALLING.md](docs/OUTBOUND_CALLING.md)
 
-### 📊 Call History & Analytics
-- **Full Call Logging**: Every call saved with conversation history, timing, and outcome
-- **Per-Call Debugging**: Review transcripts, tool executions, and errors from Admin UI
-- **Search & Filter**: Find calls by caller, provider, context, or date range
-- **Export**: Download call data as CSV or JSON
+### 🧩 Groq Speech (STT + TTS) for Modular Pipelines
+- Groq STT/TTS pipeline adapters for cloud-only modular pipelines
 
-### 🎤 Barge-In Improvements
-- **Immediate Interruption**: Agent audio stops instantly when caller speaks
-- **Provider-Owned Turn-Taking**: Full agents (Google, Deepgram, OpenAI, ElevenLabs) handle VAD natively
-- **Platform Flush**: Local playback clears immediately on interruption signal
-- **Transport Parity**: Works with both ExternalMedia RTP and AudioSocket
+### 🧠 Ollama & Local Pipeline Improvements
+- Streaming/segment gating improvements and safer fallbacks for Ollama-backed pipelines
 
-### 🧠 Additional Model Support
-- **Faster Whisper**: High-accuracy STT backend with GPU acceleration
-- **MeloTTS**: New neural TTS option for local pipelines
-- **Model Hot-Swap**: Switch models via Dashboard without container restart
-
-### 🔌 MCP Tool Integration
-- **External Tools Framework**: Connect AI agents to external services via Model Context Protocol
-- **Admin UI Config**: Configure MCP servers from the web interface
-
-### 🔒 RTP Security Hardening
-- **Remote Endpoint Pinning**: Lock RTP streams to prevent audio hijacking
-- **Allowlist Support**: Restrict allowed remote hosts for ExternalMedia
-- **Cross-Talk Prevention**: SSRC-based routing ensures call isolation
-
-### ✅ Config Management Determinism (Admin UI)
-- **Clear save vs apply**: apply plans and safer `.env` parsing/writing
-- **Env-driven runtime correctness**: compose avoids `${VAR:-default}` fallbacks that prevent UI env changes from taking effect
-
-### 🧰 Troubleshooting UX Improvements
-- **Call-centric logs/events**: improved filtering and “troubleshoot” flows for faster RCAs
-
-### 📞 Call Quality (Baseline)
-- **OpenAI Realtime audio tweak**: minor baseline adjustment for improved telephony alignment
-
-### 🚀 Pipeline-First Default
-- **`local_hybrid` Default**: Privacy-focused pipeline is now the out-of-box default
-- **Pipeline-Aware Readiness**: Health probes correctly reflect pipeline component status
+### 🔁 Attended (Warm) Transfer
+- DTMF acceptance flow and improved transfer UX
 
 </details>
 
@@ -220,7 +202,7 @@ docker compose logs -f ai-engine
 
 #### v4.2 - Google Live API & Enhanced Setup
 - **🤖 Google Live API**: Gemini 2.0 Flash integration.
-- **🚀 Interactive Setup**: `agent quickstart` wizard.
+- **🚀 Interactive Setup**: `agent init` wizard (`agent quickstart` remains available for backward compatibility).
 
 #### v4.1 - Tool Calling & Agent CLI
 - **🔧 Tool Calling System**: Transfer calls, send emails.
@@ -308,7 +290,7 @@ active_pipeline: local_ollama
 - **Agent CLI Tools**: `doctor`, `troubleshoot`, `demo`, `init` commands.
 - **Modular Pipeline System**: Independent STT, LLM, and TTS provider selection.
 - **Dual Transport Support**: AudioSocket and ExternalMedia RTP (see Transport Compatibility matrix).
-- **High-Performance Architecture**: Separate `ai-engine` and `local-ai-server` containers.
+- **High-Performance Architecture**: Separate `ai_engine` and `local_ai_server` containers.
 - **Observability**: Built-in **Call History** for per-call debugging + optional `/metrics` scraping.
 - **State Management**: SessionStore for centralized, typed call state.
 - **Barge-In Support**: Interrupt handling with configurable gating.
@@ -319,7 +301,7 @@ Modern web interface for configuration and system management.
 
 **Quick Start:**
 ```bash
-docker compose up -d admin-ui
+docker compose up -d admin_ui
 # Access at: http://localhost:3003
 # Login: admin / admin (change immediately!)
 ```
@@ -401,7 +383,8 @@ curl -sSL https://raw.githubusercontent.com/hkjarral/Asterisk-AI-Voice-Agent/mai
 
 **Commands:**
 ```bash
-agent quickstart          # Interactive setup wizard
+agent init               # Interactive setup wizard (recommended)
+# agent quickstart        # Backward-compatible legacy wizard
 agent dialplan            # Generate dialplan snippets
 agent config validate     # Validate configuration
 agent doctor --fix        # System health check
@@ -435,14 +418,14 @@ Per-call debugging is handled via **Admin UI → Call History**.
 
 Two-container architecture for performance and scalability:
 
-1. **`ai-engine`** (Lightweight orchestrator): Connects to Asterisk via ARI, manages call lifecycle.
-2. **`local-ai-server`** (Optional): Runs local STT/LLM/TTS models (Vosk, Sherpa, Kroko, Piper, Kokoro, llama.cpp).
+1. **`ai_engine`** (Lightweight orchestrator): Connects to Asterisk via ARI, manages call lifecycle.
+2. **`local_ai_server`** (Optional): Runs local STT/LLM/TTS models (Vosk, Sherpa, Kroko, Piper, Kokoro, llama.cpp).
 
 ```mermaid
 graph LR
-    A[Asterisk Server] <-->|ARI, RTP| B[ai-engine]
+    A[Asterisk Server] <-->|ARI, RTP| B[ai_engine]
     B <-->|API| C[AI Provider]
-    B <-->|WS| D[local-ai-server]
+    B <-->|WS| D[local_ai_server]
     
     style A fill:#f9f,stroke:#333,stroke-width:2px
     style B fill:#bbf,stroke:#333,stroke-width:2px
@@ -536,3 +519,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 ## 🙏 Show Your Support
 
 If you find this project useful, please give it a ⭐️ on [GitHub](https://github.com/hkjarral/Asterisk-AI-Voice-Agent)!
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=hkjarral/Asterisk-AI-Voice-Agent&type=date&legend=top-left)](https://www.star-history.com/#hkjarral/Asterisk-AI-Voice-Agent&type=date&legend=top-left)

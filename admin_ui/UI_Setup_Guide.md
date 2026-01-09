@@ -14,7 +14,7 @@ The Admin UI provides a modern web interface for managing your Asterisk AI Voice
 - 🧙 **Setup Wizard** - Quick first-time configuration
 - ⚙️ **Configuration Management** - Visual editors for providers, pipelines, contexts
 - 📊 **System Dashboard** - Monitor CPU, memory, and container status
-- 🔍 **Live Logs** - Stream logs from ai-engine in real-time
+- 🔍 **Live Logs** - Stream logs from ai_engine in real-time
 - 📝 **YAML Editor** - Direct config editing with syntax validation
 
 ---
@@ -27,10 +27,10 @@ The Admin UI provides a modern web interface for managing your Asterisk AI Voice
 
 ```bash
 # From your project root (runs in background)
-docker compose up -d --build admin-ui
+docker compose up -d --build admin_ui
 
 # View logs if needed
-docker compose logs -f admin-ui
+docker compose logs -f admin_ui
 ```
 
 That's it! The container will:
@@ -233,7 +233,7 @@ openssl rand -hex 32
 echo "JWT_SECRET=your_generated_secret_here" >> .env
 
 # Restart admin-ui
-docker compose restart admin-ui
+docker compose restart admin_ui
 # OR for standalone:
 kill $(cat admin_ui.pid) && nohup python main.py > admin_ui.log 2>&1 &
 ```
@@ -255,7 +255,7 @@ kill $(cat admin_ui.pid) && nohup python main.py > admin_ui.log 2>&1 &
 rm config/users.json
 
 # Restart admin-ui
-docker compose restart admin-ui
+docker compose restart admin_ui
 ```
 
 ---
@@ -365,7 +365,7 @@ If you've been using `install.sh` and `agent quickstart`, the Admin UI works alo
 
 2. **Start the Admin UI**:
    ```bash
-   docker compose up -d admin-ui
+   docker compose up -d admin_ui
    ```
 
 3. **Access the UI**:
@@ -401,7 +401,7 @@ Both CLI and UI read/write the same files:
 
 The main dashboard shows:
 - **System Metrics**: CPU, memory, disk usage
-- **Container Status**: ai-engine, local-ai-server, admin-ui
+- **Container Status**: ai_engine, local_ai_server, admin_ui
 - **Quick Actions**: Restart containers, view logs
 
 ### Configuration Pages
@@ -494,7 +494,7 @@ contexts:
 - Careful: Invalid YAML will break the system!
 
 **Logs Viewer**:
-- Live streaming from ai-engine
+- Live streaming from ai_engine
 - Filter by container
 - Download logs
 
@@ -516,7 +516,7 @@ docker logs admin_ui
 
 **Rebuild if needed**:
 ```bash
-docker compose up -d --build admin-ui
+docker compose up -d --build admin_ui
 ```
 
 ### Login Not Working
@@ -528,13 +528,13 @@ docker compose up -d --build admin-ui
 **Reset to defaults**:
 ```bash
 # Stop container
-docker compose stop admin-ui
+docker compose stop admin_ui
 
 # Delete users file
 rm config/users.json
 
 # Start container (recreates default user)
-docker compose start admin-ui
+docker compose start admin_ui
 ```
 
 ### 401 Unauthorized Errors
@@ -570,7 +570,7 @@ echo $PROJECT_ROOT
 
 **View detailed logs**:
 ```bash
-docker compose logs admin-ui
+docker compose logs admin_ui
 ```
 
 **Common issues**:
@@ -581,7 +581,7 @@ docker compose logs admin-ui
 **Force rebuild**:
 ```bash
 docker compose down
-docker compose up -d --build admin-ui
+docker compose up -d --build admin_ui
 ```
 
 ### Page Not Loading
@@ -631,7 +631,7 @@ admin-ui:
 
 Then restart:
 ```bash
-docker compose up -d admin-ui
+docker compose up -d admin_ui
 ```
 
 ---
@@ -710,7 +710,7 @@ cat admin_ui.log
 git pull origin develop
 
 # Rebuild and restart
-docker compose up -d --build admin-ui
+docker compose up -d --build admin_ui
 ```
 
 **Standalone deployment**:
@@ -787,19 +787,19 @@ Coming in future releases:
 
 ```bash
 # Start Admin UI (Docker)
-docker compose up -d admin-ui
+docker compose up -d admin_ui
 
 # Stop Admin UI
-docker compose stop admin-ui
+docker compose stop admin_ui
 
 # View logs
 docker logs admin_ui -f
 
 # Restart after changes
-docker compose restart admin-ui
+docker compose restart admin_ui
 
 # Rebuild from scratch
-docker compose up -d --build admin-ui
+docker compose up -d --build admin_ui
 
 # Access UI
 # Browse to: http://localhost:3003
@@ -809,12 +809,12 @@ docker compose up -d --build admin-ui
 
 ```bash
 # Reset to admin/admin
-rm config/users.json && docker compose restart admin-ui
+rm config/users.json && docker compose restart admin_ui
 
 # Restore configuration
 cp config/ai-agent.yaml.backup config/ai-agent.yaml
 cp .env.backup .env
-docker compose restart ai-engine
+docker compose restart ai_engine
 
 # Full restart
 docker compose down

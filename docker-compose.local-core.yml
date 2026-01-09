@@ -4,7 +4,7 @@ services:
   # - keeping builds manageable on typical servers
   #
   # Models are NOT bundled; mount `./models` as usual.
-  local-ai-server:
+  local_ai_server:
     build:
       args:
         INCLUDE_VOSK: "true"

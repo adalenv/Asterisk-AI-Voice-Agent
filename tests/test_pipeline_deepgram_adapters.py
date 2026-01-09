@@ -60,8 +60,38 @@ class _MockWebSocket:
     async def close(self):
         self.closed = True
 
-    def push(self, message):
-        self._queue.put_nowait(message)
+
+class _FakeJsonResponse:
+    def __init__(self, payload: dict, status: int = 200):
+        self._payload = payload
+        self.status = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self):
+        return self._payload
+
+    async def text(self):
+        return json.dumps(self._payload)
+
+
+class _FakeHttpSession:
+    def __init__(self, payload: dict, status: int = 200):
+        self._payload = payload
+        self._status = status
+        self.closed = False
+        self.requests = []
+
+    def post(self, url, headers=None, data=None, timeout=None):
+        self.requests.append({"url": url, "headers": headers, "bytes": len(data or b"")})
+        return _FakeJsonResponse(self._payload, status=self._status)
+
+    async def close(self):
+        self.closed = True
 
 
 class _FakeResponse:
@@ -81,6 +111,9 @@ class _FakeResponse:
     async def text(self):
         return self._body.decode("utf-8", errors="ignore")
 
+    async def json(self):
+        return json.loads(self._body.decode("utf-8"))
+
 
 class _FakeSession:
     def __init__(self, body: bytes, status: int = 200):
@@ -89,8 +122,10 @@ class _FakeSession:
         self.requests = []
         self.closed = False
 
-    def post(self, url, json=None, params=None, headers=None):
-        self.requests.append({"url": url, "json": json, "params": params, "headers": headers})
+    def post(self, url, json=None, params=None, headers=None, data=None, timeout=None):
+        self.requests.append(
+            {"url": url, "json": json, "params": params, "headers": headers, "data": data, "timeout": timeout}
+        )
         return _FakeResponse(self._body, status=self._status)
 
     async def close(self):
@@ -101,31 +136,42 @@ class _FakeSession:
 async def test_deepgram_stt_adapter_transcribes(monkeypatch):
     app_config = _build_app_config()
     provider_config = DeepgramProviderConfig(**app_config.providers["deepgram"])
-    adapter = DeepgramSTTAdapter("deepgram_stt", app_config, provider_config, {"language": "en-US"})
+    deepgram_payload = json.dumps(
+        {
+            "results": {
+                "channels": [
+                    {"alternatives": [{"transcript": "hello world", "confidence": 0.92}]}
+                ]
+            }
+        }
+    ).encode("utf-8")
+    fake_session = _FakeSession(deepgram_payload)
+    adapter = DeepgramSTTAdapter(
+        "deepgram_stt",
+        app_config,
+        provider_config,
+        {"language": "en-US"},
+        session_factory=lambda: fake_session,
+    )
 
-    mock_ws = _MockWebSocket()
-
-    async def fake_connect(*args, **kwargs):
-        return mock_ws
-
-    monkeypatch.setattr("src.pipelines.deepgram.websockets.connect", fake_connect)
+    # Prevent real Deepgram REST call by faking aiohttp.ClientSession used in open_call
+    fake_rest_payload = {
+        "results": {
+            "channels": [
+                {"alternatives": [{"transcript": "hello world", "confidence": 0.92}]}
+            ]
+        }
+    }
+    monkeypatch.setattr(
+        "src.pipelines.deepgram.aiohttp.ClientSession",
+        lambda: _FakeHttpSession(fake_rest_payload, status=200),
+    )
 
     await adapter.start()
     await adapter.open_call("call-1", {"model": "nova-2-general"})
-    mock_ws.push(
-        json.dumps(
-            {
-                "channel": {"alternatives": [{"transcript": "hello world", "confidence": 0.92}]},
-                "is_final": True,
-            }
-        )
-    )
-
     audio_buffer = b"\x00\x00" * 160
     transcript = await adapter.transcribe("call-1", audio_buffer, 8000, {})
     assert transcript == "hello world"
-    assert mock_ws.sent[0] == audio_buffer
-    assert json.loads(mock_ws.sent[1])["type"] == "flush"
 
 
 @pytest.mark.asyncio

@@ -140,7 +140,7 @@ class CallSession:
     last_streaming_error: Optional[str] = None
     caller_audio_format: str = "ulaw"
     caller_sample_rate: int = 8000
-    transport_profile: Optional[Any] = None  # OrchestratorTransportProfile from transport_orchestrator.py
+    transport_profile: Any = field(default_factory=LegacyTransportProfile)  # OrchestratorTransportProfile compatible
     codec_alignment_ok: bool = True
     codec_alignment_message: Optional[str] = None
     audio_diagnostics: Dict[str, Any] = field(default_factory=dict)
@@ -156,6 +156,13 @@ class CallSession:
     barge_in_count: int = 0                                          # Total barge-in attempts
     error_message: Optional[str] = None                              # Error if call failed
     transfer_destination: Optional[str] = None                       # Transfer target if transferred
+
+    # Outbound campaign dialer (Milestone 22)
+    is_outbound: bool = False
+    outbound_campaign_id: Optional[str] = None
+    outbound_lead_id: Optional[str] = None
+    outbound_attempt_id: Optional[str] = None
+    outbound_custom_vars: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         """Initialize default VAD and fallback state."""

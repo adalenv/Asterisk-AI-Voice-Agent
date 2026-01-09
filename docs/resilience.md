@@ -69,8 +69,8 @@ The `ai-engine` exposes health endpoints on port 15000 (localhost by default).
 
 ### Scenario: Service is Unhealthy or in a Restart Loop
 
-1. **Symptom**: `docker-compose ps` shows the `ai-engine` restarting, or the `/health` endpoint returns a 503 error.
-2. **Check Logs**: `docker-compose logs -f ai-engine`.
+1. **Symptom**: `docker compose ps` shows the `ai_engine` restarting, or the `/health` endpoint returns a 503 error.
+2. **Check Logs**: `docker compose logs -f ai_engine`.
 3. **Potential Causes & Fixes**:
     - **Cannot connect to ARI**:
         - Verify Asterisk is running.

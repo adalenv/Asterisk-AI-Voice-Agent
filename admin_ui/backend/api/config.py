@@ -1,20 +1,61 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 import yaml
+from yaml.constructor import ConstructorError
+from yaml.nodes import MappingNode, SequenceNode, ScalarNode
 import os
 import re
 import asyncio
 import glob
 import tempfile
 import sys
+import logging
 from contextlib import contextmanager
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, Union
+from urllib.parse import urlparse
 import settings
 
 # A11: Maximum number of backups to keep
 MAX_BACKUPS = 5
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+def _assert_no_duplicate_yaml_keys(node: yaml.Node) -> None:
+    """
+    Detect duplicate mapping keys before calling yaml.safe_load().
+
+    We avoid yaml.load() here to keep CodeQL happy while still enforcing our
+    "no duplicate keys" constraint for Admin UI config edits.
+    """
+    if isinstance(node, MappingNode):
+        seen: dict[str, ScalarNode] = {}
+        for key_node, value_node in node.value:
+            # Config files use string keys; if not, fall back to a stable repr.
+            if isinstance(key_node, ScalarNode):
+                key = str(key_node.value)
+            else:
+                key = str(key_node)
+            if key in seen:
+                raise ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    f"found duplicate key ({key!r})",
+                    key_node.start_mark,
+                )
+            if isinstance(key_node, ScalarNode):
+                seen[key] = key_node
+            _assert_no_duplicate_yaml_keys(value_node)
+    elif isinstance(node, SequenceNode):
+        for item in node.value:
+            _assert_no_duplicate_yaml_keys(item)
+
+
+def _safe_load_no_duplicates(content: str):
+    node = yaml.compose(content, Loader=yaml.SafeLoader)
+    if node is not None:
+        _assert_no_duplicate_yaml_keys(node)
+    return yaml.safe_load(content)
 
 # Regex to strip ANSI escape codes from logs
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -22,6 +63,12 @@ ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 def strip_ansi_codes(text: str) -> str:
     """Remove ANSI escape codes from text for clean log files."""
     return ANSI_ESCAPE.sub('', text)
+
+def _url_host(url: str) -> str:
+    try:
+        return (urlparse(str(url)).hostname or "").lower()
+    except Exception:
+        return ""
 
 
 def _rotate_backups(base_path: str) -> None:
@@ -161,7 +208,7 @@ def _validate_ai_agent_config(content: str) -> Dict[str, Any]:
       HTTPException(400) on validation errors
     """
     try:
-        parsed = yaml.safe_load(content) or {}
+        parsed = _safe_load_no_duplicates(content) or {}
     except yaml.YAMLError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {str(exc)}")
 
@@ -297,8 +344,8 @@ async def update_yaml_config(update: ConfigUpdate):
                     old_content = f.read()
             
             if old_content:
-                old_parsed = yaml.safe_load(old_content) or {}
-                new_parsed = yaml.safe_load(update.content) or {}
+                old_parsed = _safe_load_no_duplicates(old_content) or {}
+                new_parsed = _safe_load_no_duplicates(update.content) or {}
                 
                 # Keys that can be hot-reloaded
                 hot_reload_keys = {'contexts', 'profiles', 'mcp'}
@@ -315,9 +362,9 @@ async def update_yaml_config(update: ConfigUpdate):
         except Exception:
             pass  # Fall back to restart if comparison fails
         
-        apply_plan = ([{"service": "ai-engine", "method": "hot_reload", "endpoint": "/api/system/containers/ai_engine/reload"}]
+        apply_plan = ([{"service": "ai_engine", "method": "hot_reload", "endpoint": "/api/system/containers/ai_engine/reload"}]
                      if recommended_method == "hot_reload"
-                     else [{"service": "ai-engine", "method": "restart", "endpoint": "/api/system/containers/ai_engine/restart"}])
+                     else [{"service": "ai_engine", "method": "restart", "endpoint": "/api/system/containers/ai_engine/restart"}])
 
         return {
             "status": "success",
@@ -341,7 +388,7 @@ async def get_yaml_config():
     try:
         with open(settings.CONFIG_PATH, 'r') as f:
             config_content = f.read()
-        yaml.safe_load(config_content) # Validate content is still valid YAML
+        _safe_load_no_duplicates(config_content)  # Validate YAML and reject duplicate keys
         return {"content": config_content}
     except yaml.YAMLError as e:
         raise HTTPException(status_code=500, detail=f"Error reading or parsing YAML config: {str(e)}")
@@ -569,11 +616,11 @@ async def update_env(env_data: Dict[str, Optional[str]]):
 
         apply_plan = []
         if impacts_ai_engine:
-            apply_plan.append({"service": "ai-engine", "method": "restart", "endpoint": "/api/system/containers/ai_engine/restart"})
+            apply_plan.append({"service": "ai_engine", "method": "restart", "endpoint": "/api/system/containers/ai_engine/restart"})
         if impacts_local_ai:
-            apply_plan.append({"service": "local-ai-server", "method": "restart", "endpoint": "/api/system/containers/local_ai_server/restart"})
+            apply_plan.append({"service": "local_ai_server", "method": "restart", "endpoint": "/api/system/containers/local_ai_server/restart"})
         if impacts_admin_ui:
-            apply_plan.append({"service": "admin-ui", "method": "restart", "endpoint": "/api/system/containers/admin_ui/restart"})
+            apply_plan.append({"service": "admin_ui", "method": "restart", "endpoint": "/api/system/containers/admin_ui/restart"})
 
         message = "Environment saved. Restart impacted services to apply changes."
         if impacts_admin_ui:
@@ -665,45 +712,61 @@ async def test_provider_connection(request: ProviderTestRequest):
                 ws_url = 'ws://127.0.0.1:8765'  # Default fallback
             
             try:
-                async with websockets.connect(ws_url, open_timeout=5.0) as ws:
-                    # Send status request to check models
-                    await ws.send(json.dumps({"type": "status"}))
-                    response = await asyncio.wait_for(ws.recv(), timeout=5.0)
-                    data = json.loads(response)
-                    
-                    if data.get("type") == "status_response" and data.get("status") == "ok":
-                        models = data.get("models", {})
-                        stt_loaded = models.get("stt", {}).get("loaded", False)
-                        llm_loaded = models.get("llm", {}).get("loaded", False)
-                        tts_loaded = models.get("tts", {}).get("loaded", False)
-                        
-                        stt_backend = data.get("stt_backend", "unknown")
-                        tts_backend = data.get("tts_backend", "unknown")
-                        llm_model = models.get("llm", {}).get("path", "").split("/")[-1] if models.get("llm", {}).get("path") else "none"
-                        
-                        status_parts = []
-                        if stt_loaded:
-                            status_parts.append(f"STT: {stt_backend} ✓")
-                        else:
-                            status_parts.append(f"STT: not loaded")
-                        if llm_loaded:
-                            status_parts.append(f"LLM: {llm_model} ✓")
-                        else:
-                            status_parts.append(f"LLM: not loaded")
-                        if tts_loaded:
-                            status_parts.append(f"TTS: {tts_backend} ✓")
-                        else:
-                            status_parts.append(f"TTS: not loaded")
-                        
-                        all_loaded = stt_loaded and llm_loaded and tts_loaded
-                        return {
-                            "success": all_loaded,
-                            "message": f"Local AI Server connected. {' | '.join(status_parts)}"
-                        }
+                def _fallback_ws_url(url: str) -> str:
+                    """
+                    In host-networked deployments, `local_ai_server` DNS does not resolve because it is not
+                    a Docker bridge network hostname. Fall back to localhost for best compatibility.
+                    """
+                    try:
+                        if 'local_ai_server' in url:
+                            return url.replace('local_ai_server', '127.0.0.1')
+                    except Exception:
+                        pass
+                    return url
+
+                async def _try_connect(url: str):
+                    async with websockets.connect(url, open_timeout=5.0) as ws:
+                        # Send status request to check models
+                        await ws.send(json.dumps({"type": "status"}))
+                        response = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                        data = json.loads(response)
+                        return data
+
+                try:
+                    data = await _try_connect(ws_url)
+                    effective_url = ws_url
+                except Exception as e:
+                    alt = _fallback_ws_url(ws_url)
+                    if alt != ws_url:
+                        data = await _try_connect(alt)
+                        effective_url = alt
                     else:
-                        return {"success": False, "message": "Local AI Server responded but status invalid"}
+                        raise e
+
+                if data.get("type") == "status_response" and data.get("status") == "ok":
+                    models = data.get("models", {})
+                    stt_loaded = models.get("stt", {}).get("loaded", False)
+                    llm_loaded = models.get("llm", {}).get("loaded", False)
+                    tts_loaded = models.get("tts", {}).get("loaded", False)
+
+                    stt_backend = data.get("stt_backend", "unknown")
+                    tts_backend = data.get("tts_backend", "unknown")
+                    llm_model = models.get("llm", {}).get("path", "").split("/")[-1] if models.get("llm", {}).get("path") else "none"
+
+                    status_parts = []
+                    status_parts.append(f"STT: {stt_backend} ✓" if stt_loaded else "STT: not loaded")
+                    status_parts.append(f"LLM: {llm_model} ✓" if llm_loaded else "LLM: not loaded")
+                    status_parts.append(f"TTS: {tts_backend} ✓" if tts_loaded else "TTS: not loaded")
+
+                    all_loaded = stt_loaded and llm_loaded and tts_loaded
+                    return {
+                        "success": all_loaded,
+                        "message": f"Local AI Server connected ({effective_url}). {' | '.join(status_parts)}",
+                    }
+                return {"success": False, "message": "Local AI Server responded but status invalid"}
             except Exception as e:
-                return {"success": False, "message": f"Cannot connect to Local AI Server at {ws_url}: {str(e)}"}
+                logger.debug("Local AI Server validation failed", error=str(e), exc_info=True)
+                return {"success": False, "message": f"Cannot connect to Local AI Server at {ws_url} (see server logs)"}
         
         # ============================================================
         # ELEVENLABS AGENT - check before other providers
@@ -751,6 +814,17 @@ async def test_provider_connection(request: ProviderTestRequest):
             chat_base_url = (provider_config.get('chat_base_url') or 'https://api.openai.com/v1').rstrip('/')
             api_key = provider_config.get('api_key')
             if not api_key:
+                inferred_env = None
+                host = _url_host(chat_base_url)
+                if 'groq' in provider_name or host == 'api.groq.com':
+                    inferred_env = 'GROQ_API_KEY'
+                elif 'openai' in provider_name or host == 'api.openai.com':
+                    inferred_env = 'OPENAI_API_KEY'
+
+                if inferred_env:
+                    api_key = get_env_key(inferred_env) or os.getenv(inferred_env) or ''
+
+            if not api_key:
                 return {"success": False, "message": "API key missing for OpenAI-compatible provider (set api_key or env var)"}
 
             try:
@@ -771,7 +845,42 @@ async def test_provider_connection(request: ProviderTestRequest):
                         return {"success": False, "message": "Invalid API key (401)"}
                     return {"success": False, "message": f"Provider API error: HTTP {response.status_code}"}
             except Exception as e:
-                return {"success": False, "message": f"Cannot connect to provider at {chat_base_url}: {str(e)}"}
+                # Avoid leaking exception internals in API responses (CodeQL).
+                logger.debug("OpenAI-compatible provider validation failed", error=str(e), exc_info=True)
+                return {"success": False, "message": f"Cannot connect to provider at {chat_base_url} (see server logs)"}
+
+        # ============================================================
+        # GROQ SPEECH (STT/TTS) - validate via /models (OpenAI-compatible)
+        # ============================================================
+        if provider_config.get('type') == 'groq':
+            api_key = provider_config.get('api_key') or get_env_key('GROQ_API_KEY') or os.getenv('GROQ_API_KEY') or ''
+            if not api_key:
+                return {"success": False, "message": "GROQ_API_KEY not set (set api_key or env var)"}
+
+            # SECURITY: For provider validation, do not call user-provided base URLs.
+            # Keep this check pinned to the official Groq OpenAI-compatible endpoint.
+            base_url = 'https://api.groq.com/openai/v1'
+
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        f"{base_url}/models",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=10.0,
+                    )
+                    if response.status_code == 200:
+                        try:
+                            data = response.json()
+                            models = data.get('data') or []
+                            return {"success": True, "message": f"Connected (Groq Speech). Found {len(models)} models."}
+                        except Exception:
+                            return {"success": True, "message": f"Connected (Groq Speech) (HTTP {response.status_code})"}
+                    if response.status_code == 401:
+                        return {"success": False, "message": "Invalid API key (401)"}
+                    return {"success": False, "message": f"Provider API error: HTTP {response.status_code}"}
+            except Exception as e:
+                logger.debug("Groq Speech provider validation failed", error=str(e), exc_info=True)
+                return {"success": False, "message": f"Cannot connect to provider at {base_url} (see server logs)"}
                 
         elif 'google_live' in provider_config or ('llm_model' in provider_config and 'gemini' in provider_config.get('llm_model', '')):
             # Google Live
@@ -1094,7 +1203,7 @@ def update_yaml_provider_field(provider_name: str, field: str, value: Any) -> bo
             return False
 
         with open(settings.CONFIG_PATH, 'r') as f:
-            config = yaml.safe_load(f)
+            config = _safe_load_no_duplicates(f.read())
 
         if not isinstance(config, dict):
             return False

@@ -50,9 +50,10 @@ def test_output_rate_drift_adjusts_active_rate(openai_config):
 
     try:
         assert provider._output_rate_warned is True
+        # Measured bytes/time reflects real-time playback pacing, not PCM sample rate.
+        # Provider should keep the configured sample rate for correct resampling.
         assert provider._active_output_sample_rate_hz is not None
-        # Drift adjustment should bring active rate close to the measured 9 kHz
-        assert abs(provider._active_output_sample_rate_hz - 9000) < 500
+        assert provider._active_output_sample_rate_hz == pytest.approx(openai_config.output_sample_rate_hz)
     finally:
         _cleanup_metrics(call_id)
 
@@ -70,8 +71,8 @@ async def test_session_requests_g711_when_target_mulaw(openai_config):
     await provider._send_session_update()
 
     fmt = captured.get("session", {}).get("output_audio_format")
-    assert isinstance(fmt, dict)
-    assert fmt.get("type") == "g711_ulaw"
-    assert fmt.get("sample_rate") == openai_config.target_sample_rate_hz
-    assert provider._provider_output_format == "g711_ulaw"
-    assert provider._session_output_bytes_per_sample == 1
+    # OpenAI Realtime expects a string token ('pcm16', 'g711_ulaw', ...)
+    # output_audio_format should reflect what OpenAI sends (output_encoding), not downstream target_encoding.
+    assert fmt == "pcm16"
+    assert provider._provider_output_format == "pcm16"
+    assert provider._session_output_bytes_per_sample == 2

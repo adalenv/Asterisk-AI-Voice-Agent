@@ -184,7 +184,7 @@ agent doctor [flags]
 $ agent doctor
 
 [1/11] Docker Daemon...     ✅ Docker running (v26.1.4)
-[2/11] Containers...        ✅ ai-engine running (healthy)
+[2/11] Containers...        ✅ ai_engine running (healthy)
 [3/11] Asterisk ARI...      ✅ Connected to 127.0.0.1:8088
 [4/11] AudioSocket Port...  ✅ Port 8090 listening
 [5/11] Configuration...     ✅ YAML valid
@@ -284,7 +284,7 @@ Recommendations:
   - Consider OpenAI Realtime for lower latency
   - Check network connectivity to cloud LLM
 
-Detailed logs: /var/log/ai-engine/call-1763582071.6214.log
+Detailed logs: /var/log/ai_engine/call-1763582071.6214.log
 ```
 
 ---

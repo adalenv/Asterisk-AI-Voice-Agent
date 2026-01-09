@@ -92,7 +92,7 @@ class Component(ABC):
     
     def _extract_base_url(self, options: Dict[str, Any]) -> Optional[str]:
         """Extract base URL from options, handling various naming patterns."""
-        for key in ["base_url", "chat_base_url", "ws_url", "url", "endpoint"]:
+        for key in ["base_url", "chat_base_url", "stt_base_url", "tts_base_url", "ws_url", "url", "endpoint"]:
             if key in options and options[key]:
                 return options[key]
         return None
@@ -214,7 +214,21 @@ class Component(ABC):
         base_url = self._extract_base_url(options)
         
         if not base_url:
-            return {"healthy": False, "error": "No base_url/ws_url configured in options", "details": {"checked_keys": ["base_url", "chat_base_url", "ws_url", "url", "endpoint"]}}
+            return {
+                "healthy": False,
+                "error": "No base_url/ws_url configured in options",
+                "details": {
+                    "checked_keys": [
+                        "base_url",
+                        "chat_base_url",
+                        "stt_base_url",
+                        "tts_base_url",
+                        "ws_url",
+                        "url",
+                        "endpoint",
+                    ]
+                },
+            }
         
         # 2. Auto-detect credentials
         api_key = self._auto_detect_credentials(options)
@@ -292,5 +306,3 @@ class TTSComponent(Component):
         options: Dict[str, Any],
     ) -> AsyncIterator[bytes]:
         """Yield audio frames (μ-law or PCM) for the supplied text."""
-
-

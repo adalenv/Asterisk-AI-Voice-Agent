@@ -1,5 +1,6 @@
 # --- Stage 1: Builder (Dependencies) ---
-FROM python:3.11 as builder
+# Note: Using trixie (Debian 13) for glibc compatibility with Kroko binary
+FROM python:3.11-slim-trixie as builder
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Build Args - Conditionally include backends (AAVA-112)
@@ -16,6 +17,18 @@ ARG INCLUDE_MELOTTS=false
 ARG INCLUDE_LLAMA=true
 
 WORKDIR /usr/src/app
+
+# Some optional backends require native builds (e.g., llama-cpp-python) or git installs (MeloTTS).
+# Install build tooling only when those backends are enabled to keep CI "ci-min" builds lean.
+RUN apt-get -o Acquire::Retries=5 update && \
+    if [ "$INCLUDE_LLAMA" = "true" ] || [ "$INCLUDE_MELOTTS" = "true" ] || [ "$INCLUDE_WHISPER_CPP" = "true" ]; then \
+        apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            git \
+            ; \
+    fi && \
+    rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment
 RUN python -m venv /opt/venv
@@ -80,13 +93,14 @@ RUN if [ "$INCLUDE_KOKORO" = "true" ]; then \
     fi
 
 # --- Stage 2: Final Runtime Image ---
-FROM python:3.11-slim
+# Using trixie (Debian 13) for Kroko binary compatibility (requires glibc 2.38+)
+FROM python:3.11-slim-trixie
 
 # Build argument to optionally include Kroko embedded server
 ARG INCLUDE_KROKO_EMBEDDED=false
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get -o Acquire::Retries=5 update && apt-get install -y \
     libsndfile1 \
     libasound2 \
     libportaudio2 \

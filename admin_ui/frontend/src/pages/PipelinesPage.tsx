@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import yaml from 'js-yaml';
+import { sanitizeConfigForSave } from '../utils/configSanitizers';
 import { Plus, Settings, Trash2, ArrowRight, Workflow, AlertTriangle, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { ConfigSection } from '../components/ui/ConfigSection';
 import { ConfigCard } from '../components/ui/ConfigCard';
@@ -11,11 +12,89 @@ import { ensureModularKey, isFullAgentProvider } from '../utils/providerNaming';
 const PipelinesPage = () => {
     const [config, setConfig] = useState<any>({});
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const [editingPipeline, setEditingPipeline] = useState<string | null>(null);
     const [pipelineForm, setPipelineForm] = useState<any>({});
     const [isNewPipeline, setIsNewPipeline] = useState(false);
     const [pendingRestart, setPendingRestart] = useState(false);
     const [restartingEngine, setRestartingEngine] = useState(false);
+    const providers = config?.providers || {};
+
+    const compactModelLabel = (val: any) => {
+        if (val == null) return '';
+        const str = String(val).trim();
+        if (!str) return '';
+        const looksLikePath =
+            str.includes('models/') ||
+            str.startsWith('/') ||
+            str.endsWith('.onnx') ||
+            str.endsWith('.gguf') ||
+            str.endsWith('.bin') ||
+            str.endsWith('.pt') ||
+            str.endsWith('.pth') ||
+            str.endsWith('.tflite');
+        if (looksLikePath && str.includes('/')) {
+            const parts = str.split('/').filter(Boolean);
+            return parts[parts.length - 1] || str;
+        }
+        return str;
+    };
+
+    const getProviderModelLabel = (providerKey: string, role: 'stt' | 'llm' | 'tts', pipeline: any) => {
+        const provider = (providerKey && providers && (providers as any)[providerKey]) ? (providers as any)[providerKey] : null;
+        if (!provider) return 'default';
+
+        if (role === 'stt') {
+            const model = provider?.stt_model || provider?.model || pipeline?.options?.stt?.model || '';
+            const label = compactModelLabel(model);
+            if (label) return label;
+            const explicit = pipeline?.options?.stt?.streaming;
+            if (explicit != null) return explicit ? 'Streaming' : 'Buffered';
+            return providerKey === 'local_stt' ? 'Streaming' : 'Buffered';
+        }
+
+        if (role === 'tts') {
+            // Local TTS typically stores the voice/model path in `tts_voice`.
+            const modelOrVoice = provider?.tts_model || provider?.model_id || provider?.model || provider?.tts_voice || '';
+            const label = compactModelLabel(modelOrVoice);
+            const voice = provider?.voice || '';
+            if (label && voice && voice !== label) return `${label} (${voice})`;
+            if (label) return label;
+            return pipeline?.options?.tts?.format?.encoding || 'mulaw';
+        }
+
+        const llmLabel =
+            provider?.chat_model ||
+            provider?.llm_model ||
+            provider?.model ||
+            pipeline?.options?.llm?.chat_model ||
+            pipeline?.options?.llm?.model ||
+            '';
+        return compactModelLabel(llmLabel) || 'default model';
+    };
+
+    const normalizeSttOptions = (sttKey: string, sttOptions: any) => {
+        const opts = (sttOptions && typeof sttOptions === 'object') ? sttOptions : {};
+
+        if (sttKey === 'local_stt') {
+            return {
+                streaming: true,
+                chunk_ms: 160,
+                stream_format: 'pcm16_16k',
+                mode: 'stt',
+            };
+        }
+
+        const normalized: any = {};
+        normalized.chunk_ms = typeof opts.chunk_ms === 'number' ? opts.chunk_ms : 4000;
+        if (typeof opts.response_format === 'string') normalized.response_format = opts.response_format;
+        if (typeof opts.temperature === 'number') normalized.temperature = opts.temperature;
+        if (typeof opts.language === 'string') normalized.language = opts.language;
+        if (typeof opts.prompt === 'string') normalized.prompt = opts.prompt;
+        if (opts.request_timeout_sec != null) normalized.request_timeout_sec = opts.request_timeout_sec;
+        if (opts.timeout_sec != null) normalized.timeout_sec = opts.timeout_sec;
+        return normalized;
+    };
 
     useEffect(() => {
         fetchConfig();
@@ -26,8 +105,15 @@ const PipelinesPage = () => {
             const res = await axios.get('/api/config/yaml');
             const parsed = yaml.load(res.data.content) as any;
             setConfig(parsed || {});
+            setError(null);
         } catch (err) {
             console.error('Failed to load config', err);
+            const status = (err as any)?.response?.status;
+            if (status === 401) {
+                setError('Not authenticated. Please refresh and log in again.');
+            } else {
+                setError('Failed to load configuration. Check backend logs and try again.');
+            }
         } finally {
             setLoading(false);
         }
@@ -35,8 +121,9 @@ const PipelinesPage = () => {
 
     const saveConfig = async (newConfig: any) => {
         try {
-            await axios.post('/api/config/yaml', { content: yaml.dump(newConfig) });
-            setConfig(newConfig);
+            const sanitized = sanitizeConfigForSave(newConfig);
+            await axios.post('/api/config/yaml', { content: yaml.dump(sanitized) });
+            setConfig(sanitized);
             setPendingRestart(true);
         } catch (err) {
             console.error('Failed to save config', err);
@@ -79,7 +166,9 @@ const PipelinesPage = () => {
 
     const handleEditPipeline = (name: string) => {
         setEditingPipeline(name);
-        setPipelineForm({ name, ...config.pipelines?.[name] });
+        const existing = config.pipelines?.[name] || {};
+        const { tools: _legacyTools, ...rest } = (existing && typeof existing === 'object') ? existing : {};
+        setPipelineForm({ name, ...rest });
         setIsNewPipeline(false);
     };
 
@@ -94,8 +183,7 @@ const PipelinesPage = () => {
                 stt: { streaming: true, chunk_ms: 160, stream_format: 'pcm16_16k' },
                 llm: { model: 'gpt-4o-mini', temperature: 0.7, max_tokens: 150 },
                 tts: { format: { encoding: 'mulaw', sample_rate: 8000 } }
-            },
-            tools: []
+            }
         });
         setIsNewPipeline(true);
     };
@@ -122,6 +210,11 @@ const PipelinesPage = () => {
             llm: ensureModularKey(pipelineForm.llm || '', 'llm'),
             tts: ensureModularKey(pipelineForm.tts || '', 'tts'),
         };
+
+        // Tools allowlists belong to Contexts. Strip pipeline-level tools from the saved config.
+        if ('tools' in normalizedForm) {
+            delete normalizedForm.tools;
+        }
 
         // Validate required components
         if (!normalizedForm.stt || !normalizedForm.llm || !normalizedForm.tts) {
@@ -190,7 +283,58 @@ const PipelinesPage = () => {
 
         // Merge with existing config
         const existingData = !isNewPipeline && config.pipelines ? config.pipelines[pipelineName] : {};
-        newConfig.pipelines[pipelineName] = { ...existingData, ...pipelineData };
+        const mergedPipeline = { ...existingData, ...pipelineData };
+        // Tools are configured per-context only (pipelines.*.tools is deprecated).
+        delete (mergedPipeline as any).tools;
+
+        // If the user swaps a component provider, provider-specific option keys from the old provider can linger
+        // (e.g., Groq TTS voice "hannah" carried into OpenAI TTS and causing silent greetings).
+        // Keep only portable TTS options when TTS provider changes.
+        if (!isNewPipeline && existingData?.tts && mergedPipeline.tts && existingData.tts !== mergedPipeline.tts) {
+            const existingTtsOpts = (existingData.options || {}).tts || {};
+            const nextTtsOpts = (mergedPipeline.options || {}).tts || existingTtsOpts;
+            const portable: any = {};
+            if (nextTtsOpts && typeof nextTtsOpts === 'object') {
+                if (nextTtsOpts.format) portable.format = nextTtsOpts.format;
+                if (nextTtsOpts.response_format) portable.response_format = nextTtsOpts.response_format;
+                if (nextTtsOpts.chunk_size_ms != null) portable.chunk_size_ms = nextTtsOpts.chunk_size_ms;
+                if (nextTtsOpts.timeout_sec != null) portable.timeout_sec = nextTtsOpts.timeout_sec;
+                if (nextTtsOpts.response_timeout_sec != null) portable.response_timeout_sec = nextTtsOpts.response_timeout_sec;
+                if (nextTtsOpts.mode) portable.mode = nextTtsOpts.mode;
+            }
+            mergedPipeline.options = { ...(mergedPipeline.options || {}), tts: portable };
+        }
+
+        // Keep only portable STT options when STT provider changes (avoid carrying provider-specific models).
+        if (!isNewPipeline && existingData?.stt && mergedPipeline.stt && existingData.stt !== mergedPipeline.stt) {
+            const existingSttOpts = (existingData.options || {}).stt || {};
+            const nextSttOpts = (mergedPipeline.options || {}).stt || existingSttOpts;
+            mergedPipeline.options = { ...(mergedPipeline.options || {}), stt: normalizeSttOptions(mergedPipeline.stt, nextSttOpts) };
+        }
+
+        // Keep only portable LLM options when LLM provider changes (avoid carrying provider-specific base_url/model).
+        if (!isNewPipeline && existingData?.llm && mergedPipeline.llm && existingData.llm !== mergedPipeline.llm) {
+            const existingLlmOpts = (existingData.options || {}).llm || {};
+            const nextLlmOpts = (mergedPipeline.options || {}).llm || existingLlmOpts;
+            const portable: any = {};
+            if (nextLlmOpts && typeof nextLlmOpts === 'object') {
+                if (nextLlmOpts.max_tokens != null) portable.max_tokens = nextLlmOpts.max_tokens;
+                if (nextLlmOpts.temperature != null) portable.temperature = nextLlmOpts.temperature;
+                if (nextLlmOpts.top_p != null) portable.top_p = nextLlmOpts.top_p;
+                if (nextLlmOpts.top_k != null) portable.top_k = nextLlmOpts.top_k;
+                if (nextLlmOpts.response_timeout_sec != null) portable.response_timeout_sec = nextLlmOpts.response_timeout_sec;
+                if (nextLlmOpts.timeout_sec != null) portable.timeout_sec = nextLlmOpts.timeout_sec;
+                if (nextLlmOpts.mode) portable.mode = nextLlmOpts.mode;
+            }
+            mergedPipeline.options = { ...(mergedPipeline.options || {}), llm: portable };
+        }
+
+        // Always normalize STT options for the selected STT provider. This prevents stale cloud STT keys
+        // (e.g., response_format/temperature/chunk_ms=4000) from breaking local_stt when users swap providers.
+        mergedPipeline.options = { ...(mergedPipeline.options || {}) };
+        mergedPipeline.options.stt = normalizeSttOptions(mergedPipeline.stt, (mergedPipeline.options || {}).stt);
+
+        newConfig.pipelines[pipelineName] = mergedPipeline;
 
         await saveConfig(newConfig);
         setEditingPipeline(null);
@@ -222,6 +366,21 @@ const PipelinesPage = () => {
                     {restartingEngine ? 'Restarting...' : 'Reload AI Engine'}
                 </button>
             </div>
+
+            {error && (
+                <div className="bg-red-500/15 border border-red-500/30 text-red-700 dark:text-red-400 p-4 rounded-md flex items-center justify-between">
+                    <div className="flex items-center">
+                        <AlertCircle className="w-5 h-5 mr-2" />
+                        {error}
+                    </div>
+                    <button
+                        onClick={() => window.location.reload()}
+                        className="flex items-center text-xs px-3 py-1.5 rounded transition-colors bg-red-500 text-white hover:bg-red-600 font-medium"
+                    >
+                        Reload
+                    </button>
+                </div>
+            )}
 
             <div className="flex justify-between items-center">
                 <div>
@@ -301,7 +460,7 @@ const PipelinesPage = () => {
                                     <span className="font-semibold text-xs uppercase tracking-wider text-muted-foreground mb-1">STT</span>
                                     <span className="font-medium">{pipeline.stt || 'default'}</span>
                                     <span className="text-xs text-muted-foreground mt-1">
-                                        {pipeline.options?.stt?.streaming ? 'Streaming' : 'Buffered'}
+                                        {getProviderModelLabel(pipeline.stt || '', 'stt', pipeline)}
                                     </span>
                                 </div>
 
@@ -312,7 +471,7 @@ const PipelinesPage = () => {
                                     <span className="font-semibold text-xs uppercase tracking-wider text-primary mb-1">LLM</span>
                                     <span className="font-medium">{pipeline.llm || 'default'}</span>
                                     <span className="text-xs text-muted-foreground mt-1">
-                                        {pipeline.options?.llm?.model || 'default model'}
+                                        {getProviderModelLabel(pipeline.llm || '', 'llm', pipeline)}
                                     </span>
                                 </div>
 
@@ -323,7 +482,7 @@ const PipelinesPage = () => {
                                     <span className="font-semibold text-xs uppercase tracking-wider text-muted-foreground mb-1">TTS</span>
                                     <span className="font-medium">{pipeline.tts || 'default'}</span>
                                     <span className="text-xs text-muted-foreground mt-1">
-                                        {pipeline.options?.tts?.format?.encoding || 'mulaw'}
+                                        {getProviderModelLabel(pipeline.tts || '', 'tts', pipeline)}
                                     </span>
                                 </div>
                             </div>

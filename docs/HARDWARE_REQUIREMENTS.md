@@ -358,7 +358,7 @@ docker stats ai_engine local_ai_server
 # Make test call and measure response time
 # Check logs for turn_response_latency
 
-docker compose logs -f ai-engine | grep "turn_response_latency"
+docker compose logs -f ai_engine | grep "turn_response_latency"
 ```
 
 Expected response times:

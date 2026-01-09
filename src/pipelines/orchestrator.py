@@ -19,6 +19,8 @@ from ..config import (
     DeepgramProviderConfig,
     ElevenLabsProviderConfig,
     GoogleProviderConfig,
+    GroqSTTProviderConfig,
+    GroqTTSProviderConfig,
     LocalProviderConfig,
     OpenAIProviderConfig,
 )
@@ -31,6 +33,7 @@ from .google import GoogleLLMAdapter, GoogleSTTAdapter, GoogleTTSAdapter
 from .local import LocalLLMAdapter, LocalSTTAdapter, LocalTTSAdapter
 from .ollama import OllamaLLMAdapter
 from .openai import OpenAISTTAdapter, OpenAILLMAdapter, OpenAITTSAdapter
+from .groq import GroqSTTAdapter, GroqTTSAdapter
 
 logger = get_logger(__name__)
 
@@ -220,6 +223,8 @@ class PipelineOrchestrator:
         self._openai_provider_config: Optional[OpenAIProviderConfig] = self._hydrate_openai_config()
         self._google_provider_config: Optional[GoogleProviderConfig] = self._hydrate_google_config()
         self._elevenlabs_provider_config: Optional[ElevenLabsProviderConfig] = self._hydrate_elevenlabs_config()
+        self._groq_stt_provider_config: Optional[GroqSTTProviderConfig] = self._hydrate_groq_stt_config()
+        self._groq_tts_provider_config: Optional[GroqTTSProviderConfig] = self._hydrate_groq_tts_config()
         self._register_builtin_factories()
 
         self._assignments: Dict[str, PipelineResolution] = {}
@@ -530,6 +535,29 @@ class PipelineOrchestrator:
         else:
             logger.debug("Google pipeline adapters not registered - credentials unavailable or invalid")
 
+        if self._groq_stt_provider_config:
+            stt_factory = self._make_groq_stt_factory(self._groq_stt_provider_config)
+            self.register_factory("groq_stt", stt_factory)
+            logger.info(
+                "Groq STT pipeline adapter registered",
+                stt_factory="groq_stt",
+                model=self._groq_stt_provider_config.stt_model,
+            )
+        else:
+            logger.debug("Groq STT pipeline adapter not registered - API key unavailable or config missing")
+
+        if self._groq_tts_provider_config:
+            tts_factory = self._make_groq_tts_factory(self._groq_tts_provider_config)
+            self.register_factory("groq_tts", tts_factory)
+            logger.info(
+                "Groq TTS pipeline adapter registered",
+                tts_factory="groq_tts",
+                model=self._groq_tts_provider_config.tts_model,
+                voice=self._groq_tts_provider_config.voice,
+            )
+        else:
+            logger.debug("Groq TTS pipeline adapter not registered - API key unavailable or config missing")
+
         # ElevenLabs TTS adapter
         if self._elevenlabs_provider_config:
             tts_factory = self._make_elevenlabs_tts_factory(self._elevenlabs_provider_config)
@@ -544,12 +572,21 @@ class PipelineOrchestrator:
             logger.debug("ElevenLabs pipeline adapters not registered - API key unavailable")
 
         # Ollama LLM adapter - for self-hosted local LLMs
-        ollama_llm_factory = self._make_ollama_llm_factory()
+        # Read config from providers.ollama_llm in YAML if available
+        ollama_provider_config = {}
+        providers = getattr(self.config, "providers", {}) or {}
+        if isinstance(providers, dict) and "ollama_llm" in providers:
+            ollama_cfg = providers.get("ollama_llm", {})
+            if isinstance(ollama_cfg, dict) and ollama_cfg.get("enabled", True) is not False:
+                ollama_provider_config = dict(ollama_cfg)
+        
+        ollama_llm_factory = self._make_ollama_llm_factory(ollama_provider_config)
         self.register_factory("ollama_llm", ollama_llm_factory)
+        configured_url = ollama_provider_config.get("base_url", "http://localhost:11434")
         logger.info(
             "Ollama LLM adapter registered",
             llm_factory="ollama_llm",
-            default_endpoint="http://localhost:11434",
+            configured_endpoint=configured_url,
             note="Self-hosted LLM with optional tool calling",
         )
 
@@ -590,12 +627,18 @@ class PipelineOrchestrator:
             llm_factory = self._make_openai_llm_factory(provider_cfg)
             self.register_factory(str(name), llm_factory)
 
-    def _make_ollama_llm_factory(self) -> ComponentFactory:
+    def _make_ollama_llm_factory(self, provider_config: Dict[str, Any]) -> ComponentFactory:
         """Create factory for Ollama LLM adapter (self-hosted local models)."""
+        # Merge provider config with pipeline options at runtime
+        base_config = dict(provider_config)
+        
         def factory(component_key: str, options: Dict[str, Any]) -> Component:
+            # Provider config from YAML takes precedence, runtime options can override
+            merged = dict(base_config)
+            merged.update(options or {})
             return OllamaLLMAdapter(
                 self.config,
-                options,
+                merged,
             )
         return factory
 
@@ -900,9 +943,25 @@ class PipelineOrchestrator:
 
     def _hydrate_openai_config(self) -> Optional[OpenAIProviderConfig]:
         providers = getattr(self.config, "providers", {}) or {}
-        raw_config = providers.get("openai")
-        if not raw_config:
-            # Fallback: accept modular OpenAI providers (openai_stt/openai_llm/openai_tts) but skip realtime agent
+        merged: Dict[str, Any] = {}
+
+        # Base OpenAI config (optional)
+        raw_base = providers.get("openai")
+        if isinstance(raw_base, dict):
+            merged.update(raw_base)
+        elif isinstance(raw_base, OpenAIProviderConfig):
+            merged.update(raw_base.model_dump())
+
+        # Prefer explicit modular OpenAI provider blocks when present.
+        for key in ("openai_llm", "openai_stt", "openai_tts"):
+            raw = providers.get(key)
+            if isinstance(raw, dict):
+                merged.update(raw)
+            elif isinstance(raw, OpenAIProviderConfig):
+                merged.update(raw.model_dump())
+
+        # Backward-compatible fallback: accept any openai_* provider entries but skip realtime agent.
+        if not merged:
             for name, cfg in providers.items():
                 try:
                     lower = str(name).lower()
@@ -910,26 +969,22 @@ class PipelineOrchestrator:
                     lower = ""
                 if "realtime" in lower:
                     continue
-                if lower.startswith("openai_") or (isinstance(cfg, dict) and str(cfg.get("type", "")).lower() == "openai"):
-                    raw_config = cfg
-                    break
-        if not raw_config:
+                if not lower.startswith("openai_"):
+                    continue
+                if isinstance(cfg, dict):
+                    merged.update(cfg)
+                elif isinstance(cfg, OpenAIProviderConfig):
+                    merged.update(cfg.model_dump())
+
+        if not merged:
             return None
-        if isinstance(raw_config, OpenAIProviderConfig):
-            config = raw_config
-        elif isinstance(raw_config, dict):
-            try:
-                config = OpenAIProviderConfig(**raw_config)
-            except Exception as exc:
-                logger.warning(
-                    "Failed to hydrate OpenAI provider config for pipelines",
-                    error=str(exc),
-                )
-                return None
-        else:
+
+        try:
+            config = OpenAIProviderConfig(**merged)
+        except Exception as exc:
             logger.warning(
-                "Unsupported OpenAI provider config type for pipelines",
-                config_type=type(raw_config).__name__,
+                "Failed to hydrate OpenAI provider config for pipelines",
+                error=str(exc),
             )
             return None
 
@@ -938,6 +993,130 @@ class PipelineOrchestrator:
             return None
 
         return config
+
+    def _hydrate_groq_stt_config(self) -> Optional[GroqSTTProviderConfig]:
+        providers = getattr(self.config, "providers", {}) or {}
+        raw_config = providers.get("groq_stt")
+        if not raw_config:
+            for name, cfg in providers.items():
+                if not isinstance(cfg, dict):
+                    continue
+                try:
+                    role = _extract_role(str(name))
+                except Exception:
+                    continue
+                if role != "stt":
+                    continue
+                if str(cfg.get("type", "")).lower() != "groq":
+                    continue
+                raw_config = cfg
+                break
+        if not raw_config:
+            return None
+        if isinstance(raw_config, GroqSTTProviderConfig):
+            config = raw_config
+        elif isinstance(raw_config, dict):
+            try:
+                config = GroqSTTProviderConfig(**raw_config)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to hydrate Groq STT provider config for pipelines",
+                    error=str(exc),
+                )
+                return None
+        else:
+            logger.warning(
+                "Unsupported Groq STT provider config type for pipelines",
+                config_type=type(raw_config).__name__,
+            )
+            return None
+
+        if not config.enabled:
+            return None
+
+        if not config.api_key:
+            config.api_key = os.getenv("GROQ_API_KEY")
+
+        if not config.api_key:
+            logger.warning("Groq STT pipeline adapter requires GROQ_API_KEY; falling back to placeholder adapters")
+            return None
+
+        return config
+
+    def _hydrate_groq_tts_config(self) -> Optional[GroqTTSProviderConfig]:
+        providers = getattr(self.config, "providers", {}) or {}
+        raw_config = providers.get("groq_tts")
+        if not raw_config:
+            for name, cfg in providers.items():
+                if not isinstance(cfg, dict):
+                    continue
+                try:
+                    role = _extract_role(str(name))
+                except Exception:
+                    continue
+                if role != "tts":
+                    continue
+                if str(cfg.get("type", "")).lower() != "groq":
+                    continue
+                raw_config = cfg
+                break
+        if not raw_config:
+            return None
+        if isinstance(raw_config, GroqTTSProviderConfig):
+            config = raw_config
+        elif isinstance(raw_config, dict):
+            try:
+                config = GroqTTSProviderConfig(**raw_config)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to hydrate Groq TTS provider config for pipelines",
+                    error=str(exc),
+                )
+                return None
+        else:
+            logger.warning(
+                "Unsupported Groq TTS provider config type for pipelines",
+                config_type=type(raw_config).__name__,
+            )
+            return None
+
+        if not config.enabled:
+            return None
+
+        if not config.api_key:
+            config.api_key = os.getenv("GROQ_API_KEY")
+
+        if not config.api_key:
+            logger.warning("Groq TTS pipeline adapter requires GROQ_API_KEY; falling back to placeholder adapters")
+            return None
+
+        return config
+
+    def _make_groq_stt_factory(self, provider_config: GroqSTTProviderConfig) -> ComponentFactory:
+        config_payload = provider_config.model_dump()
+
+        def factory(component_key: str, options: Dict[str, Any]) -> Component:
+            return GroqSTTAdapter(
+                component_key,
+                self.config,
+                GroqSTTProviderConfig(**config_payload),
+                options,
+            )
+
+        return factory
+
+    def _make_groq_tts_factory(self, provider_config: GroqTTSProviderConfig) -> ComponentFactory:
+        config_payload = provider_config.model_dump()
+
+        def factory(component_key: str, options: Dict[str, Any]) -> Component:
+            return GroqTTSAdapter(
+                component_key,
+                self.config,
+                GroqTTSProviderConfig(**config_payload),
+                options,
+            )
+
+        return factory
 
     def _resolve_factory(self, component_key: str) -> ComponentFactory:
         factory = self._registry.get(component_key)
@@ -986,7 +1165,7 @@ class PipelineOrchestrator:
 
         hints = []
         if provider in ("openai", "openai_realtime"):
-            hints.append("Set OPENAI_API_KEY (and configure providers.openai for pipeline adapters).")
+            hints.append("Set OPENAI_API_KEY (and configure providers.openai_llm/providers.openai_stt/providers.openai_tts).")
         elif provider == "google":
             hints.append("Set GOOGLE_API_KEY or GOOGLE_APPLICATION_CREDENTIALS.")
         elif provider == "elevenlabs":
@@ -995,6 +1174,8 @@ class PipelineOrchestrator:
             hints.append("Set DEEPGRAM_API_KEY and configure providers.deepgram.")
         elif provider == "local":
             hints.append("Ensure providers.local is enabled and local-ai-server is reachable.")
+        elif provider == "groq":
+            hints.append("Set GROQ_API_KEY and configure providers.groq_stt/providers.groq_tts.")
 
         hint = f" Hint: {' '.join(hints)}" if hints else ""
         return f"Pipeline '{pipeline_name}' cannot resolve {role} component '{component_key}' (placeholder adapter).{hint}"
@@ -1130,9 +1311,8 @@ class PipelineOrchestrator:
         llm_options = dict(options_map.get("llm", {}))
         tts_options = dict(options_map.get("tts", {}))
 
-        # Inject tools into LLM options if configured
-        if hasattr(entry, "tools") and entry.tools:
-            llm_options["tools"] = entry.tools
+        # Tools are allowlisted per-context (engine injects llm_options["tools"]).
+        # Do not allow pipeline-level tool configuration.
 
         stt_adapter = self._build_component(entry.stt, stt_options)
         llm_adapter = self._build_component(entry.llm, llm_options)

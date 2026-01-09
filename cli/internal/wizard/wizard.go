@@ -360,7 +360,7 @@ func (w *Wizard) stepReviewAndApply() error {
 	
 	// Rebuild containers
 	fmt.Println()
-	if PromptConfirm("Rebuild ai-engine container?", true) {
+	if PromptConfirm("Rebuild ai_engine container?", true) {
 		PrintInfo("Checking Docker...")
 		if err := TestDockerRunning(); err != nil {
 			PrintWarning("Docker not running, skipping rebuild")
@@ -371,7 +371,7 @@ func (w *Wizard) stepReviewAndApply() error {
 			}
 			if err := RebuildContainers(pipeline); err != nil {
 				PrintError(fmt.Sprintf("Rebuild failed: %v", err))
-				PrintInfo("Run manually: docker-compose up -d --force-recreate ai-engine")
+				PrintInfo("Run manually: docker compose -p asterisk-ai-voice-agent up -d --force-recreate ai_engine")
 			}
 		}
 	}

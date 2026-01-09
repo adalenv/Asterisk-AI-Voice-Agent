@@ -4,7 +4,7 @@
 SERVER_USER := root
 SERVER_HOST := your-server.example.com
 PROJECT_PATH := /root/Asterisk-Agent-Develop
-SERVICE ?= ai-engine
+SERVICE ?= ai_engine
 provider ?= local
 
 # ------------------------------------------------------------------------------
@@ -31,16 +31,18 @@ define run_remote
 endef
 
 # ----------------------------------------------------------------------------
-# Python runner shim
-# Prefer host python3; if absent, use containerized python via docker-compose.
-# Also emit a helpful message when falling back.
-PY := $(shell if command -v python3 >/dev/null 2>&1; then echo python3; else echo "docker-compose exec -T ai-engine python"; fi)
-PY_INFO := $(shell if command -v python3 >/dev/null 2>&1; then echo ""; else echo "Host python3 not found; using 'docker-compose exec -T ai-engine python' inside the ai-engine container."; fi)
-
 # ----------------------------------------------------------------------------
 # Compose detection (supports Docker Compose v2 plugin and legacy docker-compose)
 # ----------------------------------------------------------------------------
 DC := $(shell (docker compose version >/dev/null 2>&1 && echo "docker compose") || (docker-compose --version >/dev/null 2>&1 && echo "docker-compose") || echo "")
+COMPOSE := $(DC) -p asterisk-ai-voice-agent
+
+# ------------------------------------------------------------------------------
+# Python runner shim
+# Prefer host python3; if absent, use containerized python via compose.
+# Also emit a helpful message when falling back.
+PY := $(shell if command -v python3 >/dev/null 2>&1; then echo python3; else echo "$(COMPOSE) exec -T ai_engine python"; fi)
+PY_INFO := $(shell if command -v python3 >/dev/null 2>&1; then echo ""; else echo "Host python3 not found; using '$(COMPOSE) exec -T ai_engine python' inside the ai_engine container."; fi)
 
 # ==============================================================================
 # LOCAL DEVELOPMENT
@@ -48,31 +50,31 @@ DC := $(shell (docker compose version >/dev/null 2>&1 && echo "docker compose") 
 
 ## build: Build or rebuild all service images
 build:
-	docker-compose build
+	$(COMPOSE) build
 
 ## up: Start all services in the background
 up:
-	docker-compose up -d
+	$(COMPOSE) up -d
 
 ## down: Stop and remove all services
 down:
-	docker-compose down --remove-orphans
+	$(COMPOSE) down --remove-orphans
 
-## logs: Tail the logs of a specific service (default: ai-engine)
+## logs: Tail the logs of a specific service (default: ai_engine)
 logs:
-	docker-compose logs -f $(SERVICE)
+	$(COMPOSE) logs -f $(SERVICE)
 
 ## logs-all: Tail the logs of all services
 logs-all:
-	docker-compose logs -f
+	$(COMPOSE) logs -f
 
-## engine-reload: Restart ai-engine locally to pick up config changes
+## engine-reload: Restart ai_engine locally to pick up config changes
 engine-reload:
-	docker-compose up -d ai-engine
+	$(COMPOSE) up -d ai_engine
 
 ## ps: Show the status of running services
 ps:
-	docker-compose ps
+	$(COMPOSE) ps
 
 ## model-setup: Detect host tier, download required local provider models, and skip if cached
 model-setup:
@@ -83,19 +85,19 @@ model-setup:
 		python3 scripts/model_setup.py --assume-yes; \
 	else \
 		echo "No host bash/python found or script missing; running one-off container for model setup."; \
-		docker-compose run --rm ai-engine bash /app/scripts/model_setup.sh --assume-yes || docker-compose run --rm ai-engine python /app/scripts/model_setup.py --assume-yes; \
+		$(COMPOSE) run --rm ai_engine bash /app/scripts/model_setup.sh --assume-yes || $(COMPOSE) run --rm ai_engine python /app/scripts/model_setup.py --assume-yes; \
 	fi
 
 # ==============================================================================
 # DEPLOYMENT & SERVER MANAGEMENT
 # ==============================================================================
 
-## deploy: Pull latest code and deploy the ai-engine on the server (with --no-cache)
+## deploy: Pull latest code and deploy the ai_engine on the server (with --no-cache)
 deploy:
 	@echo "--> Deploying latest code to $(SERVER_HOST) with --no-cache..."
 	@echo "⚠️  WARNING: This will deploy uncommitted changes if any exist!"
 	@echo "   Use 'make deploy-safe' for validation, or 'make deploy-force' to skip checks"
-	$(call run_remote, git pull && docker-compose build --no-cache ai-engine && docker-compose up -d ai-engine)
+	$(call run_remote, git pull && $(COMPOSE) build --no-cache ai_engine && $(COMPOSE) up -d ai_engine)
 
 ## deploy-safe: Validate changes are committed before deploying
 deploy-safe:
@@ -116,7 +118,7 @@ deploy-safe:
 	@echo "🔍 Verifying remote has latest commit..."
 	@make verify-remote-sync
 	@echo "📦 Deploying to server with --no-cache..."
-	$(call run_remote, git pull && docker-compose build --no-cache ai-engine && docker-compose up -d ai-engine)
+	$(call run_remote, git pull && $(COMPOSE) build --no-cache ai_engine && $(COMPOSE) up -d ai_engine)
 	@echo "🔍 Verifying server has latest commit..."
 	@make verify-server-commit
 	@echo "🔍 Verifying deployment..."
@@ -128,7 +130,7 @@ deploy-force:
 	@echo "⚠️  WARNING: This will deploy even with uncommitted changes!"
 	@echo "⏳ Waiting 5 seconds before deployment..."
 	sleep 5
-	$(call run_remote, git pull && docker-compose build --no-cache ai-engine && docker-compose up -d ai-engine)
+	$(call run_remote, git pull && $(COMPOSE) build --no-cache ai_engine && $(COMPOSE) up -d ai_engine)
 	@echo "🔍 Verifying server has latest commit..."
 	@make verify-server-commit
 	@echo "🔍 Verifying deployment..."
@@ -137,61 +139,61 @@ deploy-force:
 ## deploy-full: Pull latest and rebuild all services on the server
 deploy-full:
 	@echo "--> Performing a full rebuild and deployment on $(SERVER_HOST)..."
-	$(call run_remote, git pull && docker-compose up --build -d)
+	$(call run_remote, git pull && $(COMPOSE) up --build -d)
 
-## deploy-no-cache: Pull latest and force a no-cache rebuild of ai-engine
+## deploy-no-cache: Pull latest and force a no-cache rebuild of ai_engine
 deploy-no-cache:
-	@echo "--> Forcing a no-cache rebuild and deployment of ai-engine on $(SERVER_HOST)..."
-	$(call run_remote, git pull && docker-compose build --no-cache ai-engine && docker-compose up -d ai-engine)
+	@echo "--> Forcing a no-cache rebuild and deployment of ai_engine on $(SERVER_HOST)..."
+	$(call run_remote, git pull && $(COMPOSE) build --no-cache ai_engine && $(COMPOSE) up -d ai_engine)
 
 ## server-logs: View live logs for a service on the server (follow mode - use Ctrl+C to exit)
 server-logs:
-	$(call run_remote, docker-compose logs -f $(SERVICE))
+	$(call run_remote, $(COMPOSE) logs -f $(SERVICE))
 
 ## server-logs-snapshot: View last N lines of logs and exit (default: 50)
 server-logs-snapshot:
-	$(call run_remote, docker-compose logs --tail=$(LINES) $(SERVICE))
+	$(call run_remote, $(COMPOSE) logs --tail=$(LINES) $(SERVICE))
 
 ## server-status: Check the status of services on the server
 server-status:
-	$(call run_remote, docker-compose ps)
+	$(call run_remote, $(COMPOSE) ps)
 
 ## server-clear-logs: Truncate Docker logs on server and restart containers
 server-clear-logs:
 	@echo "--> Truncating Docker container logs on $(SERVER_HOST)..."
 	@$(call run_remote, sudo sh -c "truncate -s 0 /var/lib/docker/containers/*/*-json.log")
-	@echo "--> Restarting ai-engine and local-ai-server services via docker-compose..."
-	@$(call run_remote, docker-compose restart local-ai-server ai-engine)
+	@echo "--> Restarting ai_engine and local_ai_server services via docker-compose..."
+	@$(call run_remote, $(COMPOSE) restart local_ai_server ai_engine)
 	@echo "✅ Server logs cleared and containers restarted"
 
 ## server-capture-logs: Capture full logs from server containers into timestamped files
 server-capture-logs:
-	@echo "--> Capturing ai-engine logs to logs/ai-engine-$$(date +%Y%m%d-%H%M%S).log"
+	@echo "--> Capturing ai_engine logs to logs/ai-engine-$$(date +%Y%m%d-%H%M%S).log"
 	@if [ "$(SERVER_HOST)" = "localhost" ] || [ "$(SERVER_HOST)" = "127.0.0.1" ] || [ "$(SERVER_HOST)" = "::1" ] \
 	     || [ "$(SERVER_HOST)" = "$(HOSTNAME)" ] || [ "$(SERVER_HOST)" = "$(FQDN)" ]; then \
-		(cd $(PROJECT_PATH) && docker-compose logs --no-color ai-engine) > logs/ai-engine-$$(date +%Y%m%d-%H%M%S).log; \
+		(cd $(PROJECT_PATH) && $(COMPOSE) logs --no-color ai_engine) > logs/ai-engine-$$(date +%Y%m%d-%H%M%S).log; \
 	else \
-		ssh $(SERVER_USER)@$(SERVER_HOST) 'cd $(PROJECT_PATH) && docker-compose logs --no-color ai-engine' > logs/ai-engine-$$(date +%Y%m%d-%H%M%S).log; \
+		ssh $(SERVER_USER)@$(SERVER_HOST) 'cd $(PROJECT_PATH) && $(COMPOSE) logs --no-color ai_engine' > logs/ai-engine-$$(date +%Y%m%d-%H%M%S).log; \
 	fi
-	@echo "--> Capturing local-ai-server logs to logs/local-ai-server-$$(date +%Y%m%d-%H%M%S).log"
+	@echo "--> Capturing local_ai_server logs to logs/local-ai-server-$$(date +%Y%m%d-%H%M%S).log"
 	@if [ "$(SERVER_HOST)" = "localhost" ] || [ "$(SERVER_HOST)" = "127.0.0.1" ] || [ "$(SERVER_HOST)" = "::1" ] \
 	     || [ "$(SERVER_HOST)" = "$(HOSTNAME)" ] || [ "$(SERVER_HOST)" = "$(FQDN)" ]; then \
-		(cd $(PROJECT_PATH) && docker-compose logs --no-color local-ai-server) > logs/local-ai-server-$$(date +%Y%m%d-%H%M%S).log; \
+		(cd $(PROJECT_PATH) && $(COMPOSE) logs --no-color local_ai_server) > logs/local-ai-server-$$(date +%Y%m%d-%H%M%S).log; \
 	else \
-		ssh $(SERVER_USER)@$(SERVER_HOST) 'cd $(PROJECT_PATH) && docker-compose logs --no-color local-ai-server' > logs/local-ai-server-$$(date +%Y%m%d-%H%M%S).log; \
+		ssh $(SERVER_USER)@$(SERVER_HOST) 'cd $(PROJECT_PATH) && $(COMPOSE) logs --no-color local_ai_server' > logs/local-ai-server-$$(date +%Y%m%d-%H%M%S).log; \
 	fi
 
 ## server-health: Check deployment health (ARI, ExternalMedia, Providers)
 server-health:
 	@echo "--> Checking deployment health on $(SERVER_HOST)..."
 	@echo "🔍 Checking ARI connections..."
-	@$(call run_remote, docker-compose logs --tail=200 ai-engine | grep -E "(Successfully connected to ARI HTTP endpoint|Successfully connected to ARI WebSocket)" || echo "❌ ARI connection issues")
+	@$(call run_remote, $(COMPOSE) logs --tail=200 ai_engine | grep -E "(Successfully connected to ARI HTTP endpoint|Successfully connected to ARI WebSocket)" || echo "❌ ARI connection issues")
 	@echo "🔍 Checking RTP server..."
-	@$(call run_remote, docker-compose logs --tail=200 ai-engine | grep -E "(RTP server started|RTP server listening)" || echo "❌ RTP server issues")
+	@$(call run_remote, $(COMPOSE) logs --tail=200 ai_engine | grep -E "(RTP server started|RTP server listening)" || echo "❌ RTP server issues")
 	@echo "🔍 Checking provider loading..."
-	@$(call run_remote, docker-compose logs --tail=200 ai-engine | grep -E "(Provider.*loaded successfully|Default provider.*is available)" || echo "❌ Provider loading issues")
+	@$(call run_remote, $(COMPOSE) logs --tail=200 ai_engine | grep -E "(Provider.*loaded successfully|Default provider.*is available)" || echo "❌ Provider loading issues")
 	@echo "🔍 Checking engine status..."
-	@$(call run_remote, docker-compose logs --tail=200 ai-engine | grep -E "(Engine started and listening for calls)" || echo "❌ Engine startup issues")
+	@$(call run_remote, $(COMPOSE) logs --tail=200 ai_engine | grep -E "(Engine started and listening for calls)" || echo "❌ Engine startup issues")
 	@echo "✅ Health check complete"
 
 # ==============================================================================
@@ -200,16 +202,16 @@ server-health:
 
 ## test-local: Run local tests
 test-local:
-	docker-compose exec ai-engine python /app/test_ai_engine.py
-	docker-compose exec local-ai-server python /app/test_local_ai_server.py
+	$(COMPOSE) exec ai_engine python /app/test_ai_engine.py
+	$(COMPOSE) exec local_ai_server python /app/test_local_ai_server.py
 
 ## test-integration: Run integration tests
 test-integration:
-	docker-compose exec ai-engine python /app/test_integration.py
+	$(COMPOSE) exec ai_engine python /app/test_integration.py
 
 ## test-ari: Test ARI commands
 test-ari:
-	$(call run_remote, docker-compose exec -T ai-engine python /app/test_ari_commands.py)
+	$(call run_remote, $(COMPOSE) exec -T ai_engine python /app/test_ari_commands.py)
 
 ## test-externalmedia: Test ExternalMedia + RTP implementation
 test-externalmedia:
@@ -234,7 +236,7 @@ quick-regression:
 	@$(MAKE) --no-print-directory test-health
 	@echo
 	@echo "Next steps:" \
-	  && echo "1. Clear logs (local: make logs --tail=0 ai-engine | remote: make server-clear-logs)." \
+	  && echo "1. Clear logs (local: make logs --tail=0 ai_engine | remote: make server-clear-logs)." \
 	  && echo "2. Place a short call into the AI context." \
 	  && echo "3. Watch for ExternalMedia bridge join, RTP frames, provider input, playback start/finish, and cleanup." \
 	  && echo "4. Re-run make test-health to ensure active_calls resets to 0." \
@@ -254,23 +256,23 @@ provider-switch-remote:
 		echo "Usage: make provider=<name> provider-switch-remote"; \
 		exit 1; \
 	fi
-	@$(call run_remote, docker-compose exec -T ai-engine python /app/scripts/switch_provider.py --config /app/config/ai-agent.yaml --provider $(provider))
+	@$(call run_remote, $(COMPOSE) exec -T ai_engine python /app/scripts/switch_provider.py --config /app/config/ai-agent.yaml --provider $(provider))
 
-## provider-reload: Switch provider on server, restart ai-engine, and run health check
+## provider-reload: Switch provider on server, restart ai_engine, and run health check
 provider-reload:
 	@$(MAKE) --no-print-directory provider-switch-remote provider=$(provider)
-	@$(call run_remote, docker-compose up -d ai-engine)
+	@$(call run_remote, $(COMPOSE) up -d ai_engine)
 	@$(MAKE) --no-print-directory server-health
 
 ## verify-deployment: Verify that deployment was successful
 verify-deployment:
 	@echo "🔍 Verifying deployment..."
 	@echo "📊 Checking container status..."
-	@$(call run_remote, docker-compose ps)
+	@$(call run_remote, $(COMPOSE) ps)
 	@echo "📋 Checking recent logs for errors..."
-	@$(call run_remote, docker-compose logs --tail=10 ai-engine | grep -E "(ERROR|CRITICAL|Exception|Traceback)" || echo "✅ No errors found in recent logs")
+	@$(call run_remote, $(COMPOSE) logs --tail=10 ai_engine | grep -E "(ERROR|CRITICAL|Exception|Traceback)" || echo "✅ No errors found in recent logs")
 	@echo "⚙️  Checking configuration..."
-	@$(call run_remote, docker-compose logs --tail=20 ai-engine | grep -E "(audio_transport|RTP Server|ExternalMedia)" || echo "⚠️  Configuration logs not found")
+	@$(call run_remote, $(COMPOSE) logs --tail=20 ai_engine | grep -E "(audio_transport|RTP Server|ExternalMedia)" || echo "⚠️  Configuration logs not found")
 	@echo "✅ Deployment verification complete"
 
 ## verify-remote-sync: Verify that remote repository has the latest commit
@@ -418,11 +420,11 @@ check-python:
 	else \
 		echo "⚠️ Host python3 not found."; \
 		echo "   You can run all helper scripts via container Python, e.g.:"; \
-		echo "   docker-compose exec -T ai-engine python /app/scripts/validate_externalmedia_config.py"; \
-		echo "   docker-compose exec -T ai-engine python /app/scripts/test_externalmedia_call.py"; \
-		echo "   docker-compose exec -T ai-engine python /app/scripts/monitor_externalmedia.py"; \
-		echo "   docker-compose exec -T ai-engine python /app/scripts/capture_test_logs.py --duration 40"; \
-		echo "   docker-compose exec -T ai-engine python /app/scripts/analyze_logs.py /app/logs/latest.json"; \
+		echo "   $(COMPOSE) exec -T ai_engine python /app/scripts/validate_externalmedia_config.py"; \
+		echo "   $(COMPOSE) exec -T ai_engine python /app/scripts/test_externalmedia_call.py"; \
+		echo "   $(COMPOSE) exec -T ai_engine python /app/scripts/monitor_externalmedia.py"; \
+		echo "   $(COMPOSE) exec -T ai_engine python /app/scripts/capture_test_logs.py --duration 40"; \
+		echo "   $(COMPOSE) exec -T ai_engine python /app/scripts/analyze_logs.py /app/logs/latest.json"; \
 	fi
 
 # ==============================================================================

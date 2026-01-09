@@ -8,19 +8,22 @@
 # PERMISSION ALIGNMENT:
 # If your Asterisk uses a different GID than 995 (FreePBX default):
 #   export ASTERISK_GID=$(id -g asterisk)
-#   docker compose build ai-engine
+#   docker compose build ai_engine
 #   docker compose up -d
 #
 # Prometheus-format metrics are available at `http://<host>:15000/metrics`.
 # Per-call debugging is via Admin UI → Call History.
 
+name: asterisk-ai-voice-agent
+
 services:
-  ai-engine:
+  ai_engine:
     image: asterisk-ai-voice-agent-ai-engine:latest
     pull_policy: build
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
       args:
         ASTERISK_GID: ${ASTERISK_GID:-995}
     container_name: ai_engine
@@ -51,17 +54,19 @@ services:
     stdin_open: true
     restart: unless-stopped
 
-  local-ai-server:
+  local_ai_server:
     image: asterisk-ai-voice-agent-local-ai-server:latest
     pull_policy: build
     build:
       context: ./local_ai_server
       dockerfile: Dockerfile
+      network: host
       args:
         - INCLUDE_KROKO_EMBEDDED=${INCLUDE_KROKO_EMBEDDED:-false}
         - INCLUDE_FASTER_WHISPER=${INCLUDE_FASTER_WHISPER:-false}
         - INCLUDE_WHISPER_CPP=${INCLUDE_WHISPER_CPP:-false}
         - INCLUDE_MELOTTS=${INCLUDE_MELOTTS:-false}
+        - INCLUDE_LLAMA=${INCLUDE_LLAMA:-true}
     container_name: local_ai_server
     network_mode: host
     env_file:
@@ -133,20 +138,22 @@ services:
       retries: 180
       start_period: 120s
 
-  admin-ui:
+  admin_ui:
     image: asterisk-ai-voice-agent-admin-ui:latest
     pull_policy: build
     build:
       context: ./admin_ui
       dockerfile: Dockerfile
+      network: host
     container_name: admin_ui
     network_mode: host
     volumes:
       - ./:/app/project
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       # The admin-ui image installs Docker CLI + Compose plugin internally.
-      # Optional fallback (host binaries): use `docker compose -f docker-compose.yml -f docker-compose.admin-ui-host-binaries.yml up -d admin-ui`
+      # Optional fallback (host binaries): use `docker compose -f docker-compose.yml -f docker-compose.admin-ui-host-binaries.yml up -d admin_ui`
       - /etc/os-release:/host/etc/os-release:ro
+      - ./asterisk_media:/mnt/asterisk_media
       - ./data:/app/data
     env_file:
       - .env

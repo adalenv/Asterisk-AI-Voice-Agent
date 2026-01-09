@@ -93,6 +93,35 @@ See also:
 - [Installation Guide](INSTALLATION.md)
 - [Transport Compatibility](Transport-Mode-Compatibility.md)
 
+---
+
+## Outbound Campaign Dialer (Milestone 22)
+
+Outbound calling is implemented as an **engine-driven scheduler + SQLite + ARI originate**, with **dialplan-assisted AMD** for voicemail detection.
+
+### Assumptions (MVP)
+
+- Your outbound **trunk(s) and outbound routes** are already configured in Asterisk/FreePBX.
+- Outbound calls originate as **extension identity `6789`** (default), and routing happens via your existing FreePBX dialplan patterns.
+- Persistence reuses the existing Call History SQLite DB path (`CALL_HISTORY_DB_PATH`) by adding outbound tables.
+
+### Key env vars
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AAVA_OUTBOUND_EXTENSION_IDENTITY` | `6789` | Extension identity for FreePBX routing (sets `AMPUSER` + `CALLERID(num)` on originate) |
+| `AAVA_OUTBOUND_AMD_CONTEXT` | `aava-outbound-amd` | Dialplan context name used for AMD hop (`continueInDialplan`) |
+| `AAVA_MEDIA_DIR` | `/mnt/asterisk_media/ai-generated` | Where the Admin UI uploads voicemail drop `.ulaw` files |
+
+### Dialplan requirements
+
+- Create a custom dialplan context (default: `[aava-outbound-amd]`) that runs `AMD(${AAVA_AMD_OPTS})` and returns to Stasis with:
+  - `outbound_amd` (action)
+  - `${AAVA_ATTEMPT_ID}` (attempt correlation)
+  - `${AMDSTATUS}` and `${AMDCAUSE}`
+
+See `docs/contributing/milestones/milestone-22-outbound-campaign-dialer.md` for the full snippet and smoke test checklist.
+
 ## Canonical persona and greeting
 
 - llm.initial_greeting: Text the agent speaks first (if provider supports explicit greeting or the engine plays via TTS).
@@ -115,12 +144,14 @@ See also:
 ## AudioSocket
 
 - audiosocket.host: Bind address for AudioSocket listener.
+- audiosocket.advertise_host: Address Asterisk connects to (optional; defaults to `audiosocket.host`). Use for NAT/VPN.
 - audiosocket.port: TCP port.
 - audiosocket.format: `ulaw` | `slin16` (8 kHz). Use `ulaw` to match telephony trunks directly.
 
 ## ExternalMedia
 
 - external_media.rtp_host: Bind address for RTP server.
+- external_media.advertise_host: Address Asterisk sends RTP to (optional; defaults to `external_media.rtp_host`). Use for NAT/VPN.
 - external_media.rtp_port: Port for inbound RTP.
 - external_media.port_range: Optional range (`start:end`) for dynamic per-call RTP allocation; defaults to `rtp_port`.
 - external_media.codec: `ulaw` | `slin16` (8 kHz).
@@ -221,6 +252,18 @@ Common pitfalls:
 - providers.openai_realtime.turn_detection: Server‑side VAD (type, silence_duration_ms, threshold, prefix_padding_ms); improves turn handling.
   - Metrics: `ai_agent_openai_assumed_output_sample_rate_hz`, `ai_agent_openai_provider_output_sample_rate_hz`, and `ai_agent_openai_measured_output_sample_rate_hz` are **low-cardinality gauges** (latest observed across calls). Use Call History for per-call debugging.
 
+### OpenAI (pipelines)
+
+Modular OpenAI pipeline components use `type: openai` provider blocks:
+
+- `openai_llm`: Chat Completions (`chat_base_url`, `chat_model`)
+- `openai_stt`: Speech-to-Text via `audio/transcriptions` (`stt_base_url`, `stt_model`)
+- `openai_tts`: Text-to-Speech via `audio/speech` (`tts_base_url`, `tts_model`, `voice`, `response_format`)
+
+Requirements:
+
+- `OPENAI_API_KEY` must be set in the environment (or referenced via `${OPENAI_API_KEY}`).
+
 ### Deepgram Voice Agent
 
 - providers.deepgram.api_key, model, tts_model.
@@ -235,6 +278,22 @@ Common pitfalls:
 - google_llm.system_instruction/system_prompt: Persona; if missing, adapter falls back to `llm.prompt`.
 - google_tts/tts fields: voice, language, audio encoding/sample rate, target format.
 - google_stt/stt fields: encoding, language, model, sampleRateHertz.
+
+### Groq Speech (pipelines)
+
+Groq Speech uses OpenAI-compatible REST endpoints:
+
+- STT: `https://api.groq.com/openai/v1/audio/transcriptions`
+- TTS: `https://api.groq.com/openai/v1/audio/speech` (Orpheus, WAV-only)
+
+Requirements:
+
+- `GROQ_API_KEY` must be set in the environment.
+
+Config notes:
+
+- `groq_stt` options: `stt_model` (`whisper-large-v3-turbo`, `whisper-large-v3`), plus optional `language`, `prompt`, `response_format` (`json|verbose_json|text`), `temperature`, `timestamp_granularities`.
+- `groq_tts` options: `tts_model` (`canopylabs/orpheus-v1-english`, `canopylabs/orpheus-arabic-saudi`), `voice` (Orpheus voice IDs), `response_format` (`wav` only), and output format controls (`target_encoding`/`target_sample_rate_hz` or pipeline `tts.format`).
 
 ### Local provider (pipelines)
 

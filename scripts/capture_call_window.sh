@@ -9,9 +9,9 @@ DUR="${1:-75}"
 
 # Prefer docker compose if available; fallback to docker-compose
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-  DC=(docker compose)
+  DC=(docker compose -p asterisk-ai-voice-agent)
 else
-  DC=(docker-compose)
+  DC=(docker-compose -p asterisk-ai-voice-agent)
 fi
 
 # Basic sanity checks
@@ -21,7 +21,7 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 # Service names must match docker-compose.yml
-SERVICES=(ai-engine local-ai-server)
+SERVICES=(ai_engine local_ai_server)
 
 TS=$(date +%Y%m%d_%H%M%S)
 OUT_DIR="logs/call_captures/call_${TS}"

@@ -31,6 +31,7 @@ import json
 from typing import Any, Dict, List, Optional, Union
 
 import aiohttp
+from urllib.parse import urlparse
 
 from ..logging_config import get_logger
 from ..tools.registry import tool_registry
@@ -88,7 +89,22 @@ class OllamaLLMAdapter(LLMComponent):
         merged.setdefault("timeout_sec", 60)  # Local models may be slower
         merged.setdefault("stream", False)
         merged.setdefault("max_tokens", 200)
-        merged.setdefault("tools_enabled", True)  # Try tools by default
+
+        # Guardrail: a common misconfiguration is leaving OpenAI-style pipeline options in place
+        # while selecting the Ollama adapter (which uses /api/* endpoints). That yields nginx 404s.
+        try:
+            base_url_raw = str(merged.get("base_url") or "").strip()
+            parsed = urlparse(base_url_raw)
+            host = (parsed.hostname or "").lower()
+            path = (parsed.path or "").rstrip("/")
+            if host == "api.openai.com" or path.endswith("/v1"):
+                logger.warning(
+                    "Ollama base_url looks like an OpenAI endpoint; this will 404 on /api/chat",
+                    base_url=merged.get("base_url"),
+                    hint="If using Ollama, set base_url to http://<ollama-host>:11434 and remove any pipeline llm overrides",
+                )
+        except Exception:
+            pass
         
         return merged
 
@@ -198,8 +214,42 @@ class OllamaLLMAdapter(LLMComponent):
             if system_prompt:
                 messages.insert(0, {"role": "system", "content": system_prompt})
         
-        # Add user message
-        messages.append({"role": "user", "content": transcript})
+        # Handle prior_messages from context (includes tool results)
+        prior_messages = context.get("prior_messages", [])
+        if prior_messages:
+            # Sync session messages with prior_messages (which includes tool results)
+            # Convert tool messages to user messages for Ollama compatibility
+            for pm in prior_messages:
+                role = pm.get("role")
+                content = pm.get("content")
+                
+                # Skip if already in messages or no content
+                if role == "system":
+                    continue  # System already handled above
+                elif role == "tool":
+                    # Convert tool result to a user-style message Ollama understands
+                    tool_content = content or "Tool executed successfully."
+                    # Add as assistant message first acknowledging the tool was called
+                    messages.append({
+                        "role": "assistant", 
+                        "content": "I have the information from the tool."
+                    })
+                    # Then add the result as user message with VERY explicit instructions
+                    messages.append({
+                        "role": "user",
+                        "content": f"[SYSTEM] The tool returned: {tool_content}\n\nNow say this information to the caller in a natural way. Do not add extra commentary."
+                    })
+                elif role == "assistant" and pm.get("tool_calls"):
+                    # Skip assistant tool_call messages (we handle the result above)
+                    continue
+                elif content and role in ("user", "assistant"):
+                    # Add regular messages if not duplicate
+                    if not any(m.get("content") == content and m.get("role") == role for m in messages):
+                        messages.append({"role": role, "content": content})
+        
+        # Add user message only if there's actual transcript
+        if transcript and transcript.strip():
+            messages.append({"role": "user", "content": transcript})
         
         # Prepare API request
         await self._ensure_session()
@@ -216,12 +266,11 @@ class OllamaLLMAdapter(LLMComponent):
             },
         }
         
-        # Add tools if model supports them and tools are enabled
-        tools_enabled = merged.get("tools_enabled", True)
+        # Add tools if model supports them.
+        # Tool availability is resolved per-context by the engine (contexts are the source of truth).
         tool_names = merged.get("tools", [])
         use_tools = (
-            tools_enabled
-            and tool_names
+            tool_names
             and self._model_supports_tools(model)
             and not session_state.get("tools_failed", False)
         )
@@ -332,36 +381,32 @@ class OllamaLLMAdapter(LLMComponent):
         base_url = merged.get("base_url", _DEFAULT_BASE_URL)
         
         try:
-            await self._ensure_session()
-            assert self._session
-            
             # Check connectivity by listing available models
             url = f"{base_url.rstrip('/')}/api/tags"
             timeout = aiohttp.ClientTimeout(total=10)
-            
-            async with self._session.get(url, timeout=timeout) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    models = data.get("models", [])
-                    model_names = [m.get("name", "") for m in models]
-                    configured_model = merged.get("model", _DEFAULT_MODEL)
-                    model_available = any(
-                        configured_model in name or name.startswith(configured_model.split(":")[0])
-                        for name in model_names
-                    )
-                    
-                    return {
-                        "healthy": True,
-                        "error": None,
-                        "details": {
-                            "endpoint": base_url,
-                            "configured_model": configured_model,
-                            "model_available": model_available,
-                            "available_models": model_names[:10],  # First 10 models
-                            "tools_capable": self._model_supports_tools(configured_model),
-                        },
-                    }
-                else:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=timeout) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        models = data.get("models", [])
+                        model_names = [m.get("name", "") for m in models]
+                        configured_model = merged.get("model", _DEFAULT_MODEL)
+                        model_available = any(
+                            configured_model in name or name.startswith(configured_model.split(":")[0])
+                            for name in model_names
+                        )
+                        
+                        return {
+                            "healthy": True,
+                            "error": None,
+                            "details": {
+                                "endpoint": base_url,
+                                "configured_model": configured_model,
+                                "model_available": model_available,
+                                "available_models": model_names[:10],  # First 10 models
+                                "tools_capable": self._model_supports_tools(configured_model),
+                            },
+                        }
                     body = await response.text()
                     return {
                         "healthy": False,
@@ -395,34 +440,30 @@ class OllamaLLMAdapter(LLMComponent):
         url_to_use = base_url or self._pipeline_defaults.get("base_url", _DEFAULT_BASE_URL)
         
         try:
-            await self._ensure_session()
-            assert self._session
-            
             url = f"{url_to_use.rstrip('/')}/api/tags"
             timeout = aiohttp.ClientTimeout(total=10)
-            
-            async with self._session.get(url, timeout=timeout) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    models = data.get("models", [])
-                    
-                    # Enrich with tool capability info
-                    enriched_models = []
-                    for model in models:
-                        name = model.get("name", "")
-                        enriched_models.append({
-                            "name": name,
-                            "size": model.get("size", 0),
-                            "modified_at": model.get("modified_at", ""),
-                            "tools_capable": self._model_supports_tools(name),
-                        })
-                    
-                    return {
-                        "success": True,
-                        "models": enriched_models,
-                        "error": None,
-                    }
-                else:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=timeout) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        models = data.get("models", [])
+                        
+                        # Enrich with tool capability info
+                        enriched_models = []
+                        for model in models:
+                            name = model.get("name", "")
+                            enriched_models.append({
+                                "name": name,
+                                "size": model.get("size", 0),
+                                "modified_at": model.get("modified_at", ""),
+                                "tools_capable": self._model_supports_tools(name),
+                            })
+                        
+                        return {
+                            "success": True,
+                            "models": enriched_models,
+                            "error": None,
+                        }
                     return {
                         "success": False,
                         "models": [],

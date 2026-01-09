@@ -141,7 +141,7 @@ pipelines:
 
 ```bash
 # Start only local services (no cloud dependencies)
-docker compose up -d local-ai-server ai-engine admin-ui
+docker compose up -d local_ai_server ai_engine admin_ui
 
 # Verify local-ai-server is healthy
 docker logs local_ai_server | grep -E "STT|LLM|TTS"
@@ -211,7 +211,7 @@ LOCAL_STT_MODEL_PATH=/app/models/stt/sherpa-onnx-streaming-zipformer-en-2023-06-
 
 **STT - Kroko Embedded** (optional, requires rebuild):
 - High-accuracy ONNX-based STT
-- Requires: `docker compose build --build-arg INCLUDE_KROKO_EMBEDDED=true local-ai-server`
+- Requires: `docker compose build --build-arg INCLUDE_KROKO_EMBEDDED=true local_ai_server`
 - Models: Download from Admin UI → Models Page
 
 ## Troubleshooting
@@ -221,7 +221,7 @@ LOCAL_STT_MODEL_PATH=/app/models/stt/sherpa-onnx-streaming-zipformer-en-2023-06-
 If you see "Pipeline LLM validation FAILED" but calls still work:
 - Confirm your `LOCAL_WS_URL` matches your Docker networking mode:
   - Default repo setup uses `network_mode: host` → `LOCAL_WS_URL=ws://127.0.0.1:8765`
-  - If you run bridge networking, use a resolvable hostname (e.g. `ws://local-ai-server:8765`) and ensure containers share a Docker network
+  - If you run bridge networking, use a resolvable hostname (e.g. `ws://local_ai_server:8765`) and ensure containers share a Docker network
 
 ### Slow LLM Responses
 

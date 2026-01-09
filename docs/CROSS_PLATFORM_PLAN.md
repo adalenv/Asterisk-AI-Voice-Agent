@@ -91,7 +91,7 @@ docker compose up -d
 
 ```text
 git clone ...
-docker compose up -d admin-ui
+docker compose up -d admin_ui
 # User opens UI and sees:
 # ❌ "Media directory not found"
 # ❌ "Permission denied"

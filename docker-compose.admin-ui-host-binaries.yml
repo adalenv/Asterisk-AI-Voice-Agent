@@ -4,10 +4,10 @@
 # This file is intentionally opt-in because host paths vary across distros and can fail if missing.
 #
 # Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.admin-ui-host-binaries.yml up -d admin-ui
+#   docker compose -f docker-compose.yml -f docker-compose.admin-ui-host-binaries.yml up -d admin_ui
 #
 services:
-  admin-ui:
+  admin_ui:
     volumes:
       - /usr/bin/docker:/usr/bin/docker:ro
       - /usr/local/bin/docker-compose:/usr/local/bin/docker-compose:ro

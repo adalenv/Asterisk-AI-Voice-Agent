@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import yaml from 'js-yaml';
+import { sanitizeConfigForSave } from '../utils/configSanitizers';
 import { Plus, Settings, Trash2, MessageSquare, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { ConfigSection } from '../components/ui/ConfigSection';
 import { ConfigCard } from '../components/ui/ConfigCard';
@@ -10,19 +11,14 @@ import ContextForm from '../components/config/ContextForm';
 const ContextsPage = () => {
     const [config, setConfig] = useState<any>({});
     const [loading, setLoading] = useState(true);
-    const [availableTools, setAvailableTools] = useState<string[]>([
-        'transfer',
-        'attended_transfer',
-        'cancel_transfer',
-        'hangup_call',
-        'leave_voicemail',
-        'send_email_summary',
-        'request_transcript'
-    ]);
+    const [error, setError] = useState<string | null>(null);
+    const [availableTools, setAvailableTools] = useState<string[]>([]);
+    const [toolEnabledMap, setToolEnabledMap] = useState<Record<string, boolean>>({});
     const [editingContext, setEditingContext] = useState<string | null>(null);
     const [contextForm, setContextForm] = useState<any>({});
     const [isNewContext, setIsNewContext] = useState(false);
-    const [pendingRestart, setPendingRestart] = useState(false);
+    const [pendingApply, setPendingApply] = useState(false);
+    const [applyMethod, setApplyMethod] = useState<'hot_reload' | 'restart'>('restart');
     const [restartingEngine, setRestartingEngine] = useState(false);
 
     useEffect(() => {
@@ -34,20 +30,39 @@ const ContextsPage = () => {
             const res = await axios.get('/api/config/yaml');
             const parsed = yaml.load(res.data.content) as any;
             setConfig(parsed || {});
-            await fetchMcpTools();
+            await fetchMcpTools(parsed || {});
+            setError(null);
         } catch (err) {
             console.error('Failed to load config', err);
+            const status = (err as any)?.response?.status;
+            if (status === 401) {
+                setError('Not authenticated. Please refresh and log in again.');
+            } else {
+                setError('Failed to load configuration. Check backend logs and try again.');
+            }
         } finally {
             setLoading(false);
         }
     };
 
-    const fetchMcpTools = async () => {
+    const fetchMcpTools = async (parsedConfig: any) => {
         try {
             const res = await axios.get('/api/mcp/status');
             const routes = res.data?.tool_routes || {};
             const mcpTools = Object.keys(routes).filter((t) => typeof t === 'string' && t.startsWith('mcp_'));
-            const builtin = [
+
+            const toolsBlock = parsedConfig?.tools || {};
+            const yamlToolEntries = Object.entries(toolsBlock)
+                .filter(([k, v]) => {
+                    if (typeof k !== 'string' || !k) return false;
+                    if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+                    // Tool configs are dict-like and typically include an `enabled` flag.
+                    // Exclude tool-system settings like ai_identity/extensions/default_action_timeout.
+                    return Object.prototype.hasOwnProperty.call(v, 'enabled');
+                })
+                .map(([k, v]) => ({ name: k, enabled: (v as any)?.enabled !== false }));
+            const toolsFromYaml = yamlToolEntries.map((t) => t.name);
+            const fallbackBuiltin = [
                 'transfer',
                 'attended_transfer',
                 'cancel_transfer',
@@ -56,52 +71,121 @@ const ContextsPage = () => {
                 'send_email_summary',
                 'request_transcript'
             ];
-            const merged = Array.from(new Set([...builtin, ...mcpTools])).sort();
+
+            const merged = Array.from(new Set([
+                ...(toolsFromYaml.length > 0 ? toolsFromYaml : fallbackBuiltin),
+                ...mcpTools
+            ])).sort();
             setAvailableTools(merged);
+            const nextMap: Record<string, boolean> = {};
+            yamlToolEntries.forEach((t) => { nextMap[t.name] = t.enabled; });
+            mcpTools.forEach((t) => { nextMap[t] = true; });
+            // If we are falling back (no tools in YAML), assume enabled unless selected otherwise.
+            if (toolsFromYaml.length === 0) {
+                fallbackBuiltin.forEach((t) => { if (nextMap[t] == null) nextMap[t] = true; });
+            }
+            setToolEnabledMap(nextMap);
         } catch (err) {
-            // Non-fatal: MCP may be disabled or ai-engine down.
+            // Non-fatal: MCP may be disabled or ai-engine down. Fall back to YAML tools.
+            const toolsBlock = parsedConfig?.tools || {};
+            const yamlToolEntries = Object.entries(toolsBlock)
+                .filter(([k, v]) => {
+                    if (typeof k !== 'string' || !k) return false;
+                    if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+                    return Object.prototype.hasOwnProperty.call(v, 'enabled');
+                })
+                .map(([k, v]) => ({ name: k, enabled: (v as any)?.enabled !== false }));
+            const toolsFromYaml = yamlToolEntries.map((t) => t.name);
+            const fallbackBuiltin = [
+                'transfer',
+                'attended_transfer',
+                'cancel_transfer',
+                'hangup_call',
+                'leave_voicemail',
+                'send_email_summary',
+                'request_transcript'
+            ];
+            setAvailableTools((toolsFromYaml.length > 0 ? toolsFromYaml : fallbackBuiltin).slice().sort());
+            const nextMap: Record<string, boolean> = {};
+            yamlToolEntries.forEach((t) => { nextMap[t.name] = t.enabled; });
+            if (toolsFromYaml.length === 0) {
+                fallbackBuiltin.forEach((t) => { if (nextMap[t] == null) nextMap[t] = true; });
+            }
+            setToolEnabledMap(nextMap);
         }
     };
 
     const saveConfig = async (newConfig: any) => {
         try {
-            await axios.post('/api/config/yaml', { content: yaml.dump(newConfig) });
-            setConfig(newConfig);
-            setPendingRestart(true);
+            const sanitized = sanitizeConfigForSave(newConfig);
+            const res = await axios.post('/api/config/yaml', { content: yaml.dump(sanitized) });
+            setConfig(sanitized);
+            const method = (res.data?.recommended_apply_method || 'restart') as 'hot_reload' | 'restart';
+            setApplyMethod(method);
+            setPendingApply(true);
         } catch (err) {
             console.error('Failed to save config', err);
             alert('Failed to save configuration');
         }
     };
 
-    const handleReloadAIEngine = async (force: boolean = false) => {
+    const handleApplyChanges = async (force: boolean = false) => {
         setRestartingEngine(true);
         try {
-            // Context changes - use restart for consistency
-            const response = await axios.post(`/api/system/containers/ai_engine/restart?force=${force}`);
+            const endpoint = applyMethod === 'hot_reload'
+                ? '/api/system/containers/ai_engine/reload'
+                : `/api/system/containers/ai_engine/restart?force=${force}`;
+            const response = await axios.post(endpoint);
+            const status = response.data?.status ?? (response.status === 200 ? 'success' : undefined);
 
-            if (response.data.status === 'warning') {
+            if (status === 'warning') {
                 const confirmForce = window.confirm(
                     `${response.data.message}\n\nDo you want to force restart anyway? This may disconnect active calls.`
                 );
                 if (confirmForce) {
                     setRestartingEngine(false);
-                    return handleReloadAIEngine(true);
+                    return handleApplyChanges(true);
                 }
                 return;
             }
 
-            if (response.data.status === 'degraded') {
+            if (status === 'degraded') {
+                setPendingApply(false);
                 alert(`AI Engine restarted but may not be fully healthy: ${response.data.output || 'Health check issue'}\n\nPlease verify manually.`);
+                fetchConfig();
                 return;
             }
 
-            if (response.data.status === 'success') {
-                setPendingRestart(false);
-                alert('AI Engine restarted! Changes are now active.');
+            if (status === 'partial' || response.data?.restart_required === true) {
+                // Hot reload succeeded but indicated some changes require a restart (e.g. providers added/removed,
+                // MCP reload deferred due to active calls).
+                setApplyMethod('restart');
+                setPendingApply(true);
+                alert(response.data.message || 'Hot reload applied partially; restart AI Engine to fully apply changes.');
+                return;
+            }
+
+            if (status === 'success') {
+                setPendingApply(false);
+                alert(applyMethod === 'hot_reload'
+                    ? 'AI Engine hot reloaded! Changes apply to new calls.'
+                    : 'AI Engine restarted! Changes are now active.');
+                // Refresh config/tool availability after apply (best-effort)
+                fetchConfig();
+                return;
+            }
+
+            // Be conservative: if the apply endpoint returned 200 but an unexpected payload, assume the action
+            // completed so the UI doesn't get stuck showing "Apply Changes" forever.
+            if (response.status === 200) {
+                setPendingApply(false);
+                alert('AI Engine updated. Please verify with a test call and logs.');
+                fetchConfig();
+                return;
             }
         } catch (error: any) {
-            alert(`Failed to restart AI Engine: ${error.response?.data?.detail || error.message}`);
+            const action = applyMethod === 'hot_reload' ? 'hot reload' : 'restart';
+            alert(`Failed to ${action} AI Engine: ${error.response?.data?.detail || error.message}`);
         } finally {
             setRestartingEngine(false);
         }
@@ -114,14 +198,15 @@ const ContextsPage = () => {
     };
 
     const handleAddContext = () => {
+        const defaultTools = ['transfer', 'hangup_call'].filter((t) => availableTools.includes(t));
         setEditingContext('new_context');
         setContextForm({
             name: '',
             greeting: 'Hi {caller_name}, how can I help you today?',
             prompt: 'You are a helpful voice assistant.',
-            profile: 'telephony_ulaw_8k',
+            profile: '',
             provider: '',
-            tools: ['transfer', 'hangup_call']
+            tools: defaultTools
         });
         setIsNewContext(true);
     };
@@ -153,43 +238,82 @@ const ContextsPage = () => {
         if (!newConfig.contexts) newConfig.contexts = {};
 
         const { name, ...contextData } = contextForm;
+        const cleanedContextData = { ...contextData };
+        // Avoid persisting empty-string overrides into YAML (prefer omission for "use default")
+        ['profile', 'provider', 'pipeline'].forEach((k) => {
+            if ((cleanedContextData as any)[k] === '') {
+                delete (cleanedContextData as any)[k];
+            }
+        });
 
         if (isNewContext && newConfig.contexts[name]) {
             alert('Context already exists');
             return;
         }
 
-        newConfig.contexts[name] = contextData;
+        newConfig.contexts[name] = cleanedContextData;
         await saveConfig(newConfig);
         setEditingContext(null);
     };
 
     if (loading) return <div className="p-8 text-center text-muted-foreground">Loading configuration...</div>;
 
+    const profilesBlock = config.profiles || {};
+    const defaultProfileName = (typeof profilesBlock.default === 'string' && profilesBlock.default) ? profilesBlock.default : '';
+    const availableProfiles = Object.entries(profilesBlock)
+        .filter(([k, v]) => k !== 'default' && !!v && typeof v === 'object' && !Array.isArray(v))
+        .map(([k]) => k)
+        .sort();
+
+    const displayToolName = (tool: string) => {
+        if (tool === 'transfer') return 'blind_transfer';
+        return tool;
+    };
+
     return (
         <div className="space-y-6">
-            <div className={`${pendingRestart ? 'bg-orange-500/15 border-orange-500/30' : 'bg-yellow-500/10 border-yellow-500/20'} border text-yellow-600 dark:text-yellow-500 p-4 rounded-md flex items-center justify-between`}>
-                <div className="flex items-center">
-                    <AlertCircle className="w-5 h-5 mr-2" />
-                    Changes to context configurations require an AI Engine restart to take effect.
+            {pendingApply && (
+                <div className="bg-orange-500/15 border border-orange-500/30 text-yellow-700 dark:text-yellow-400 p-4 rounded-md flex items-center justify-between">
+                    <div className="flex items-center">
+                        <AlertCircle className="w-5 h-5 mr-2" />
+                        {applyMethod === 'hot_reload' ? 'Changes saved. Apply to make them active.' : 'Changes saved. Restart required to make them active.'}
+                    </div>
+                    <button
+                        onClick={() => {
+                            const msg = applyMethod === 'hot_reload'
+                                ? 'Apply changes via hot reload now? Active calls should continue, new calls use updated config.'
+                                : 'Restart AI Engine now? This may disconnect active calls.';
+                            if (window.confirm(msg)) {
+                                handleApplyChanges(false);
+                            }
+                        }}
+                        disabled={restartingEngine}
+                        className="flex items-center text-xs px-3 py-1.5 rounded transition-colors bg-orange-500 text-white hover:bg-orange-600 font-medium disabled:opacity-50"
+                    >
+                        {restartingEngine ? (
+                            <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+                        ) : (
+                            <RefreshCw className="w-3 h-3 mr-1.5" />
+                        )}
+                        {restartingEngine ? 'Applying...' : applyMethod === 'hot_reload' ? 'Apply Changes' : 'Restart AI Engine'}
+                    </button>
                 </div>
-                <button
-                    onClick={() => handleReloadAIEngine(false)}
-                    disabled={restartingEngine}
-                    className={`flex items-center text-xs px-3 py-1.5 rounded transition-colors ${
-                        pendingRestart 
-                            ? 'bg-orange-500 text-white hover:bg-orange-600 font-medium' 
-                            : 'bg-yellow-500/20 hover:bg-yellow-500/30'
-                    } disabled:opacity-50`}
-                >
-                    {restartingEngine ? (
-                        <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
-                    ) : (
-                        <RefreshCw className="w-3 h-3 mr-1.5" />
-                    )}
-                    {restartingEngine ? 'Restarting...' : 'Reload AI Engine'}
-                </button>
-            </div>
+            )}
+
+            {error && (
+                <div className="bg-red-500/15 border border-red-500/30 text-red-700 dark:text-red-400 p-4 rounded-md flex items-center justify-between">
+                    <div className="flex items-center">
+                        <AlertCircle className="w-5 h-5 mr-2" />
+                        {error}
+                    </div>
+                    <button
+                        onClick={() => window.location.reload()}
+                        className="flex items-center text-xs px-3 py-1.5 rounded transition-colors bg-red-500 text-white hover:bg-red-600 font-medium"
+                    >
+                        Reload
+                    </button>
+                </div>
+            )}
 
             <div className="flex justify-between items-center">
                 <div>
@@ -220,8 +344,13 @@ const ContextsPage = () => {
                                         <h4 className="font-semibold text-lg">{name}</h4>
                                         <div className="flex gap-2 mt-1">
                                             <span className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 text-muted-foreground bg-secondary/50">
-                                                {contextData.profile || 'default'}
+                                                {contextData.profile || defaultProfileName || 'default'}
                                             </span>
+                                            {contextData.pipeline && (
+                                                <span className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 text-muted-foreground bg-secondary/50">
+                                                    {contextData.pipeline}
+                                                </span>
+                                            )}
                                             {contextData.provider && (
                                                 <span className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 text-muted-foreground bg-secondary/50">
                                                     {contextData.provider}
@@ -258,7 +387,7 @@ const ContextsPage = () => {
                                         <div className="flex flex-wrap gap-1.5">
                                             {contextData.tools.map((tool: string) => (
                                                 <span key={tool} className="px-2 py-1 rounded-md text-xs bg-accent text-accent-foreground font-medium border border-accent-foreground/10">
-                                                    {tool}
+                                                    {displayToolName(tool)}
                                                 </span>
                                             ))}
                                         </div>
@@ -300,7 +429,11 @@ const ContextsPage = () => {
                 <ContextForm
                     config={contextForm}
                     providers={config.providers}
+                    pipelines={config.pipelines}
                     availableTools={availableTools}
+                    toolEnabledMap={toolEnabledMap}
+                    availableProfiles={availableProfiles}
+                    defaultProfileName={defaultProfileName}
                     onChange={setContextForm}
                     isNew={isNewContext}
                 />

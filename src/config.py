@@ -45,7 +45,8 @@ class AsteriskConfig(BaseModel):
 
 class ExternalMediaConfig(BaseModel):
     # Network configuration
-    rtp_host: str = Field(default="127.0.0.1")
+    rtp_host: str = Field(default="127.0.0.1")  # Bind host: IP the RTP server listens on
+    advertise_host: Optional[str] = Field(default=None)  # Advertise host: IP Asterisk sends RTP to (defaults to rtp_host if not set)
     rtp_port: int = Field(default=18080)
     port_range: Optional[str] = Field(default=None)
     
@@ -69,7 +70,8 @@ class ExternalMediaConfig(BaseModel):
 
 
 class AudioSocketConfig(BaseModel):
-    host: str = Field(default="127.0.0.1")
+    host: str = Field(default="127.0.0.1")  # Bind host: IP the AudioSocket server listens on
+    advertise_host: Optional[str] = Field(default=None)  # Advertise host: IP Asterisk connects to (defaults to host if not set)
     port: int = Field(default=8090)
     format: str = Field(default="ulaw")  # 'ulaw' or 'slin16'
 
@@ -166,11 +168,16 @@ class OpenAIProviderConfig(BaseModel):
     tools_enabled: bool = Field(default=True)
     realtime_base_url: str = Field(default="wss://api.openai.com/v1/realtime")
     chat_base_url: str = Field(default="https://api.openai.com/v1")
+    stt_base_url: str = Field(default="https://api.openai.com/v1/audio/transcriptions")
     tts_base_url: str = Field(default="https://api.openai.com/v1/audio/speech")
     realtime_model: str = Field(default="gpt-4o-realtime-preview-2024-12-17")
     chat_model: str = Field(default="gpt-4o-mini")
-    tts_model: str = Field(default="gpt-4o-mini-tts")
+    stt_model: str = Field(default="whisper-1")
+    # NOTE: Default to widely-available TTS model to avoid silent-call failures when
+    # accounts don't have access to newer/limited models.
+    tts_model: str = Field(default="tts-1")
     voice: str = Field(default="alloy")
+    tts_response_format: str = Field(default="wav")
     default_modalities: List[str] = Field(default_factory=lambda: ["text"])
     input_encoding: str = Field(default="linear16")
     input_sample_rate_hz: int = Field(default=24000)
@@ -227,6 +234,41 @@ class GoogleProviderConfig(BaseModel):
     )
     # Provider-specific farewell hangup delay (overrides global)
     farewell_hangup_delay_sec: Optional[float] = None
+
+
+class GroqSTTProviderConfig(BaseModel):
+    """Groq Speech-to-Text (OpenAI-compatible audio/transcriptions + audio/translations)."""
+
+    enabled: bool = Field(default=True)
+    api_key: Optional[str] = None
+    stt_base_url: str = Field(default="https://api.groq.com/openai/v1/audio/transcriptions")
+    # Groq STT supported models: whisper-large-v3-turbo, whisper-large-v3
+    stt_model: str = Field(default="whisper-large-v3-turbo")
+    language: Optional[str] = None  # ISO-639-1 (e.g., en, tr)
+    prompt: Optional[str] = None
+    response_format: str = Field(default="json")  # json | verbose_json | text
+    temperature: float = Field(default=0.0, ge=0.0, le=1.0)
+    timestamp_granularities: Optional[List[str]] = None  # ["segment"] and/or ["word"] (requires verbose_json)
+    request_timeout_sec: float = Field(default=15.0)
+
+
+class GroqTTSProviderConfig(BaseModel):
+    """Groq Text-to-Speech (OpenAI-compatible audio/speech; Orpheus models)."""
+
+    enabled: bool = Field(default=True)
+    api_key: Optional[str] = None
+    tts_base_url: str = Field(default="https://api.groq.com/openai/v1/audio/speech")
+    # Groq TTS supported models: canopylabs/orpheus-v1-english, canopylabs/orpheus-arabic-saudi
+    tts_model: str = Field(default="canopylabs/orpheus-v1-english")
+    voice: str = Field(default="hannah")
+    response_format: str = Field(default="wav")  # Orpheus docs: only supported response_format is wav.
+    # Orpheus docs: input max 200 characters; adapter should chunk longer strings.
+    max_input_chars: int = Field(default=200, ge=1)
+    # Output format expected by downstream playback
+    target_encoding: str = Field(default="mulaw")
+    target_sample_rate_hz: int = Field(default=8000)
+    chunk_size_ms: int = Field(default=20)
+    request_timeout_sec: float = Field(default=15.0)
 
 
 class ElevenLabsProviderConfig(BaseModel):
@@ -501,7 +543,7 @@ class AppConfig(BaseModel):
     asterisk: AsteriskConfig
     llm: LLMConfig
     audio_transport: str = Field(default="externalmedia")  # 'externalmedia' | 'legacy'
-    downstream_mode: str = Field(default="file")  # 'file' | 'stream'
+    downstream_mode: str = Field(default="stream")  # 'file' | 'stream'
     external_media: Optional[ExternalMediaConfig] = Field(default_factory=ExternalMediaConfig)
     audiosocket: Optional[AudioSocketConfig] = Field(default_factory=AudioSocketConfig)
     vad: Optional[VADConfig] = Field(default_factory=VADConfig)
@@ -863,8 +905,8 @@ def validate_production_config(config: AppConfig) -> tuple[list[str], list[str]]
                     downstream_mode = getattr(config, "downstream_mode", "file")
                     if downstream_mode != "file":
                         warnings.append(
-                            f"ExternalMedia + pipelines typically use downstream_mode='file'; "
-                            f"current downstream_mode='{downstream_mode}' (note: pipelines ignore this setting)"
+                            f"ExternalMedia + pipelines: downstream_mode='{downstream_mode}' enabled; "
+                            "pipelines will stream playback when possible and fall back to file playback on errors"
                         )
 
             # default_provider-specific key hints (warnings only)

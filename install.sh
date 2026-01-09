@@ -30,7 +30,7 @@ setup_media_paths() {
     AST_GID=$(id -g asterisk 2>/dev/null || echo 995)
 
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    # This repo mounts ./asterisk_media into the ai-engine container at /mnt/asterisk_media.
+    # This repo mounts ./asterisk_media into the ai_engine container at /mnt/asterisk_media.
     # Keep host and container aligned by using the repo-local directory by default.
     MEDIA_DIR="${AST_MEDIA_DIR:-$SCRIPT_DIR/asterisk_media/ai-generated}"
     MEDIA_PARENT="$(dirname "$MEDIA_DIR")"
@@ -219,9 +219,9 @@ check_docker() {
 
 choose_compose_cmd() {
     if command -v docker-compose >/dev/null 2>&1; then
-        COMPOSE="docker-compose"
+        COMPOSE="docker-compose -p asterisk-ai-voice-agent"
     elif docker compose version >/dev/null 2>&1; then
-        COMPOSE="docker compose"
+        COMPOSE="docker compose -p asterisk-ai-voice-agent"
     else
         print_error "Neither 'docker-compose' nor 'docker compose' is available. Please install Docker Compose."
         exit 1
@@ -294,6 +294,48 @@ upsert_env() {
         sed -i.bak -E "s|^[# ]*${KEY}=.*|${KEY}=${VAL}|" .env
     else
         echo "${KEY}=${VAL}" >> .env
+    fi
+}
+
+ensure_docker_sock_env() {
+    # Admin UI container management requires a Docker API socket mounted at /var/run/docker.sock
+    # inside the admin_ui container. docker-compose.yml mounts:
+    #   ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    #
+    # On rootless Docker/Podman, /var/run/docker.sock is usually absent; we must persist DOCKER_SOCK in .env.
+    if [ ! -f .env ]; then
+        return 0
+    fi
+
+    local current_sock=""
+    current_sock="$(grep -E '^[# ]*DOCKER_SOCK=' .env 2>/dev/null | tail -n1 | sed -E 's/^[# ]*DOCKER_SOCK=//')"
+    current_sock="$(echo "$current_sock" | tr -d '\r' | xargs 2>/dev/null || echo "$current_sock")"
+
+    # If an explicit socket is already configured and valid, keep it.
+    if [ -n "$current_sock" ] && [ -S "$current_sock" ]; then
+        return 0
+    fi
+
+    local desired_sock=""
+    if [ -n "${DOCKER_HOST:-}" ] && [[ "${DOCKER_HOST}" == unix://* ]]; then
+        desired_sock="${DOCKER_HOST#unix://}"
+    elif [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -S "$XDG_RUNTIME_DIR/docker.sock" ]; then
+        desired_sock="$XDG_RUNTIME_DIR/docker.sock"
+    elif [ -S "/run/user/$(id -u)/docker.sock" ]; then
+        desired_sock="/run/user/$(id -u)/docker.sock"
+    elif command -v docker >/dev/null 2>&1 && docker --version 2>/dev/null | grep -qi "podman"; then
+        if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ]; then
+            desired_sock="$XDG_RUNTIME_DIR/podman/podman.sock"
+        fi
+    fi
+
+    if [ -n "$desired_sock" ] && [ "$desired_sock" != "/var/run/docker.sock" ]; then
+        upsert_env DOCKER_SOCK "$desired_sock"
+        rm -f .env.bak 2>/dev/null || true
+        print_info "Detected rootless container runtime; set DOCKER_SOCK in .env for Admin UI container control"
+        print_info "  DOCKER_SOCK=$desired_sock"
+        print_info "  If admin_ui is already running, recreate it to apply the mount:"
+        print_info "  docker compose -p asterisk-ai-voice-agent up -d --force-recreate admin_ui"
     fi
 }
 
@@ -507,16 +549,16 @@ set_performance_params_for_llm() {
 }
 
 wait_for_local_ai_health() {
-    print_info "Waiting for local-ai-server to become ready (port 8765)..."
+    print_info "Waiting for local_ai_server to become ready (port 8765)..."
     echo ""
     echo "⏳ First-run model download may take 5-10 minutes..."
     echo "📋 Monitor progress in another terminal:"
-    echo "   $COMPOSE logs -f local-ai-server | grep -E 'model|Server started'"
+    echo "   $COMPOSE logs -f local_ai_server | grep -E 'model|Server started'"
     echo ""
     
     # Ensure service started (build if needed)
-    print_info "Starting local-ai-server container..."
-    $COMPOSE up -d --build local-ai-server
+    print_info "Starting local_ai_server container..."
+    $COMPOSE up -d --build local_ai_server
     echo ""
     
     # Wait up to 10 minutes (60 iterations * 10s)
@@ -526,26 +568,29 @@ wait_for_local_ai_health() {
     
     print_info "🔍 Checking local AI server status..."
     echo ""
-    
-    for i in $(seq 1 $max_wait); do
-        # Check 1: Is container running?
-        if ! docker ps --filter "name=local_ai_server" --filter "status=running" | grep -q "local_ai_server"; then
-            if (( i > 12 )); then  # Give it 2 minutes to start
-                print_error "Container local_ai_server not running after 2 minutes"
-                echo "Check logs: $COMPOSE logs local-ai-server"
-                return 1
-            fi
-            echo -n "⏳ Waiting for container to start... (${i}0s)"
-            echo -ne "\r"
+
+    local i
+    for ((i=1; i<=max_wait; i++)); do
+        # Check 1: Container running
+        if ! docker ps --format '{{.Names}}' | grep -qx "local_ai_server"; then
+            echo ""  # Clear the progress line
+            print_warning "local_ai_server container is not running yet..."
             sleep $check_interval
             continue
         fi
-        
-        # Check 2: Are models loaded? (check logs for success message)
-        if docker logs local_ai_server 2>&1 | grep -q "Enhanced Local AI Server started on ws://"; then
+
+        # Check 2: Port is open AND logs indicate the service has started
+        # We use a lightweight port check first, then corroborate with logs.
+        local port_open="false"
+        if command -v nc >/dev/null 2>&1; then
+            nc -z 127.0.0.1 8765 >/dev/null 2>&1 && port_open="true"
+        else
+            (echo > /dev/tcp/127.0.0.1/8765) >/dev/null 2>&1 && port_open="true"
+        fi
+
+        if [ "$port_open" = "true" ] && docker logs local_ai_server 2>&1 | tail -100 | grep -Eqi "listening on|server started|uvicorn running|application startup complete"; then
             echo ""  # Clear the progress line
-            print_success "✅ local-ai-server is ready and listening on port 8765"
-            print_info "Models loaded successfully (verified from logs)"
+            print_success "✅ local_ai_server is ready and listening on port 8765"
             return 0
         fi
         
@@ -553,7 +598,7 @@ wait_for_local_ai_health() {
         local status=$(docker inspect -f '{{.State.Health.Status}}' local_ai_server 2>/dev/null || echo "starting")
         if [ "$status" = "healthy" ]; then
             echo ""  # Clear the progress line
-            print_success "✅ local-ai-server is healthy (Docker health check passed)"
+            print_success "✅ local_ai_server is healthy (Docker health check passed)"
             return 0
         fi
         
@@ -587,7 +632,7 @@ wait_for_local_ai_health() {
     
     # Timeout after 10 minutes
     echo ""
-    print_warning "⚠️  local-ai-server did not become ready within 10 minutes"
+    print_warning "⚠️  local_ai_server did not become ready within 10 minutes"
     echo ""
     echo "Last 20 log lines:"
     docker logs local_ai_server 2>&1 | tail -20
@@ -598,14 +643,14 @@ wait_for_local_ai_health() {
     echo "  • Model files corrupted (rm -rf models/; re-run install.sh)"
     echo ""
     echo "Debug commands:"
-    echo "  $COMPOSE logs local-ai-server | grep -E 'model|error|ERROR'"
+    echo "  $COMPOSE logs local_ai_server | grep -E 'model|error|ERROR'"
     echo "  docker stats local_ai_server --no-stream"
     echo "  du -sh models/*"
     echo ""
     
     read -p "Continue anyway? [y/N]: " continue_anyway
     if [[ "$continue_anyway" =~ ^[Yy]$ ]]; then
-        print_warning "Continuing without confirmed local-ai-server health..."
+        print_warning "Continuing without confirmed local_ai_server health..."
         return 0
     fi
     
@@ -624,6 +669,7 @@ configure_env() {
     
     print_info "Starting interactive configuration (.env updates)..."
     ensure_env_file
+    ensure_docker_sock_env
 
     # Ensure JWT_SECRET exists for remotely accessible Admin UI (binds to 0.0.0.0 by default).
     local CURRENT_JWT_SECRET
@@ -669,7 +715,7 @@ configure_env() {
     echo ""
     echo "Asterisk Connection Configuration"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "ASTERISK_HOST determines how ai-engine connects to Asterisk ARI:"
+    echo "ASTERISK_HOST determines how ai_engine connects to Asterisk ARI:"
     echo "  • 127.0.0.1 or localhost  - Asterisk on the SAME host (default)"
     echo "  • IP address              - Asterisk on a remote host (e.g., 192.168.1.100)"
     echo "  • Hostname/FQDN           - Remote via DNS (e.g., asterisk.example.com)"
@@ -756,7 +802,7 @@ configure_env() {
     [ -f .env.bak ] && rm -f .env.bak || true
 
     print_success ".env updated."
-    print_info "If you don't have API keys now, you can add them later to .env and then recreate containers: 'docker-compose up -d' (use '--build' if images changed). Note: simple 'restart' will not pick up new .env values."
+    print_info "If you don't have API keys now, you can add them later to .env and then recreate containers: 'docker compose -p asterisk-ai-voice-agent up -d' (use '--build' if images changed). Note: simple 'restart' will not pick up new .env values."
 }
 
 select_config_template() {
@@ -783,7 +829,7 @@ select_config_template() {
     echo ""
     echo "  [3] Local Hybrid"
     echo "      • Audio privacy, cost control"
-    echo "      • Uses: OPENAI_API_KEY + local-ai-server"
+    echo "      • Uses: OPENAI_API_KEY + local_ai_server"
     echo ""
     echo "💡 You can switch pipelines anytime by editing ai-agent.yaml"
     echo ""
@@ -954,7 +1000,7 @@ enable_chosen_provider() {
     print_info "   1. Edit config/ai-agent.yaml"
     print_info "   2. Set providers.<provider>.enabled: true"
     print_info "   3. Ensure API keys are in .env file"
-    print_info "   4. Run: docker compose restart ai-engine"
+    print_info "   4. Run: docker compose -p asterisk-ai-voice-agent restart ai_engine"
 }
 
 # Prompt for local AI server setup
@@ -1081,7 +1127,7 @@ prompt_local_ai_setup() {
         echo "     bash scripts/model_setup.sh"
         echo ""
         echo "  2. Start local AI server:"
-        echo "     docker compose up -d local-ai-server"
+        echo "     docker compose -p asterisk-ai-voice-agent up -d local_ai_server"
         echo ""
         echo "  3. Enable in config/ai-agent.yaml:"
         echo "     providers:"
@@ -1111,11 +1157,11 @@ validate_services() {
     echo ""
     print_info "Validating services..."
     
-    # Check ai-engine container is running
+    # Check ai_engine container is running
     if docker ps --filter "name=ai_engine" --filter "status=running" | grep -q "ai_engine"; then
-        print_success "✓ ai-engine container running"
+        print_success "✓ ai_engine container running"
     else
-        print_warning "✗ ai-engine container not running"
+        print_warning "✗ ai_engine container not running"
         validation_failed=1
     fi
     
@@ -1145,15 +1191,15 @@ validate_services() {
         print_success "✓ Health endpoint responding at :15000"
     elif command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
         print_warning "✗ Health endpoint not yet responding (may still be starting)"
-        print_info "   Check: $COMPOSE logs ai-engine"
+        print_info "   Check: $COMPOSE logs ai_engine"
     fi
     
-    # For local-ai-server, check if user set it up
+    # For local_ai_server, check if user set it up
     if [ "${LOCAL_AI_SETUP:-0}" -eq 1 ]; then
         if docker ps --filter "name=local_ai_server" --filter "status=running" | grep -q "local_ai_server"; then
-            print_success "✓ local-ai-server container running"
+            print_success "✓ local_ai_server container running"
         else
-            print_warning "✗ local-ai-server container not running"
+            print_warning "✗ local_ai_server container not running"
             validation_failed=1
         fi
     fi
@@ -1163,9 +1209,9 @@ validate_services() {
         print_success "🎉 All validation checks passed!"
     else
         print_warning "⚠️  Some validation checks failed. Review logs:"
-        echo "   $COMPOSE logs ai-engine"
+        echo "   $COMPOSE logs ai_engine"
         if [ "${LOCAL_AI_SETUP:-0}" -eq 1 ]; then
-            echo "   $COMPOSE logs local-ai-server"
+            echo "   $COMPOSE logs local_ai_server"
         fi
     fi
 }
@@ -1186,19 +1232,19 @@ start_services() {
     fi
     
     if [[ "$start_service" =~ ^[Yy]$|^$ ]]; then
-        # Start local-ai-server if user opted in
+        # Start local_ai_server if user opted in
         if [ "${LOCAL_AI_SETUP:-0}" -eq 1 ]; then
-            print_info "Starting local-ai-server (STT/TTS)..."
+            print_info "Starting local_ai_server (STT/TTS)..."
             print_info "Note: First startup may take 5-10 minutes to load models"
-            print_info "Monitor progress: $COMPOSE logs -f local-ai-server"
+            print_info "Monitor progress: $COMPOSE logs -f local_ai_server"
             echo ""
             wait_for_local_ai_health
         fi
         
-        # Always start ai-engine
-        print_info "Starting ai-engine (orchestrator)..."
+        # Always start ai_engine
+        print_info "Starting ai_engine (orchestrator)..."
         echo ""
-        $COMPOSE up -d --build ai-engine
+        $COMPOSE up -d --build ai_engine
         
         # Post-start validation
         validate_services
@@ -1230,9 +1276,9 @@ start_services() {
         echo ""
         
         echo "📋 View Logs:"
-        echo "   $COMPOSE logs -f ai-engine"
+        echo "   $COMPOSE logs -f ai_engine"
         if [ "${LOCAL_AI_SETUP:-0}" -eq 1 ]; then
-            echo "   $COMPOSE logs -f local-ai-server"
+            echo "   $COMPOSE logs -f local_ai_server"
         fi
         echo ""
         
@@ -1250,10 +1296,10 @@ start_services() {
 
         if [[ "$start_admin_ui" =~ ^[Yy]$|^$ ]]; then
             print_info "Starting Admin UI..."
-            $COMPOSE up -d --build admin-ui
+            $COMPOSE up -d --build admin_ui
         else
             print_info "Skipped starting Admin UI. You can start it later with:"
-            print_info "  $COMPOSE up -d admin-ui"
+            print_info "  $COMPOSE up -d admin_ui"
         fi
 
         echo ""
@@ -1271,14 +1317,14 @@ start_services() {
         
         if [ "${LOCAL_AI_SETUP:-0}" -eq 1 ]; then
             echo "🤖 Local AI Models:"
-            echo "   $COMPOSE logs local-ai-server | grep -i 'model.*loaded'"
+            echo "   $COMPOSE logs local_ai_server | grep -i 'model.*loaded'"
             echo ""
         fi
         
         echo "🔄 Switching Providers:"
         echo "   All 3 providers are configured in config/ai-agent.yaml"
         echo "   To switch: Edit the file, set providers.<name>.enabled: true"
-        echo "   Then: docker compose restart ai-engine"
+        echo "   Then: docker compose -p asterisk-ai-voice-agent restart ai_engine"
         echo ""
         
         print_info "Next step: Configure Asterisk dialplan (see below)"
@@ -1326,7 +1372,7 @@ print_asterisk_dialplan_snippet() {
     echo "Transport: $TRANSPORT"
     echo ""
     echo "ℹ️  All 3 provider configurations are available in config/ai-agent.yaml"
-    echo "   Switch by editing the file and restarting: docker compose restart ai-engine"
+    echo "   Switch by editing the file and restarting: docker compose -p asterisk-ai-voice-agent restart ai_engine"
     echo ""
     echo "Add this to extensions_custom.conf (or via FreePBX GUI):"
     echo ""
@@ -1517,8 +1563,8 @@ print_monitoring_instructions() {
     echo "       to: 'admin@yourdomain.com'"
     echo "       summary_interval: daily  # or hourly, weekly"
     echo ""
-    echo "4. Restart ai-engine to apply:"
-    echo "   docker-compose restart ai-engine"
+    echo "4. Restart ai_engine to apply:"
+    echo "   docker compose -p asterisk-ai-voice-agent restart ai_engine"
     echo ""
     echo "For Grafana/Prometheus integration, see:"
     echo "  docs/MONITORING_GUIDE.md"
@@ -1549,7 +1595,7 @@ print_final_summary() {
     print_info "  1. Access Admin UI: http://<server-ip>:3003"
     print_info "  2. Configure dialplan (see snippet above or run: agent dialplan)"
     print_info "  3. Make a test call to verify everything works"
-    print_info "  4. Check logs: docker compose logs -f ai-engine"
+    print_info "  4. Check logs: docker compose -p asterisk-ai-voice-agent logs -f ai_engine"
     print_info "  5. Switch pipelines: Edit config/ai-agent.yaml (change default_provider)"
     print_info "  6. Optional: Set up monitoring (see instructions above)"
 }

@@ -88,6 +88,11 @@ class DeepgramToolAdapter:
         Returns:
             Dict with function_call_id and result for sending back to Deepgram
         """
+        tools_cfg = (context.get("config") or {}).get("tools") or {}
+        if isinstance(tools_cfg, dict) and tools_cfg.get("enabled") is False:
+            logger.warning("Tools disabled; rejecting tool call", tool_event_type=event.get("type"))
+            return {"status": "error", "message": "Tools are disabled"}
+
         # Extract function call details from actual Deepgram format
         functions = event.get('functions', [])
         if not functions:
@@ -98,20 +103,6 @@ class DeepgramToolAdapter:
         func = functions[0]
         function_call_id = func.get('id')
         function_name = func.get('name')
-
-        try:
-            full_cfg = context.get("config")
-            if isinstance(full_cfg, dict) and not bool((full_cfg.get("tools") or {}).get("enabled", True)):
-                error_msg = f"Tools disabled; rejecting '{function_name}'"
-                logger.warning(error_msg, tool=function_name)
-                return {
-                    "function_call_id": function_call_id,
-                    "function_name": function_name,
-                    "status": "error",
-                    "message": error_msg,
-                }
-        except Exception:
-            pass
 
         allowed = context.get("allowed_tools", None)
         if allowed is not None and function_name not in allowed:

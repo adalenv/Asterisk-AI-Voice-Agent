@@ -5,9 +5,54 @@ from dotenv import load_dotenv
 import os
 import logging
 import secrets
+from pathlib import Path
+
+
+def _ensure_outbound_prompt_assets() -> None:
+    """
+    Install shipped outbound prompt assets into the runtime media directory.
+
+    This keeps "out of the box" campaigns functional without requiring the user to upload
+    consent/voicemail recordings before first use.
+    """
+    try:
+        project_root = (os.getenv("PROJECT_ROOT") or "/app/project").strip() or "/app/project"
+        src_dir = Path(project_root) / "assets" / "outbound_prompts" / "en-US"
+        if not src_dir.exists():
+            return
+
+        media_dir = Path(os.getenv("AAVA_MEDIA_DIR") or "/mnt/asterisk_media/ai-generated")
+        try:
+            media_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        mapping = {
+            "aava-consent-default.ulaw": "aava-consent-default.ulaw",
+            "aava-voicemail-default.ulaw": "aava-voicemail-default.ulaw",
+        }
+        for src_name, dst_name in mapping.items():
+            src = src_dir / src_name
+            dst = media_dir / dst_name
+            if not src.exists():
+                continue
+            if dst.exists() and dst.stat().st_size == src.stat().st_size:
+                continue
+            try:
+                data = src.read_bytes()
+                dst.write_bytes(data)
+            except Exception:
+                continue
+    except Exception:
+        # Never block Admin UI startup for this.
+        pass
 
 # Load environment variables (wizard will create .env from .env.example on first Next click)
 load_dotenv(settings.ENV_PATH)
+
+# NOTE: DB permission alignment is handled by install/preflight steps (host-side),
+# keeping runtime code minimal and CI security scanners happy.
+_ensure_outbound_prompt_assets()
 
 # SECURITY: Admin UI binds to 0.0.0.0 by default (DX-first).
 # If JWT_SECRET is missing/placeholder, generate an ephemeral secret so tokens
@@ -27,7 +72,7 @@ if _is_remote_bind and _raw_jwt_secret in _placeholder_secrets:
         _uvicorn_host,
     )
 
-from api import config, system, wizard, logs, local_ai, ollama, mcp, calls  # noqa: E402
+from api import config, system, wizard, logs, local_ai, ollama, mcp, calls, outbound  # noqa: E402
 import auth  # noqa: E402
 
 app = FastAPI(title="Asterisk AI Voice Agent Admin API")
@@ -78,6 +123,7 @@ app.include_router(local_ai.router, prefix="/api/local-ai", tags=["local-ai"], d
 app.include_router(mcp.router, dependencies=[Depends(auth.get_current_user)])
 app.include_router(ollama.router, tags=["ollama"], dependencies=[Depends(auth.get_current_user)])
 app.include_router(calls.router, prefix="/api", tags=["calls"], dependencies=[Depends(auth.get_current_user)])
+app.include_router(outbound.router, prefix="/api", tags=["outbound"], dependencies=[Depends(auth.get_current_user)])
 
 @app.get("/health")
 async def health_check():

@@ -141,7 +141,7 @@ class ElevenLabsAgentProvider(AIProviderInterface):
 - Date: 2025-11-19
 - Call ID: 1764710654.6786
 - Duration: ~45 seconds
-- Environment: voiprnd.nemtclouddispatch.com
+- Environment: development server (self-hosted)
 
 **Quality Assessment**: ✅ Excellent
 - Premium voice quality with natural intonation
@@ -334,7 +334,7 @@ Attempting to extract TTS-only functionality from ElevenLabs would require signi
 ## Deployment Status
 
 **Environment**: Production  
-**Server**: voiprnd.nemtclouddispatch.com  
+**Server**: development server (self-hosted)  
 **Status**: ✅ Active and Validated  
 **Golden Baseline**: 1764710654.6786
 

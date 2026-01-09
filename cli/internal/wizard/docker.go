@@ -9,12 +9,12 @@ import (
 // RebuildContainers rebuilds and recreates containers
 func RebuildContainers(pipeline string) error {
 	// Determine which containers to rebuild based on pipeline
-	containers := []string{"ai-engine"}
+	containers := []string{"ai_engine"}
 	
 	// Add local-ai-server if using local models
 	if strings.Contains(pipeline, "local") {
 		if TestContainerExists("local_ai_server") {
-			containers = append(containers, "local-ai-server")
+			containers = append(containers, "local_ai_server")
 		}
 	}
 	
@@ -23,14 +23,14 @@ func RebuildContainers(pipeline string) error {
 	for _, container := range containers {
 		// Build
 		PrintInfo(fmt.Sprintf("Building %s...", container))
-		buildCmd := exec.Command("docker-compose", "build", container)
+		buildCmd := exec.Command("docker", "compose", "-p", "asterisk-ai-voice-agent", "build", container)
 		if output, err := buildCmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("build failed for %s: %w\n%s", container, err, string(output))
 		}
 		
 		// Force recreate
 		PrintInfo(fmt.Sprintf("Recreating %s...", container))
-		upCmd := exec.Command("docker-compose", "up", "-d", "--force-recreate", container)
+		upCmd := exec.Command("docker", "compose", "-p", "asterisk-ai-voice-agent", "up", "-d", "--force-recreate", container)
 		if output, err := upCmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("recreate failed for %s: %w\n%s", container, err, string(output))
 		}

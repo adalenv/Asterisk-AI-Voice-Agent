@@ -12,6 +12,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Additional provider integrations
 - Enhanced monitoring features
 
+### Fixed
+
+- Docker builds: pin base OS/runtime to avoid upstream tag drift (`admin_ui`/`ai_engine`: Debian 12 `bookworm` + Python 3.11; `local_ai_server`: Debian 13 `trixie` + Python 3.11 for Kroko compatibility).
+
+## [5.0.0] - 2026-01-07
+
+### Added
+
+- Outbound Campaign Dialer (**Alpha**) (Admin UI → Call Scheduling):
+  - Campaign scheduler (single-node) with pacing + concurrency controls
+  - CSV lead import (skip-existing), lead actions (recycle/reset/ignore/delete)
+  - Dialplan-assisted voicemail detection via Asterisk `AMD()` and voicemail drop
+  - Optional consent gate (DTMF `1` accept / `2` deny / timeout tracking)
+  - Recording library (upload once, reuse across campaigns) + shipped default consent/voicemail prompts
+- Groq Speech (STT + TTS) adapters for modular pipeline deployments
+- Attended (warm) transfer tool with DTMF acceptance flow
+- Preflight hardening and operator guidance (cross-platform checks, docker socket guidance, local-ai “minimal vs full” mode)
+
+### Changed
+
+- Standardized Docker Compose service/container names: `admin_ui`, `ai_engine`, `local_ai_server`
+- Container base OS alignment:
+  - `admin_ui`: Python 3.11 on Debian 12 (`bookworm`)
+  - `ai_engine`: Python 3.11 on Debian 12 (`bookworm`)
+  - `local_ai_server`: Python 3.11 on Debian 13 (`trixie`) (intentional for embedded Kroko/glibc compatibility)
+
+### Fixed
+
+- Outbound dialer reliability fixes (caller-id inheritance, outcome tracking, SQLite write/lock edge cases, duplicate side-effects)
+- Admin UI stability improvements (tooltips, recording preview UX, safer compose/health behaviors)
+- Ollama pipeline robustness (provider config resolution + tool-result handling improvements)
+
+### Docs
+
+- Added `docs/OUTBOUND_CALLING.md` and updated FreePBX + installation docs for v5.0.0
+
 ## [4.6.0] - 2025-12-29
 
 ### Added
@@ -37,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Docs
 
-- Upgrade guidance: `v4.5.3 → v4.6.0` checklist in `docs/INSTALLATION.md`
+- Upgrade guidance: `v4.6.0 → v5.0.0` checklist in `docs/INSTALLATION.md`
 - IPv6 policy: warn/recommend disabling IPv6 for GA stability and document mitigation steps
 - Supported platforms: explicit Tier 3 best-effort guidance for openSUSE and Podman
 
@@ -1041,13 +1077,17 @@ Version 4.1 introduces **unified tool calling architecture** enabling AI agents 
 
 ## Version History
 
+- **v5.0.0** (2026-01-07) - Outbound Campaign Dialer (Alpha), Groq Speech, Ollama improvements, attended transfer
+- **v4.6.0** (2025-12-29) - Admin UI config/health improvements, preflight enhancements
 - **v4.5.2** (2025-12-16) - Local AI Server UX, MCP tools, Aviation ATIS
 - **v4.5.1** (2025-12-13) - Admin UI improvements, wizard fixes, preflight enhancements
 - **v4.5.0** (2025-12-11) - Admin UI stability, graceful shutdown, timer logging
 - **v4.0.0** (2025-10-29) - Modular pipeline architecture, production monitoring, golden baselines
 - **v3.0.0** (2025-09-16) - Modular pipeline architecture, file based playback
 
-[Unreleased]: https://github.com/hkjarral/Asterisk-AI-Voice-Agent/compare/v4.5.2...HEAD
+[Unreleased]: https://github.com/hkjarral/Asterisk-AI-Voice-Agent/compare/v5.0.0...HEAD
+[5.0.0]: https://github.com/hkjarral/Asterisk-AI-Voice-Agent/releases/tag/v5.0.0
+[4.6.0]: https://github.com/hkjarral/Asterisk-AI-Voice-Agent/releases/tag/v4.6.0
 [4.5.2]: https://github.com/hkjarral/Asterisk-AI-Voice-Agent/releases/tag/v4.5.2
 [4.5.1]: https://github.com/hkjarral/Asterisk-AI-Voice-Agent/releases/tag/v4.5.1
 [4.5.0]: https://github.com/hkjarral/Asterisk-AI-Voice-Agent/releases/tag/v4.5.0

@@ -21,7 +21,7 @@ Use when you want “fully local” call handling with a predictable, smaller st
 
 Run:
 
-- `docker compose -f docker-compose.yml -f docker-compose.local-core.yml build local-ai-server`
+- `docker compose -f docker-compose.yml -f docker-compose.local-core.yml build local_ai_server`
 - `docker compose up -d`
 
 ### Profile: `local-full` (power users)
@@ -30,13 +30,13 @@ Enable additional backends (Sherpa, Kokoro, embedded Kroko). This is heavier, in
 
 Run:
 
-- `docker compose build local-ai-server` (default settings)
+- `docker compose build local_ai_server` (default settings)
 
 ## Embedded Kroko (Default: Off)
 
-`INCLUDE_KROKO_EMBEDDED` is **off by default** (lighter image). Enable it only if you specifically want the embedded Kroko ONNX websocket server inside `local-ai-server`.
+`INCLUDE_KROKO_EMBEDDED` is **off by default** (lighter image). Enable it only if you specifically want the embedded Kroko ONNX websocket server inside `local_ai_server`.
 
-- Enable for a build: `INCLUDE_KROKO_EMBEDDED=true docker compose build local-ai-server`
+- Enable for a build: `INCLUDE_KROKO_EMBEDDED=true docker compose build local_ai_server`
 
 ## Hardware Expectations (Rule of Thumb)
 

@@ -1,5 +1,74 @@
-import React from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { HelpCircle } from 'lucide-react';
+import { createPortal } from 'react-dom';
+
+type TooltipPlacement = 'top' | 'bottom';
+
+type TooltipPosition = {
+    left: number;
+    top: number;
+    placement: TooltipPlacement;
+    maxWidth: number;
+};
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const Tooltip = ({ anchorEl, text, open }: { anchorEl: HTMLElement | null; text: string; open: boolean }) => {
+    const [pos, setPos] = useState<TooltipPosition | null>(null);
+
+    const compute = () => {
+        if (!open || !anchorEl) return;
+        const rect = anchorEl.getBoundingClientRect();
+        const viewportW = window.innerWidth || 1024;
+        const viewportH = window.innerHeight || 768;
+
+        const maxWidth = clamp(Math.floor(viewportW * 0.6), 220, 360);
+
+        // Prefer top placement, flip to bottom if not enough room.
+        const preferTop = rect.top > 56;
+        const placement: TooltipPlacement = preferTop ? 'top' : 'bottom';
+
+        // Center horizontally on the icon, then clamp within viewport with some padding.
+        const padding = 12;
+        const left = clamp(rect.left + rect.width / 2, padding, viewportW - padding);
+
+        const top = placement === 'top' ? clamp(rect.top - 8, padding, viewportH - padding) : clamp(rect.bottom + 8, padding, viewportH - padding);
+
+        setPos({ left, top, placement, maxWidth });
+    };
+
+    useEffect(() => {
+        compute();
+        if (!open) return;
+        const onScroll = () => compute();
+        const onResize = () => compute();
+        window.addEventListener('scroll', onScroll, true);
+        window.addEventListener('resize', onResize);
+        return () => {
+            window.removeEventListener('scroll', onScroll, true);
+            window.removeEventListener('resize', onResize);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, anchorEl, text]);
+
+    if (!open || !anchorEl || !pos) return null;
+
+    const style: React.CSSProperties = {
+        position: 'fixed',
+        left: pos.left,
+        top: pos.top,
+        transform: pos.placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
+        maxWidth: pos.maxWidth,
+        zIndex: 1000,
+    };
+
+    return createPortal(
+        <div style={style} className="px-2 py-1 bg-popover text-popover-foreground text-xs rounded shadow-md border border-border whitespace-normal break-words">
+            {text}
+        </div>,
+        document.body
+    );
+};
 
 interface LabelProps {
     children: React.ReactNode;
@@ -9,18 +78,38 @@ interface LabelProps {
 }
 
 export const FormLabel = ({ children, htmlFor, tooltip, className = '' }: LabelProps) => (
-    <label htmlFor={htmlFor} className={`block text-sm font-medium mb-1.5 flex items-center gap-1.5 ${className}`}>
+    <FormLabelImpl htmlFor={htmlFor} tooltip={tooltip} className={className}>
         {children}
-        {tooltip && (
-            <div className="group relative">
-                <HelpCircle className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded shadow-md border border-border whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                    {tooltip}
-                </div>
-            </div>
-        )}
-    </label>
+    </FormLabelImpl>
 );
+
+const FormLabelImpl = ({ children, htmlFor, tooltip, className = '' }: LabelProps) => {
+    const iconRef = useRef<HTMLSpanElement>(null);
+    const [open, setOpen] = useState(false);
+    const anchorEl = iconRef.current;
+
+    return (
+        <label htmlFor={htmlFor} className={`block text-sm font-medium mb-1.5 flex items-center gap-1.5 ${className}`}>
+            {children}
+            {tooltip && (
+                <>
+                    <span
+                        ref={iconRef}
+                        className="inline-flex"
+                        onMouseEnter={() => setOpen(true)}
+                        onMouseLeave={() => setOpen(false)}
+                        onFocus={() => setOpen(true)}
+                        onBlur={() => setOpen(false)}
+                        tabIndex={0}
+                    >
+                        <HelpCircle className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                    </span>
+                    <Tooltip anchorEl={anchorEl} text={tooltip} open={open} />
+                </>
+            )}
+        </label>
+    );
+};
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
     label?: string;
@@ -92,12 +181,7 @@ export const FormSwitch = React.forwardRef<HTMLInputElement, SwitchProps>(
                             {label}
                         </label>
                         {tooltip && (
-                            <div className="group relative">
-                                <HelpCircle className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
-                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded shadow-md border border-border whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                                    {tooltip}
-                                </div>
-                            </div>
+                            <FormSwitchTooltip tooltip={tooltip} />
                         )}
                     </div>
                 )}
@@ -115,3 +199,26 @@ export const FormSwitch = React.forwardRef<HTMLInputElement, SwitchProps>(
         </div>
     )
 );
+
+const FormSwitchTooltip = ({ tooltip }: { tooltip: string }) => {
+    const iconRef = useRef<HTMLSpanElement>(null);
+    const [open, setOpen] = useState(false);
+    const anchorEl = iconRef.current;
+    const tip = useMemo(() => tooltip, [tooltip]);
+    return (
+        <>
+            <span
+                ref={iconRef}
+                className="inline-flex"
+                onMouseEnter={() => setOpen(true)}
+                onMouseLeave={() => setOpen(false)}
+                onFocus={() => setOpen(true)}
+                onBlur={() => setOpen(false)}
+                tabIndex={0}
+            >
+                <HelpCircle className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+            </span>
+            <Tooltip anchorEl={anchorEl} text={tip} open={open} />
+        </>
+    );
+};

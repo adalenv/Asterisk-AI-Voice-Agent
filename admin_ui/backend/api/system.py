@@ -187,13 +187,17 @@ async def start_container(container_id: str):
     """Start a stopped container using docker-compose or Docker API."""
     import subprocess
     
-    # Map container names to docker-compose service names
+    # Map container names to docker compose service names (canonical)
     service_map = {
-        "ai_engine": "ai-engine",
-        "admin_ui": "admin-ui",
-        "local_ai_server": "local-ai-server"
+        "ai_engine": "ai_engine",
+        "admin_ui": "admin_ui",
+        "local_ai_server": "local_ai_server",
     }
+    # Accept both canonical underscored and legacy hyphenated service names as inputs.
     container_name_map = {
+        "ai_engine": "ai_engine",
+        "admin_ui": "admin_ui",
+        "local_ai_server": "local_ai_server",
         "ai-engine": "ai_engine",
         "admin-ui": "admin_ui",
         "local-ai-server": "local_ai_server",
@@ -211,12 +215,12 @@ async def start_container(container_id: str):
         except:
             service_name = None
 
-    # If the caller used compose service names (ai-engine/admin-ui/local-ai-server)
+    # If the caller used compose service names (canonical or legacy)
     if not service_name and container_id in container_name_map:
-        service_name = container_id
+        service_name = service_map.get(container_name_map[container_id])
 
     # Only allow starting AAVA services from Admin UI.
-    if service_name not in container_name_map:
+    if service_name not in set(service_map.values()):
         raise HTTPException(status_code=400, detail="Only AAVA services can be started from Admin UI")
     
     project_root = os.getenv("PROJECT_ROOT", "/app/project")
@@ -226,7 +230,7 @@ async def start_container(container_id: str):
     try:
         # Use docker compose with --build to ensure image exists
         compose_cmd = get_docker_compose_cmd()
-        cmd = compose_cmd + ["up", "-d", "--build", service_name]
+        cmd = compose_cmd + ["-p", "asterisk-ai-voice-agent", "up", "-d", "--build", service_name]
         
         result = subprocess.run(
             cmd,
@@ -270,20 +274,22 @@ async def _check_active_calls() -> dict:
     
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            # Try multiple possible endpoints
             for url in [
                 "http://127.0.0.1:15000/sessions/stats",
+                "http://ai_engine:15000/sessions/stats",
                 "http://ai-engine:15000/sessions/stats",
             ]:
                 try:
                     resp = await client.get(url)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        active = data.get("active_calls", data.get("active_sessions", 0))
-                        return {"active_calls": active, "reachable": True}
+                    if resp.status_code != 200:
+                        continue
+
+                    data = resp.json()
+                    active_calls = data.get("active_calls", data.get("active_sessions", 0))
+                    return {"active_calls": active_calls, "reachable": True}
                 except httpx.ConnectError:
                     continue
-    except Exception as e:
+    except Exception:
         logger.debug("Could not check active calls", exc_info=True)
     
     return {"active_calls": 0, "reachable": False}
@@ -301,18 +307,21 @@ async def restart_container(container_id: str, force: bool = False):
     Returns:
         Success response with health_status, or warning if active calls and not forced.
     """
-    # Map container names to docker-compose service names
+    # Map container names to docker compose service names (canonical)
     service_map = {
-        "ai_engine": "ai-engine",
-        "admin_ui": "admin-ui",
-        "local_ai_server": "local-ai-server"
+        "ai_engine": "ai_engine",
+        "admin_ui": "admin_ui",
+        "local_ai_server": "local_ai_server",
     }
     
-    # Map service names to container names
+    # Accept both canonical underscored and legacy hyphenated service names as inputs.
     container_name_map = {
+        "ai_engine": "ai_engine",
+        "admin_ui": "admin_ui",
+        "local_ai_server": "local_ai_server",
         "ai-engine": "ai_engine",
-        "admin-ui": "admin_ui", 
-        "local-ai-server": "local_ai_server"
+        "admin-ui": "admin_ui",
+        "local-ai-server": "local_ai_server",
     }
     
     # Resolve container name
@@ -323,7 +332,7 @@ async def restart_container(container_id: str, force: bool = False):
         container_name = container_id
         is_known = True
     elif container_id in container_name_map:
-        # Input is a service name like "ai-engine"
+        # Input is a service name (canonical or legacy)
         container_name = container_name_map[container_id]
         is_known = True
 
@@ -370,8 +379,8 @@ async def restart_container(container_id: str, force: bool = False):
             "method": "docker-sdk",
             "output": "Admin UI restart scheduled (page will reload shortly)",
             "note": (
-                "If you need admin-ui env_file changes to apply, run on the host: "
-                "`docker compose up -d --force-recreate admin-ui`."
+                "If you need admin_ui env_file changes to apply, run on the host: "
+                "`docker compose -p asterisk-ai-voice-agent up -d --force-recreate admin_ui`."
             ),
         }
     
@@ -449,7 +458,7 @@ async def _recreate_via_compose(service_name: str, health_check: bool = True):
     Force-recreate a compose service so env_file changes (.env) are applied.
     
     Args:
-        service_name: Docker Compose service name (e.g., "ai-engine")
+        service_name: Docker Compose service name (e.g., "ai_engine")
         health_check: If True, poll health endpoint after recreate (default: True)
     
     Returns:
@@ -459,22 +468,30 @@ async def _recreate_via_compose(service_name: str, health_check: bool = True):
     import httpx
 
     project_root = os.getenv("PROJECT_ROOT", "/app/project")
+
+    # Normalize legacy hyphenated service names to canonical underscored service names.
+    legacy_to_canonical = {
+        "ai-engine": "ai_engine",
+        "admin-ui": "admin_ui",
+        "local-ai-server": "local_ai_server",
+    }
+    service_name = legacy_to_canonical.get(service_name, service_name)
     
     # Map service names to container names and health URLs
-    # NOTE: Use /ready endpoint for ai-engine (returns 503 when degraded, 200 when ready)
-    # local-ai-server is WebSocket-only, no HTTP health endpoint
+    # NOTE: Use /ready endpoint for ai_engine (returns 503 when degraded, 200 when ready)
+    # local_ai_server is WebSocket-only, no HTTP health endpoint
     service_config = {
-        "ai-engine": {
+        "ai_engine": {
             "container": "ai_engine",
             "health_url": "http://127.0.0.1:15000/ready",  # /ready returns proper status codes
             "health_timeout": 30,
         },
-        "admin-ui": {
+        "admin_ui": {
             "container": "admin_ui",
             "health_url": None,  # No health check for admin-ui
             "health_timeout": 10,
         },
-        "local-ai-server": {
+        "local_ai_server": {
             "container": "local_ai_server",
             "health_url": None,  # WebSocket server - no HTTP health endpoint
             "health_timeout": 60,
@@ -501,6 +518,8 @@ async def _recreate_via_compose(service_name: str, health_check: bool = True):
         # Use --force-recreate instead of --build for faster restarts
         # Rebuild only happens on explicit build request, not restart
         cmd = compose_cmd + [
+            "-p",
+            "asterisk-ai-voice-agent",
             "up",
             "-d",
             "--force-recreate",
@@ -1966,8 +1985,8 @@ def _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, as
                 "blocking": True,
                 "action": {
                     "type": "command",
-                    "label": "Set DOCKER_SOCK and restart admin-ui",
-                    "value": "export DOCKER_SOCK=/run/user/$(id -u)/docker.sock && docker compose up -d --force-recreate admin-ui",
+                    "label": "Set DOCKER_SOCK and restart admin_ui",
+                    "value": "export DOCKER_SOCK=/run/user/$(id -u)/docker.sock && docker compose -p asterisk-ai-voice-agent up -d --force-recreate admin_ui",
                     "docs_url": _github_docs_url(docker_cfg.get("rootless_docs")) or _github_docs_url("docs/CROSS_PLATFORM_PLAN.md"),
                     "docs_label": "Rootless Docker docs",
                 }

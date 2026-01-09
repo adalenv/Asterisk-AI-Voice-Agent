@@ -204,16 +204,17 @@ SHERPA_STT_MODELS = [
 
 KROKO_STT_MODELS = [
     # === Kroko Embedded ONNX Models (requires INCLUDE_KROKO_EMBEDDED=true in Docker build) ===
+    # Models from Banafo/Kroko-ASR repo (CC-BY-SA license, free for hobby/research/free tiers)
     {"id": "kroko_en_community_64l", "name": "Kroko English Community 64L (Embedded)", "language": "en-US", "region": "global", "backend": "kroko",
-     "size_mb": 250, "size_display": "250 MB", "model_path": "Kroko-EN-Community-64-L-Streaming-001.onnx",
-     "download_url": "https://huggingface.co/Kroko-AI/Kroko-EN-Community-64-L-Streaming-001/resolve/main/Kroko-EN-Community-64-L-Streaming-001.onnx",
+     "size_mb": 150, "size_display": "150 MB", "model_path": "Kroko-EN-Community-64-L-Streaming-001.data",
+     "download_url": "https://huggingface.co/Banafo/Kroko-ASR/resolve/main/Kroko-EN-Community-64-L-Streaming-001.data",
      "recommended": True, "embedded": True,
-     "note": "Requires Docker image built with INCLUDE_KROKO_EMBEDDED=true"},
-    {"id": "kroko_nl_community_64l", "name": "Kroko Dutch Community 64L (Embedded)", "language": "nl-NL", "region": "europe", "backend": "kroko",
-     "size_mb": 250, "size_display": "250 MB", "model_path": "Kroko-NL-Community-64-L-Streaming-001.onnx",
-     "download_url": "https://huggingface.co/Kroko-AI/Kroko-NL-Community-64-L-Streaming-001/resolve/main/Kroko-NL-Community-64-L-Streaming-001.onnx",
+     "note": "Requires Docker image built with INCLUDE_KROKO_EMBEDDED=true. CC-BY-SA license."},
+    {"id": "kroko_nl_community_128l", "name": "Kroko Dutch Community 128L (Embedded)", "language": "nl-NL", "region": "europe", "backend": "kroko",
+     "size_mb": 150, "size_display": "150 MB", "model_path": "Kroko-NL-Community-128-L-Streaming-001.data",
+     "download_url": "https://huggingface.co/Banafo/Kroko-ASR/resolve/main/Kroko-NL-Community-128-L-Streaming-001.data",
      "embedded": True,
-     "note": "Requires Docker image built with INCLUDE_KROKO_EMBEDDED=true"},
+     "note": "Requires Docker image built with INCLUDE_KROKO_EMBEDDED=true. CC-BY-SA license."},
     # === Kroko Cloud API ===
     {"id": "kroko_cloud", "name": "Kroko Cloud API (12 languages)", "language": "multi", "region": "global", "backend": "kroko",
      "size_mb": 0, "size_display": "0 (Cloud)", "model_path": None,

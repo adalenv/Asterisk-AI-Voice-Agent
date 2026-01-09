@@ -12,6 +12,5 @@ For operator and developer debugging workflows, start with:
 
 ## Logs & Data
 
-- Container logs: `docker compose logs ai-engine`
+- Container logs: `docker compose logs ai_engine`
 - Call history DB: `./data/call_history.db` (host)
-

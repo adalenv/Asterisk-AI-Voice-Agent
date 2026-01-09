@@ -5,6 +5,7 @@
 - **[Quick Start Guide](../README.md)** - Get started in 10 minutes
 - **[Installation Guide](INSTALLATION.md)** - Complete setup instructions
 - **[FreePBX Integration Guide](FreePBX-Integration-Guide.md)** - Dialplan and queue configuration
+- **[Outbound Calling (Alpha)](OUTBOUND_CALLING.md)** - Scheduled outbound campaigns, voicemail drop, consent gate
 - **[Configuration Reference](Configuration-Reference.md)** - All settings explained
 - **[Tool Calling Guide](TOOL_CALLING_GUIDE.md)** - Using telephony and business tools
 - **[MCP Tool Integration](MCP_INTEGRATION.md)** - Experimental MCP tools (design + branch guide)

@@ -31,9 +31,25 @@ const PROVIDER_OPTIONS: Record<string, Record<string, string[]>> = {
     openai: {
         model: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
         llm_model: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-        stt_model: ['whisper-1'],
-        tts_model: ['tts-1', 'tts-1-hd'],
-        tts_voice: ['alloy', 'echo', 'shimmer', 'ash', 'ballad', 'coral', 'sage', 'verse'],
+        // STT models per OpenAI Speech-to-Text guide.
+        stt_model: [
+            'whisper-1',
+            'gpt-4o-mini-transcribe',
+            'gpt-4o-mini-transcribe-2025-12-15',
+            'gpt-4o-transcribe',
+            'gpt-4o-transcribe-diarize',
+        ],
+        tts_model: ['gpt-4o-mini-tts', 'gpt-4o-mini-tts-2025-12-15', 'tts-1', 'tts-1-hd'],
+        // OpenAI audio.speech voices (validated by API). Keep this aligned with engine validation.
+        voice: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse', 'marin', 'cedar'],
+        tts_voice: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse', 'marin', 'cedar'],
+        response_format: ['wav', 'pcm'],
+    },
+    groq: {
+        stt_model: ['whisper-large-v3-turbo', 'whisper-large-v3'],
+        response_format: ['json', 'verbose_json', 'text', 'wav'],
+        tts_model: ['canopylabs/orpheus-v1-english', 'canopylabs/orpheus-arabic-saudi'],
+        voice: ['autumn', 'diana', 'hannah', 'austin', 'daniel', 'troy', 'fahad', 'sultan', 'lulwa', 'noura'],
     },
     openai_realtime: {
         model: ['gpt-4o-realtime-preview', 'gpt-4o-realtime-preview-2024-10-01'],
@@ -215,6 +231,7 @@ const GenericProviderForm: React.FC<GenericProviderFormProps> = ({ config, onCha
 
         if (name.includes('openai') && name.includes('realtime')) providerKey = 'openai_realtime';
         else if (name.includes('openai')) providerKey = 'openai';
+        else if (name.includes('groq')) providerKey = 'groq';
         else if (name.includes('deepgram')) providerKey = 'deepgram';
         else if (name.includes('google') || name.includes('gemini')) providerKey = 'google_live';
 
@@ -339,7 +356,7 @@ const GenericProviderForm: React.FC<GenericProviderFormProps> = ({ config, onCha
                                     Groq does not support function/tool calling reliably and will return errors if tools are enabled.
                                 </p>
                                 <p className="text-sm">
-                                    <strong>Do not enable <code>tools_enabled</code></strong> in the configuration fields below.
+                                    Tools are allowlisted per <strong>Context</strong>. If this provider is backed by Groq, keep context tools empty.
                                 </p>
                             </div>
                         </div>

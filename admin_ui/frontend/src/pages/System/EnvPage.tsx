@@ -137,12 +137,12 @@ const EnvPage = () => {
     const handleApplyChanges = async (force: boolean = false) => {
         setRestartingEngine(true);
         try {
-            // Apply in safe order: local-ai-server → ai-engine → admin-ui
-            const ordered = ['local-ai-server', 'ai-engine', 'admin-ui'];
+            // Apply in safe order: local_ai_server → ai_engine → admin_ui
+            const ordered = ['local_ai_server', 'ai_engine', 'admin_ui'];
             const planByService = new Map(applyPlan.map((p) => [p.service, p]));
 
             // Warn if applying includes admin-ui restart (can invalidate sessions)
-            const touchesAdminUI = planByService.has('admin-ui');
+            const touchesAdminUI = planByService.has('admin_ui');
             const jwtChanged = changedKeys.includes('JWT_SECRET');
             if (touchesAdminUI) {
                 const msg = jwtChanged
@@ -155,7 +155,7 @@ const EnvPage = () => {
                 const step = planByService.get(service);
                 if (!step) continue;
 
-                if (service === 'ai-engine') {
+                if (service === 'ai_engine') {
                     const response = await axios.post(`${step.endpoint}?force=${force}`, {}, {
                         headers: { Authorization: `Bearer ${token}` }
                     });
@@ -626,27 +626,27 @@ const EnvPage = () => {
 	                            label="WebSocket URL"
 	                            value={env['LOCAL_WS_URL'] || 'ws://127.0.0.1:8765'}
 	                            onChange={(e) => updateEnv('LOCAL_WS_URL', e.target.value)}
-	                            tooltip="Client URL used by ai-engine to reach local-ai-server."
+	                            tooltip="Client URL used by ai_engine to reach local_ai_server."
 	                        />
 	                        <FormInput
-	                            label="Bind Host (local-ai-server)"
+	                            label="Bind Host (local_ai_server)"
 	                            value={env['LOCAL_WS_HOST'] || '0.0.0.0'}
 	                            onChange={(e) => updateEnv('LOCAL_WS_HOST', e.target.value)}
-	                            tooltip="Address local-ai-server binds to (default 0.0.0.0)."
+	                            tooltip="Address local_ai_server binds to (default 0.0.0.0)."
 	                        />
 	                        <FormInput
-	                            label="Bind Port (local-ai-server)"
+	                            label="Bind Port (local_ai_server)"
 	                            type="number"
 	                            value={env['LOCAL_WS_PORT'] || '8765'}
 	                            onChange={(e) => updateEnv('LOCAL_WS_PORT', e.target.value)}
-	                            tooltip="Port local-ai-server listens on; update LOCAL_WS_URL to match if changed."
+	                            tooltip="Port local_ai_server listens on; update LOCAL_WS_URL to match if changed."
 	                        />
 	                        <FormInput
 	                            label="Auth Token (optional)"
 	                            type="password"
 	                            value={env['LOCAL_WS_AUTH_TOKEN'] || ''}
 	                            onChange={(e) => updateEnv('LOCAL_WS_AUTH_TOKEN', e.target.value)}
-	                            tooltip="If set, local-ai-server requires an auth handshake. Must match providers.local*.auth_token."
+	                            tooltip="If set, local_ai_server requires an auth handshake. Must match providers.local*.auth_token."
 	                        />
 	                        <FormInput
 	                            label="Connect Timeout (s)"
@@ -902,15 +902,15 @@ const EnvPage = () => {
 
 
             {/* Health Checks */}
-            <ConfigSection title="Health Checks" description="URLs used for system health monitoring.">
-                <ConfigCard>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <FormInput
-                            label="Local AI Health URL"
-                            value={env['HEALTH_CHECK_LOCAL_AI_URL'] || 'ws://local_ai_server:8765'}
-                            onChange={(e) => updateEnv('HEALTH_CHECK_LOCAL_AI_URL', e.target.value)}
-                            placeholder="ws://local_ai_server:8765"
-                        />
+	            <ConfigSection title="Health Checks" description="URLs used for system health monitoring.">
+	                <ConfigCard>
+	                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+	                        <FormInput
+	                            label="Local AI Health URL"
+	                            value={env['HEALTH_CHECK_LOCAL_AI_URL'] || 'ws://127.0.0.1:8765'}
+	                            onChange={(e) => updateEnv('HEALTH_CHECK_LOCAL_AI_URL', e.target.value)}
+	                            placeholder="ws://127.0.0.1:8765"
+	                        />
                         <FormInput
                             label="AI Engine Health URL"
                             value={env['HEALTH_CHECK_AI_ENGINE_URL'] || 'http://ai_engine:15000/health'}

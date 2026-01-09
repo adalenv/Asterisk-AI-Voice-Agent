@@ -15,8 +15,8 @@ if [[ -z "$CAPTURE_DIR" || ! -d "$CAPTURE_DIR" ]]; then
   exit 1
 fi
 
-AI_ENGINE_LOG="$CAPTURE_DIR/ai-engine.log"
-LOCAL_LOG="$CAPTURE_DIR/local-ai-server.log"
+AI_ENGINE_LOG="$CAPTURE_DIR/ai_engine.log"
+LOCAL_LOG="$CAPTURE_DIR/local_ai_server.log"
 AST_LOG="$CAPTURE_DIR/asterisk.log"
 OUT_SUMMARY="$CAPTURE_DIR/summary.txt"
 
@@ -75,7 +75,7 @@ if [[ -r "$LOCAL_LOG" ]]; then
   fi
   summ "ws_batches"    "count=$(count_safe 'WS batch send' "$AI_ENGINE_LOG") (provider-side debug)"
 else
-  summ "transcript_first" "n/a (no local-ai-server log)"
+  summ "transcript_first" "n/a (no local_ai_server log)"
 fi
 
 echo "" | tee -a "$OUT_SUMMARY"

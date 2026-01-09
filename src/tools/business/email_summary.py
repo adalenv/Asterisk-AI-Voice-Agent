@@ -11,10 +11,15 @@ from datetime import datetime, timezone
 from typing import Dict, Any
 import structlog
 from jinja2 import Template
-import resend
+
+try:
+    import resend  # type: ignore
+except Exception:
+    resend = None
 
 from src.tools.base import Tool, ToolDefinition, ToolCategory, ToolParameter
 from src.tools.context import ToolExecutionContext
+from src.tools.business.resend_client import send_email
 
 logger = structlog.get_logger(__name__)
 
@@ -274,32 +279,17 @@ class SendEmailSummaryTool(Tool):
     async def _send_email_async(self, email_data: Dict[str, Any], call_id: str):
         """Send email asynchronously via Resend API."""
         try:
-            # Get API key from environment
-            api_key = os.getenv("RESEND_API_KEY")
-            if not api_key:
-                logger.error(
-                    "RESEND_API_KEY not configured",
-                    call_id=call_id
-                )
-                return
-            
-            # Initialize Resend client
-            resend.api_key = api_key
-            
             # Send email
             logger.info(
                 "Sending email summary via Resend",
                 call_id=call_id,
                 recipient=email_data["to"]
             )
-            
-            response = resend.Emails.send(email_data)
-            
-            logger.info(
-                "Email summary sent successfully",
+            await send_email(
+                email_data=email_data,
                 call_id=call_id,
-                recipient=email_data["to"],
-                email_id=response.get("id") if isinstance(response, dict) else response.id
+                log_label="Email summary",
+                recipient=str(email_data.get("to") or ""),
             )
             
         except Exception as e:

@@ -95,7 +95,7 @@ The installer will:
   - Local Hybrid
 - Prompt for required API keys (only for the provider you choose).
 - Generate `.env` and `config/ai-agent.yaml`.
-- Build and start the Docker services (`ai-engine`, `local-ai-server`).
+- Build and start the Docker services (`ai_engine`, `local_ai_server`).
 
 If you prefer a more manual setup, see `docs/INSTALLATION.md`, but for most contributors `./install.sh` is the right choice.
 
@@ -178,7 +178,7 @@ Once Docker services are up and ARI is configured:
    - Watch logs:
 
    ```bash
-   docker compose logs -f ai-engine
+   docker compose logs -f ai_engine
    ```
 
 If the call behaves as expected, you are ready to start developing.

@@ -227,7 +227,7 @@ Test realistic workflows combining multiple tools.
 - [ ] Email server configured (RESEND_API_KEY set)
 
 ### Test Environment
-- **Server:** voiprnd.nemtclouddispatch.com
+- **Server:** development server (self-hosted)
 - **Pipeline:** local_hybrid
 - **Context:** demo_hybrid
 - **Tools Config:** config/ai-agent.yaml lines 239-245

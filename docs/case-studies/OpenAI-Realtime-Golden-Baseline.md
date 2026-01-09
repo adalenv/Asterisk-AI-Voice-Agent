@@ -598,7 +598,7 @@ curl http://localhost:15000/health
 
 4. **Deploy**:
    ```bash
-   docker-compose up -d --build ai-engine
+   docker compose up -d --build ai_engine
    ```
 
 5. **Verify Health**:

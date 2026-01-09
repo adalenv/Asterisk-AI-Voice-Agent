@@ -112,12 +112,12 @@ This performs comprehensive system checks:
 
 ### Call History DB (if missing or empty)
 
-Call History is stored in a SQLite DB under `./data` on the host (mounted into `ai-engine` as `/app/data`).
+Call History is stored in a SQLite DB under `./data` on the host (mounted into `ai_engine` as `/app/data`).
 
 Quick checks:
 ```bash
 ls -la ./data
-docker compose logs ai-engine | grep -i \"call history\" | tail -n 20
+docker compose logs ai_engine | grep -i \"call history\" | tail -n 20
 ```
 
 Common fixes:
@@ -141,7 +141,7 @@ If container control (start/stop/restart) fails from the UI:
   - Rootless Docker/Podman: often `DOCKER_SOCK=/run/user/<uid>/docker.sock`
 - Then recreate the Admin UI container so the mount updates:
 ```bash
-docker compose up -d --force-recreate admin-ui
+docker compose up -d --force-recreate admin_ui
 ```
 
 If containers are running but the UI shows “unreachable”:
@@ -196,6 +196,43 @@ agent troubleshoot --list
 ---
 
 ## Common Issues
+
+### 0. Docker Build Fails (apt-get / DNS)
+
+**Symptoms:** `docker compose up -d --build ai_engine` fails with errors like:
+- `Temporary failure resolving 'deb.debian.org'`
+- `E: Unable to locate package build-essential`
+
+**Cause:** Docker/BuildKit can’t resolve DNS or doesn’t have outbound internet during image build. This is not related to your host Debian version (Debian inside the image can differ).
+
+**Fix (recommended):**
+```bash
+# Pull latest fixes (pins the base image to Debian 12/bookworm)
+git pull
+
+# Rebuild the engine image
+docker compose build --no-cache --pull ai_engine
+docker compose up -d ai_engine
+```
+
+**If DNS is still failing inside Docker:**
+```bash
+# Quick DNS probe inside a container
+docker run --rm busybox:1.36.1 nslookup deb.debian.org
+```
+
+If the DNS probe fails, set explicit DNS servers for Docker and restart it:
+```bash
+sudo mkdir -p /etc/docker
+printf '{\"dns\":[\"1.1.1.1\",\"8.8.8.8\"]}\n' | sudo tee /etc/docker/daemon.json
+sudo systemctl restart docker
+```
+
+If you’re on a Debian/Ubuntu host using `systemd-resolved`, also confirm Docker isn’t inheriting a loopback resolver (e.g. `127.0.0.53`):
+```bash
+readlink -f /etc/resolv.conf
+cat /etc/resolv.conf
+```
 
 ### 1. No Audio (Complete Silence)
 
@@ -255,7 +292,7 @@ docker ps | grep ai_engine
 
 **Fix:** Start container:
 ```bash
-docker compose up -d ai-engine
+docker compose up -d ai_engine
 ```
 
 ---
@@ -598,11 +635,9 @@ agent demo -v
 # Run setup wizard
 agent init
 
-# Non-interactive mode (planned)
-agent init --non-interactive
-
-# Use template
-agent init --template openai-agent
+# Flags below are planned; they may exist but are not implemented in v5.0.0:
+# agent init --non-interactive
+# agent init --template <name>
 ```
 
 **What it configures:**
@@ -1337,7 +1372,7 @@ sudo nano /etc/resolv.conf
 **Solution:**
 ```bash
 # Use docker-compose instead
-docker-compose up -d ai-engine admin-ui
+docker compose up -d ai_engine admin_ui
 
 # Or install Docker Compose v2
 sudo apt-get update
@@ -1439,7 +1474,7 @@ agent troubleshoot --last --symptom garbled
 docker logs -f ai_engine
 
 # Restart services
-docker compose restart ai-engine
+docker compose restart ai_engine
 ```
 
 ### Essential Configs

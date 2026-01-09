@@ -1,5 +1,5 @@
 # Stage 1: Build Frontend
-FROM node:20-slim AS frontend-builder
+FROM node:20-bookworm-slim AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 # Install all deps including devDependencies for build (vite, typescript, etc.)
@@ -10,7 +10,7 @@ RUN npm run build
 # Note: devDependencies are only in builder stage, not in final image
 
 # Stage 2: Backend + Runtime
-FROM python:3.10-slim
+FROM python:3.11-slim-bookworm
 WORKDIR /app
 
 # Optimization env vars
@@ -51,4 +51,6 @@ EXPOSE 3003
 # NOTE: Binds to 0.0.0.0 by default for remote accessibility (common for Asterisk servers).
 # SECURITY: Change admin password on first login and restrict port 3003 via firewall/VPN/reverse proxy.
 # Port configurable via UVICORN_PORT env var.
-CMD uvicorn main:app --host ${UVICORN_HOST:-0.0.0.0} --port ${UVICORN_PORT:-3003}
+# IMPORTANT: Admin UI writes SQLite WAL/SHM files into the shared `./data` mount.
+# Set umask so files created by root inside this container are group-writable for `ai_engine` (runs as appuser).
+CMD sh -c 'umask 0002 && uvicorn main:app --host ${UVICORN_HOST:-0.0.0.0} --port ${UVICORN_PORT:-3003}'

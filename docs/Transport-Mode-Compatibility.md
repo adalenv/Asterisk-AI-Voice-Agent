@@ -1,15 +1,28 @@
 # Transport & Playback Mode Compatibility Guide
 
-**Last Updated**: November 19, 2025  
+**Last Updated**: January 7, 2026  
 **Issue**: Linear AAVA-28, AAVA-85
 
 ## Overview
 
 This document defines the **validated and supported** combinations of audio transport, provider mode, and playback methods.
 
-For **v4.6.0+**: both **AudioSocket** and **ExternalMedia RTP** are validated options for pipeline deployments and full-agent deployments. Choose based on what fits your Asterisk environment and network constraints (TCP `8090` for AudioSocket vs UDP `18080` for ExternalMedia RTP), and confirm the combination you’re running matches the matrix below.
+For **v5.0.0+**: both **AudioSocket** and **ExternalMedia RTP** are validated options for pipeline deployments and full-agent deployments. Choose based on what fits your Asterisk environment and network constraints (TCP `8090` for AudioSocket vs UDP `18080` for ExternalMedia RTP), and confirm the combination you’re running matches the matrix below.
 
 ---
+
+## Key Concepts
+
+### `downstream_mode` (v5.0.0+)
+
+`downstream_mode` controls how the **ai-engine** delivers TTS back to the caller:
+
+- `downstream_mode: file`  
+  Always uses file playback (Asterisk Playback via Announcer). This is the **most validated** option for modular pipelines.
+- `downstream_mode: stream`  
+  Enables streaming playback when possible. In pipeline mode, the engine will **attempt streaming playback** and **fall back to file playback on errors**.
+
+The engine emits a startup warning when pipelines are configured and `downstream_mode` is `stream` so operators understand this is a streaming-first path with fallback.
 
 ## Validated Configurations
 
@@ -21,7 +34,7 @@ For **v4.6.0+**: both **AudioSocket** and **ExternalMedia RTP** are validated op
 ```yaml
 audio_transport: externalmedia
 active_pipeline: hybrid_support  # or any pipeline
-downstream_mode: stream  # ignored by pipelines
+downstream_mode: file  # recommended + most validated for pipelines
 ```
 
 **Technical Details**:
@@ -33,7 +46,7 @@ downstream_mode: stream  # ignored by pipelines
   - TTS bytes → File → Asterisk Announcer channel → Caller
   - **No bridge conflict**: RTP ingestion separate from file playback
 
-**Status**: ✅ **VALIDATED** (Call 1761698845.2619)
+**Status**: ✅ **VALIDATED**
 - Clean two-way conversation
 - Proper gating (no feedback loop)
 - No audio routing issues
@@ -42,6 +55,8 @@ downstream_mode: stream  # ignored by pipelines
 - RTP audio ingestion doesn't use Asterisk bridge
 - File playback uses Announcer channel in bridge
 - No routing conflict between ingestion and playback
+
+**Optional (v5.0.0+)**: If you set `downstream_mode: stream`, the pipeline runner will attempt streaming playback first and fall back to file playback on errors. For GA stability, keep `file` unless you specifically want to test streaming behavior.
 
 ---
 
@@ -88,7 +103,7 @@ downstream_mode: stream
 ```yaml
 audio_transport: audiosocket
 active_pipeline: local_hybrid  # or any pipeline
-downstream_mode: stream  # Ignored by pipelines
+downstream_mode: file  # recommended + most validated for pipelines
 ```
 
 **Technical Details**:
@@ -100,9 +115,9 @@ downstream_mode: stream  # Ignored by pipelines
   - TTS bytes → File → Asterisk Announcer channel → Caller
   - **Bridge coexistence**: Both AudioSocket and Announcer channels work together
 
-**Status**: ✅ **VALIDATED** (Call 1763610866.6294, November 19, 2025)
+**Status**: ✅ **VALIDATED** (November 2025)
 - Clean two-way conversation
-- Continuous audio frame flow (277 frames, 54.57s)
+- Continuous audio frame flow over full call duration
 - Multiple playback cycles (greeting + responses + farewell)
 - Tool execution functional (hangup with farewell)
 
@@ -120,7 +135,6 @@ downstream_mode: stream  # Ignored by pipelines
 **Historical Context** (archived):
 - **Pre-October 2025**: AudioSocket + Pipeline was unstable
 - **Issue**: Bridge routing conflict, single-frame reception
-- **Evidence**: Call 1761699424.2631 (only 1 frame received)
 - **Resolution**: Series of fixes in October 2025
 - **Current Status**: Fully functional and production-ready
 
@@ -133,6 +147,8 @@ downstream_mode: stream  # Ignored by pipelines
 | **ExternalMedia RTP** | Pipeline | File (PlaybackManager) | ✅ Working | ✅ **VALIDATED** |
 | **AudioSocket** | Full Agent | Streaming (StreamingPlaybackManager) | ✅ Working | ✅ **VALIDATED** |
 | **AudioSocket** | Pipeline | File (PlaybackManager) | ✅ Working | ✅ **VALIDATED** (v4.0+) |
+| **ExternalMedia RTP** | Pipeline | Streaming-first (fallback to file) | ✅ Working | ⚠️ **SUPPORTED (v5.0.0+)** |
+| **AudioSocket** | Pipeline | Streaming-first (fallback to file) | ✅ Working | ⚠️ **SUPPORTED (v5.0.0+)** |
 
 ---
 
@@ -140,7 +156,7 @@ downstream_mode: stream  # Ignored by pipelines
 
 ### Use ExternalMedia RTP When:
 - ✅ Running hybrid pipelines (modular STT/LLM/TTS)
-- ✅ Need file-based playback
+- ✅ Need file-based playback (most validated)
 - ✅ Want clean audio routing (no bridge conflicts)
 - ✅ Modern deployment
 
@@ -160,7 +176,7 @@ downstream_mode: stream  # Ignored by pipelines
 # config/ai-agent.yaml
 audio_transport: externalmedia
 active_pipeline: hybrid_support
-downstream_mode: stream  # Ignored by pipelines
+downstream_mode: file  # recommended for pipelines
 
 pipelines:
   hybrid_support:
@@ -226,26 +242,22 @@ providers:
 
 ## Implementation Notes
 
-### Why Pipelines Always Use File Playback
+### Pipeline Playback Behavior (v5.0.0+)
 
-**Code Location**: `src/engine.py:4242`
+Pipelines can use:
+- **File playback** when `downstream_mode: file` (always file)
+- **Streaming-first** when `downstream_mode: stream` (stream if possible; fallback to file on errors)
 
 ```python
-# Pipeline runner hardcoded to file playback
-playback_id = await self.playback_manager.play_audio(
-    call_id,
-    bytes(tts_bytes),
-    "pipeline-tts",
-)
+# Pipeline runner gating (simplified)
+use_streaming_playback = self.config.downstream_mode != "file"
 ```
 
-**Reason**: Pipelines were designed for discrete request/response cycles with file artifacts.
-
-**Future**: Could add `downstream_mode` check to enable streaming for pipelines (4-6 hour effort).
+Relevant logic lives in the pipeline runner in `src/engine.py` (search for `use_streaming_playback` and `Pipeline streaming playback failed; falling back to file playback`).
 
 ### Why Full Agents Respect downstream_mode
 
-**Code Location**: `src/engine.py:3598, 3669`
+Relevant logic lives in `src/engine.py` (search for `use_streaming = self.config.downstream_mode != "file"`).
 
 ```python
 # Full agents check downstream_mode
@@ -261,6 +273,58 @@ else:
 
 ---
 
+## Remote Host Deployments (NAT/VPN)
+
+> **⚠️ Important: When AI Engine and Asterisk are on different machines**
+
+### AudioSocket Transport ✅ Recommended for Remote Deployments
+
+AudioSocket works seamlessly with remote Asterisk because:
+- Audio is streamed bidirectionally over TCP
+- No file-based playback required for full agent providers
+- Streaming playback sends audio directly through the socket
+
+### ExternalMedia (RTP) Transport ⚠️ Requires Shared Storage
+
+ExternalMedia with pipeline providers uses **file-based playback** via ARI, which requires:
+- AI engine generates audio files in `audio/ai-generated/`
+- Asterisk must access these files for playback via Announcer channel
+- **Without shared storage, Asterisk returns "File does not exist" errors**
+
+**Solutions for ExternalMedia with remote Asterisk:**
+1. **NFS/Shared mount**: Mount AI engine's `audio/` directory on Asterisk server at the same path
+2. **Same machine**: Run AI engine on the same server as Asterisk
+3. **Use AudioSocket instead**: Switch to AudioSocket transport for remote deployments
+
+### Transport Selection Guide for Remote Hosts
+
+| Scenario | Recommended Transport |
+|----------|----------------------|
+| AI engine & Asterisk same machine | Either works |
+| AI engine remote, full agent provider | AudioSocket ✅ |
+| AI engine remote, pipeline provider | AudioSocket ✅ or ExternalMedia + shared storage |
+| Lowest latency priority | ExternalMedia (if shared storage available) |
+
+### NAT Configuration
+
+For NAT/VPN scenarios, configure `advertise_host` to tell Asterisk where to connect:
+
+```yaml
+audiosocket:
+  host: "0.0.0.0"              # Bind address
+  advertise_host: "10.10.10.3" # Address Asterisk connects to
+  port: 8090
+
+external_media:
+  rtp_host: "0.0.0.0"
+  advertise_host: "10.10.10.3"
+  rtp_port: 18080
+```
+
+See [Milestone 23: NAT/Hybrid Network Support](./contributing/milestones/milestone-23-nat-advertise-host.md) for details.
+
+---
+
 ## Related Issues
 
 - **Linear AAVA-28**: Pipeline STT streaming implementation & gating fixes
@@ -273,15 +337,15 @@ else:
 
 ## Validation History
 
-| Date | Transport | Mode | Result | Call ID | Notes |
-|------|-----------|------|--------|---------|-------|
-| 2025-10-28 | RTP | Pipeline | ✅ Pass | 1761698845.2619 | Clean two-way, no feedback |
-| 2025-10-28 | AudioSocket | Pipeline | ❌ Fail | 1761699424.2631 | Pre-fix: Only greeting heard |
-| 2025-10-28 | AudioSocket | Full Agent | ✅ Pass | Multiple | Streaming playback |
-| 2025-11-19 | AudioSocket | Full Agent (Google Live) | ✅ Pass | 1763610697.6282 | 186 frames, 36.34s, clean conversation |
-| 2025-11-19 | AudioSocket | Full Agent (Deepgram) | ✅ Pass | 1763610742.6286 | 176 frames, 34.36s, clean conversation |
-| 2025-11-19 | AudioSocket | Full Agent (OpenAI) | ✅ Pass | 1763610785.6290 | 360 frames, 71.29s, tool execution |
-| 2025-11-19 | AudioSocket | Pipeline (local_hybrid) | ✅ Pass | 1763610866.6294 | 277 frames, 54.57s, post-fix validation |
+| Date | Transport | Mode | Result | Notes |
+|------|-----------|------|--------|-------|
+| 2025-10-28 | RTP | Pipeline | ✅ Pass | Clean two-way, no feedback |
+| 2025-10-28 | AudioSocket | Pipeline | ❌ Fail | Pre-fix: Only greeting heard |
+| 2025-10-28 | AudioSocket | Full Agent | ✅ Pass | Streaming playback |
+| 2025-11-19 | AudioSocket | Full Agent (Google Live) | ✅ Pass | Clean conversation |
+| 2025-11-19 | AudioSocket | Full Agent (Deepgram) | ✅ Pass | Clean conversation |
+| 2025-11-19 | AudioSocket | Full Agent (OpenAI) | ✅ Pass | Tool execution validated |
+| 2025-11-19 | AudioSocket | Pipeline (local_hybrid) | ✅ Pass | Post-fix validation |
 
 ---
 

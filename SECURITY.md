@@ -185,7 +185,7 @@ The following ai-engine endpoints require authorization:
 
 ```bash
 # Remote reload with token
-curl -X POST http://ai-engine:15000/reload \
+curl -X POST http://ai_engine:15000/reload \
   -H "Authorization: Bearer $HEALTH_API_TOKEN"
 ```
 

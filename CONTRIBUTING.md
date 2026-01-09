@@ -52,7 +52,7 @@ Recommended flow:
 
   ```bash
   docker-compose up --build -d
-  docker-compose logs -f ai-engine
+  docker compose logs -f ai_engine
   ```
 
 - Verify health:

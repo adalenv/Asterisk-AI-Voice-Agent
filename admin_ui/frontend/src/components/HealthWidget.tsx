@@ -649,7 +649,7 @@ export const HealthWidget = () => {
                                         <span className="opacity-75">, then add to .env and rebuild:</span>
                                     </div>
                                     <code className="block bg-black/20 dark:bg-white/10 px-2 py-1 rounded text-[10px] font-mono select-all">
-                                        echo "INCLUDE_KROKO_EMBEDDED=true" &gt;&gt; .env && docker compose build --no-cache local-ai-server && docker compose up -d local-ai-server
+                                        echo "INCLUDE_KROKO_EMBEDDED=true" &gt;&gt; .env && docker compose build --no-cache local_ai_server && docker compose up -d local_ai_server
                                     </code>
                                 </div>
                             )}
@@ -662,7 +662,7 @@ export const HealthWidget = () => {
                                         <span className="opacity-75"> Models auto-download from HuggingFace on first use. Run:</span>
                                     </div>
                                     <code className="block bg-black/20 dark:bg-white/10 px-2 py-1 rounded text-[10px] font-mono select-all">
-                                        docker compose build --build-arg INCLUDE_FASTER_WHISPER=true local-ai-server && docker compose up -d local-ai-server
+                                        docker compose build --build-arg INCLUDE_FASTER_WHISPER=true local_ai_server && docker compose up -d local_ai_server
                                     </code>
                                 </div>
                             )}
@@ -850,7 +850,7 @@ export const HealthWidget = () => {
                                         <span className="opacity-75"> Lightweight CPU-optimized TTS. Run:</span>
                                     </div>
                                     <code className="block bg-black/20 dark:bg-white/10 px-2 py-1 rounded text-[10px] font-mono select-all">
-                                        docker compose build --build-arg INCLUDE_MELOTTS=true local-ai-server && docker compose up -d local-ai-server
+                                        docker compose build --build-arg INCLUDE_MELOTTS=true local_ai_server && docker compose up -d local_ai_server
                                     </code>
                                 </div>
                             )}

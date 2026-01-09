@@ -1,15 +1,20 @@
 import React from 'react';
 import { FormInput, FormSelect, FormLabel } from '../ui/FormComponents';
+import { isFullAgentProvider } from '../../utils/providerNaming';
 
 interface ContextFormProps {
     config: any;
     providers: any;
+    pipelines?: any;
     availableTools?: string[];
+    toolEnabledMap?: Record<string, boolean>;
+    availableProfiles?: string[];
+    defaultProfileName?: string;
     onChange: (newConfig: any) => void;
     isNew?: boolean;
 }
 
-const ContextForm = ({ config, providers, availableTools, onChange, isNew }: ContextFormProps) => {
+const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabledMap, availableProfiles, defaultProfileName, onChange, isNew }: ContextFormProps) => {
     const updateConfig = (field: string, value: any) => {
         onChange({ ...config, [field]: value });
     };
@@ -23,17 +28,21 @@ const ContextForm = ({ config, providers, availableTools, onChange, isNew }: Con
         'send_email_summary',
         'request_transcript'
     ];
-    const toolOptions = (availableTools && availableTools.length > 0) ? availableTools : fallbackTools;
+    const toolOptionsBase = (availableTools && availableTools.length > 0) ? availableTools : fallbackTools;
+    const selectedTools = Array.isArray(config.tools) ? config.tools : [];
+    const toolOptions = Array.from(new Set([...toolOptionsBase, ...selectedTools])).sort();
 
-    const availableProfiles = [
-        'default',
+    const fallbackProfiles = [
         'telephony_responsive',
         'telephony_ulaw_8k',
         'openai_realtime_24k',
         'wideband_pcm_16k'
     ];
+    const profileOptions = (availableProfiles && availableProfiles.length > 0) ? availableProfiles : fallbackProfiles;
+    const defaultProfileLabel = defaultProfileName ? `Default (${defaultProfileName})` : 'Default (from profiles.default)';
 
     const handleToolToggle = (tool: string) => {
+        if (toolEnabledMap && toolEnabledMap[tool] === false) return;
         const currentTools = config.tools || [];
         const newTools = currentTools.includes(tool)
             ? currentTools.filter((t: string) => t !== tool)
@@ -41,10 +50,48 @@ const ContextForm = ({ config, providers, availableTools, onChange, isNew }: Con
         updateConfig('tools', newTools);
     };
 
-    const providerOptions = Object.entries(providers || {}).map(([name, p]: [string, any]) => ({
-        value: name,
-        label: `${name}${p.enabled === false ? ' (Disabled)' : ''}`
+    const displayToolName = (tool: string) => {
+        if (tool === 'transfer') return 'blind_transfer';
+        return tool;
+    };
+
+    const isToolDisabled = (tool: string) => {
+        if (!toolEnabledMap) return false;
+        return toolEnabledMap[tool] === false;
+    };
+
+    const pipelineOptions = Object.entries(pipelines || {}).map(([name, _]: [string, any]) => ({
+        value: `pipeline:${name}`,
+        label: `[Pipeline] ${name}`,
     }));
+
+    const providerOptions = Object.entries(providers || {})
+        .filter(([_, p]: [string, any]) => isFullAgentProvider(p))
+        .map(([name, p]: [string, any]) => ({
+            value: `provider:${name}`,
+            label: `[Provider] ${name}${p.enabled === false ? ' (Disabled)' : ''}`,
+        }));
+
+    const overrideValue = config.pipeline
+        ? `pipeline:${config.pipeline}`
+        : (config.provider ? `provider:${config.provider}` : '');
+
+    const handleOverrideChange = (raw: string) => {
+        if (!raw) {
+            updateConfig('provider', '');
+            updateConfig('pipeline', '');
+            return;
+        }
+        if (raw.startsWith('pipeline:')) {
+            updateConfig('pipeline', raw.slice('pipeline:'.length));
+            updateConfig('provider', '');
+            return;
+        }
+        if (raw.startsWith('provider:')) {
+            updateConfig('provider', raw.slice('provider:'.length));
+            updateConfig('pipeline', '');
+        }
+    };
 
     return (
         <div className="space-y-6">
@@ -77,16 +124,25 @@ const ContextForm = ({ config, providers, availableTools, onChange, isNew }: Con
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <FormSelect
                     label="Audio Profile"
-                    options={availableProfiles.map(p => ({ value: p, label: p }))}
-                    value={config.profile || 'telephony_ulaw_8k'}
+                    tooltip="Optional. If not set, the default profile from profiles.default is used."
+                    options={[
+                        { value: '', label: defaultProfileLabel },
+                        ...profileOptions.map(p => ({ value: p, label: p }))
+                    ]}
+                    value={config.profile || ''}
                     onChange={(e) => updateConfig('profile', e.target.value)}
                 />
 
                 <FormSelect
-                    label="Provider Override (Optional)"
-                    options={[{ value: '', label: 'Default (None)' }, ...providerOptions]}
-                    value={config.provider || ''}
-                    onChange={(e) => updateConfig('provider', e.target.value)}
+                    label="Provider/Pipeline Override (Optional)"
+                    tooltip="Choose either a monolithic provider or a modular pipeline. Pipeline overrides provider when set."
+                    options={[
+                        { value: '', label: 'Default (None)' },
+                        ...pipelineOptions,
+                        ...providerOptions,
+                    ]}
+                    value={overrideValue}
+                    onChange={(e) => handleOverrideChange(e.target.value)}
                 />
             </div>
 
@@ -94,14 +150,22 @@ const ContextForm = ({ config, providers, availableTools, onChange, isNew }: Con
                 <FormLabel>Available Tools</FormLabel>
                 <div className="grid grid-cols-2 gap-3">
                     {toolOptions.map(tool => (
-                        <label key={tool} className="flex items-center space-x-3 p-3 rounded-md border border-border bg-card/50 hover:bg-accent cursor-pointer transition-colors">
+                        <label
+                            key={tool}
+                            title={isToolDisabled(tool) ? 'Disabled globally in Tools settings' : undefined}
+                            className={[
+                                "flex items-center space-x-3 p-3 rounded-md border border-border bg-card/50 transition-colors",
+                                isToolDisabled(tool) ? "opacity-50 cursor-not-allowed" : "hover:bg-accent cursor-pointer"
+                            ].join(' ')}
+                        >
                             <input
                                 type="checkbox"
                                 className="rounded border-input text-primary focus:ring-primary"
+                                disabled={isToolDisabled(tool)}
                                 checked={(config.tools || []).includes(tool)}
                                 onChange={() => handleToolToggle(tool)}
                             />
-                            <span className="text-sm font-medium">{tool}</span>
+                            <span className="text-sm font-medium">{displayToolName(tool)}</span>
                         </label>
                     ))}
                 </div>

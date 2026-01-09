@@ -1,6 +1,6 @@
 # FreePBX Integration Guide
 
-Complete guide for integrating Asterisk AI Voice Agent v4.6.0+ with FreePBX.
+Complete guide for integrating Asterisk AI Voice Agent v5.0.0+ with FreePBX.
 
 ## 1. Overview
 
@@ -8,9 +8,10 @@ The Asterisk AI Voice Agent integrates with FreePBX using the **Asterisk REST In
 
 If you’re setting this up for the first time, follow the canonical “first successful call” flow first:
 
-- `INSTALLATION.md`
-- `Configuration-Reference.md` → "Call Selection & Precedence (Provider / Pipeline / Context)"
-- `Transport-Mode-Compatibility.md`
+- [INSTALLATION.md](INSTALLATION.md)
+- [Configuration-Reference.md](Configuration-Reference.md) → "Call Selection & Precedence (Provider / Pipeline / Context)"
+- [Transport-Mode-Compatibility.md](Transport-Mode-Compatibility.md)
+- [OUTBOUND_CALLING.md](OUTBOUND_CALLING.md) (alpha feature: outbound campaign dialer)
 
 This guide focuses on FreePBX integration mechanics (ARI user, dialplan routing, networking).
 
@@ -136,6 +137,7 @@ When using ExternalMedia RTP across hosts, configure a stable RTP source policy 
 ```yaml
 external_media:
   rtp_host: "0.0.0.0"
+  # advertise_host: "10.8.0.5"  # IP Asterisk sends RTP to (set for NAT/VPN)
   rtp_port: 18080
   # Optional: allocate per-call RTP ports
   # port_range: "18080:18099"
@@ -253,8 +255,8 @@ You can customize agent behavior per-call using Asterisk channel variables:
 
 | Variable | Description | Example Values | Required? |
 |----------|-------------|----------------|-----------|
-| `AI_PROVIDER` | Override which provider/pipeline to use | `deepgram`, `openai_realtime`, `local_hybrid` | No (uses `default_provider` from config) |
-| `AI_CONTEXT` | Select custom greeting and system prompt | `demo_deepgram`, `demo_openai`, `sales`, `support` | No (uses `default` context) |
+| `AI_PROVIDER` | Override which provider/pipeline to use | `google_live`, `deepgram`, `openai_realtime`, `local_hybrid` | No (uses `default_provider` from config) |
+| `AI_CONTEXT` | Select custom greeting and system prompt | `sales-agent`, `demo_google_live`, `sales`, `support` | No (uses `default` context) |
 | `AI_GREETING` | Override the greeting for this call | `"Hello! Welcome to our sales team."` | No (deprecated - use AI_CONTEXT instead) |
 | `AI_PERSONA` | Override the AI persona/instructions | `"You are a helpful billing assistant."` | No (deprecated - use AI_CONTEXT instead) |
 | `CALLERID(name)` | Caller's name (automatically available to AI) | Any string | No |
@@ -415,26 +417,26 @@ The `./install.sh` script starts the correct services automatically based on you
 
 **For OpenAI Realtime or Deepgram** (cloud-only):
 ```bash
-docker compose up -d --build ai-engine
+docker compose up -d --build ai_engine
 ```
 
 **For Local Hybrid** (needs local models):
 ```bash
-# Start local-ai-server first
-docker compose up -d local-ai-server
+# Start local_ai_server first
+docker compose up -d local_ai_server
 
 # Wait for health (first start may take 5-10 min to load models)
-docker compose logs -f local-ai-server
+docker compose logs -f local_ai_server
 
 # Once healthy, start ai-engine
-docker compose up -d --build ai-engine
+docker compose up -d --build ai_engine
 ```
 
 ### 4.2 Monitor Startup
 
 ```bash
 # Watch ai-engine logs
-docker compose logs -f ai-engine
+docker compose logs -f ai_engine
 
 # Look for these key messages:
 # ✅ "Successfully connected to ARI"
@@ -495,7 +497,7 @@ curl http://127.0.0.1:15000/health
 3. **Monitor logs during the call**:
 
 ```bash
-docker compose logs -f ai-engine | grep -E "Stasis|Audio|Provider|Greeting"
+docker compose logs -f ai_engine | grep -E "Stasis|Audio|Provider|Greeting"
 ```
 
 **Look for**:
@@ -533,7 +535,7 @@ curl http://127.0.0.1:15000/metrics | grep ai_agent
 **Solution**:
 ```bash
 # Check ai-engine logs
-docker compose logs ai-engine | tail -50
+docker compose logs ai_engine | tail -50
 
 # Look for:
 # ✅ "Successfully connected to ARI"
@@ -556,7 +558,7 @@ cat .env | grep API_KEY
 **Solution**:
 ```bash
 # Check STT logs
-docker compose logs ai-engine | grep -E "STT|transcription|utterance"
+docker compose logs ai_engine | grep -E "STT|transcription|utterance"
 
 # Look for:
 # ✅ "Utterance detected" or "Speech segment captured"
@@ -583,7 +585,7 @@ docker compose logs ai-engine | grep -E "STT|transcription|utterance"
 curl http://127.0.0.1:15000/metrics | grep latency
 
 # For Local Hybrid: ensure local-ai-server is healthy
-docker compose logs local-ai-server | tail -20
+docker compose logs local_ai_server | tail -20
 
 # Look for model loading messages
 # Expected: "STT model loaded", "LLM model loaded", "TTS model loaded"

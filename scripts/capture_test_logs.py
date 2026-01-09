@@ -38,8 +38,20 @@ class TestLogCapture:
         self.start_time = datetime.now()
         
         # Local log capture commands (no hardcoded remote host)
-        ai_engine_cmd = ["docker-compose", "logs", "-f", "ai-engine"]
-        local_ai_cmd = ["docker-compose", "logs", "-f", "local-ai-server"]
+        compose = ["docker-compose", "-p", "asterisk-ai-voice-agent"]
+        try:
+            probe = subprocess.run(
+                ["docker", "compose", "version"],
+                capture_output=True,
+                text=True,
+            )
+            if probe.returncode == 0:
+                compose = ["docker", "compose", "-p", "asterisk-ai-voice-agent"]
+        except Exception:
+            pass
+
+        ai_engine_cmd = compose + ["logs", "-f", "ai_engine"]
+        local_ai_cmd = compose + ["logs", "-f", "local_ai_server"]
         asterisk_cmd = ["tail", "-f", "/var/log/asterisk/full"]
         
         try:
@@ -51,7 +63,7 @@ class TestLogCapture:
                 text=True,
                 bufsize=1
             )
-            self.processes.append(("ai-engine", ai_engine_proc))
+            self.processes.append(("ai_engine", ai_engine_proc))
             
             # Start Local AI Server log capture
             local_ai_proc = subprocess.Popen(
@@ -61,7 +73,7 @@ class TestLogCapture:
                 text=True,
                 bufsize=1
             )
-            self.processes.append(("local-ai-server", local_ai_proc))
+            self.processes.append(("local_ai_server", local_ai_proc))
             
             # Start Asterisk log capture
             asterisk_proc = subprocess.Popen(
@@ -73,7 +85,7 @@ class TestLogCapture:
             )
             self.processes.append(("asterisk", asterisk_proc))
             
-            print("✅ Log capture started for ai-engine, local-ai-server, and asterisk")
+            print("✅ Log capture started for ai_engine, local_ai_server, and asterisk")
             return True
             
         except Exception as e:

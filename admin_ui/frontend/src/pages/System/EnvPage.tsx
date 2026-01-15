@@ -289,6 +289,15 @@ const EnvPage = () => {
         return v === 'true' || v === '1' || v === 'on' || v === 'yes';
     };
 
+    const logFilePath = (env['LOG_FILE_PATH'] || '').trim();
+    const defaultContainerMediaPrefix = '/mnt/asterisk_media/';
+    const hostLogPathHint = logFilePath.startsWith(defaultContainerMediaPrefix)
+        ? `./asterisk_media/${logFilePath.slice(defaultContainerMediaPrefix.length)}`
+        : './asterisk_media/ai-engine.log';
+    const logFilePathTooltip = logFilePath.startsWith(defaultContainerMediaPrefix) || !logFilePath
+        ? `This is a path inside the ai_engine container. With the default docker-compose mount (./asterisk_media → /mnt/asterisk_media), the host file is ${hostLogPathHint}. You can confirm mounts in Admin → Docker Services.`
+        : 'This is a path inside the ai_engine container. To find the host file location, confirm the ai_engine mounts in Admin → Docker Services.';
+
     return (
         <div className="space-y-6">
             <div className={`${pendingRestart ? 'bg-orange-500/15 border-orange-500/30' : 'bg-yellow-500/10 border-yellow-500/20'} border text-yellow-600 dark:text-yellow-500 p-4 rounded-md flex items-center justify-between`}>
@@ -530,6 +539,7 @@ const EnvPage = () => {
 	                            id="log-to-file"
 	                            label="Log to File"
 	                            description="Enable logging to file."
+                                tooltip="Writes ai_engine logs to LOG_FILE_PATH (inside the container). If LOG_FILE_PATH is under /mnt/asterisk_media, the file is on the host under ./asterisk_media."
 	                            checked={isTrue(env['LOG_TO_FILE'])}
 	                            onChange={(e) => {
 	                                const enabled = e.target.checked;
@@ -544,6 +554,7 @@ const EnvPage = () => {
 	                        <div className="col-span-full">
 	                            <FormInput
 	                                label="Log File Path"
+                                    tooltip={logFilePathTooltip}
 	                                value={env['LOG_FILE_PATH'] || ''}
 	                                onChange={(e) => updateEnv('LOG_FILE_PATH', e.target.value)}
 	                                placeholder="/mnt/asterisk_media/ai-engine.log"

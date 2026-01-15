@@ -11,6 +11,31 @@ from services.fs import upsert_env_vars
 
 logger = logging.getLogger(__name__)
 
+def _extract_mounts(container) -> List[dict]:
+    """
+    Normalize Docker mount info into a stable, UI-friendly shape.
+    Returns a list of dicts with snake_case keys.
+    """
+    mounts: List[dict] = []
+    try:
+        raw_mounts = container.attrs.get("Mounts", []) or []
+        for m in raw_mounts:
+            mounts.append(
+                {
+                    "type": m.get("Type"),
+                    "source": m.get("Source"),
+                    "destination": m.get("Destination"),
+                    "rw": m.get("RW"),
+                    "mode": m.get("Mode"),
+                    "propagation": m.get("Propagation"),
+                    "name": m.get("Name"),
+                    "driver": m.get("Driver"),
+                }
+            )
+    except Exception as e:
+        logger.debug("Error extracting mounts for %s: %s", getattr(container, "name", "<unknown>"), e)
+    return mounts
+
 
 def _dotenv_value(key: str) -> Optional[str]:
     """
@@ -175,7 +200,8 @@ async def get_containers():
                 "state": c.attrs['State']['Status'],
                 "uptime": uptime,
                 "started_at": started_at,
-                "ports": ports
+                "ports": ports,
+                "mounts": _extract_mounts(c),
             })
         return result
     except Exception as e:

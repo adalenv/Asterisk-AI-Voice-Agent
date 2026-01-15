@@ -874,7 +874,7 @@ pipelines:
     stt: local_stt
     tts: local_tts
 profiles:
-  default: telephony_responsive
+  default: telephony_ulaw_8k
   openai_realtime_24k:
     chunk_ms: 20
     idle_cutoff_ms: 0

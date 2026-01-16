@@ -36,6 +36,7 @@ var (
 	updateRebuild       string
 	updateForceRecreate bool
 	updateSkipCheck     bool
+	gitSafeDirectory    string
 )
 
 var updateCmd = &cobra.Command{
@@ -384,15 +385,47 @@ func copyDir(srcDir string, dstDir string) error {
 }
 
 func gitShowTopLevel() (string, error) {
-	out, err := runCmd("git", "rev-parse", "--show-toplevel")
+	if _, err := exec.LookPath("git"); err != nil {
+		return "", errors.New("git not found in PATH")
+	}
+
+	// Work around Git's "dubious ownership" guardrail by setting safe.directory
+	// to the detected repo root (if we can find it without invoking git).
+	if gitSafeDirectory == "" {
+		if candidate, err := findGitRootFromCWD(); err == nil && candidate != "" {
+			gitSafeDirectory = candidate
+		}
+	}
+
+	out, err := runGitCmd("rev-parse", "--show-toplevel")
 	if err != nil {
+		// If we're hitting Git's safe.directory guardrail, print a human-friendly message
+		// that explains the cause and the exact one-time fix.
+		msg := err.Error()
+		if strings.Contains(msg, "detected dubious ownership") && strings.Contains(msg, "safe.directory") {
+			return "", fmt.Errorf(
+				"git safety check blocked this repo (detected 'dubious ownership').\n"+
+					"This happens when the repo directory is owned by a different user (common with Docker/UID-mapped setups).\n\n"+
+					"Fix (one-time):\n"+
+					"  git config --global --add safe.directory %s\n",
+				bestEffortCWD(),
+			)
+		}
 		return "", fmt.Errorf("not a git repository (or git not installed): %w", err)
 	}
-	return strings.TrimSpace(out), nil
+	top := strings.TrimSpace(out)
+	if top == "" {
+		return "", errors.New("git rev-parse returned empty repo root")
+	}
+	if abs, err := filepath.Abs(top); err == nil {
+		top = abs
+	}
+	gitSafeDirectory = top
+	return top, nil
 }
 
 func gitRevParse(ref string) (string, error) {
-	out, err := runCmd("git", "rev-parse", ref)
+	out, err := runGitCmd("rev-parse", ref)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse %s failed: %w", ref, err)
 	}
@@ -408,7 +441,7 @@ func gitIsDirty(includeUntracked bool) (bool, error) {
 	} else {
 		args = append(args, "--untracked-files=no")
 	}
-	out, err := runCmd("git", args...)
+	out, err := runGitCmd(args...)
 	if err != nil {
 		return false, fmt.Errorf("git status failed: %w", err)
 	}
@@ -421,9 +454,9 @@ func gitStash(ctx *updateContext, includeUntracked bool) error {
 	var out string
 
 	if includeUntracked {
-		out, err = runCmd("git", "stash", "save", "-u", msg)
+		out, err = runGitCmd("stash", "save", "-u", msg)
 	} else {
-		out, err = runCmd("git", "stash", "save", msg)
+		out, err = runGitCmd("stash", "save", msg)
 	}
 	if err != nil {
 		return fmt.Errorf("git stash failed: %w", err)
@@ -436,7 +469,7 @@ func gitStash(ctx *updateContext, includeUntracked bool) error {
 
 	ctx.stashed = true
 	ctx.stashRef = ""
-	ref, refErr := runCmd("git", "stash", "list", "-1")
+	ref, refErr := runGitCmd("stash", "list", "-1")
 	if refErr == nil {
 		ctx.stashRef = strings.TrimSpace(ref)
 	}
@@ -444,7 +477,7 @@ func gitStash(ctx *updateContext, includeUntracked bool) error {
 }
 
 func gitStashPop(ctx *updateContext) error {
-	_, err := runCmd("git", "stash", "pop")
+	_, err := runGitCmd("stash", "pop")
 	if err != nil {
 		// On conflict, git typically returns non-zero and leaves the stash in place.
 		return fmt.Errorf("git stash pop failed (possible conflicts). Your stash is likely preserved; run `git stash list` and resolve conflicts: %w", err)
@@ -453,7 +486,7 @@ func gitStashPop(ctx *updateContext) error {
 }
 
 func gitFetch(remote string, ref string) error {
-	_, err := runCmd("git", "fetch", remote, ref)
+	_, err := runGitCmd("fetch", remote, ref)
 	if err != nil {
 		return fmt.Errorf("git fetch %s %s failed: %w", remote, ref, err)
 	}
@@ -461,7 +494,7 @@ func gitFetch(remote string, ref string) error {
 }
 
 func gitMergeFastForward(remoteRef string) error {
-	_, err := runCmd("git", "merge", "--ff-only", remoteRef)
+	_, err := runGitCmd("merge", "--ff-only", remoteRef)
 	if err != nil {
 		return fmt.Errorf("git merge --ff-only %s failed (branch likely diverged or local conflicts). Fix manually and retry: %w", remoteRef, err)
 	}
@@ -469,7 +502,7 @@ func gitMergeFastForward(remoteRef string) error {
 }
 
 func gitDiffNames(oldSHA string, newSHA string) ([]string, error) {
-	out, err := runCmd("git", "diff", "--name-only", oldSHA+".."+newSHA)
+	out, err := runGitCmd("diff", "--name-only", oldSHA+".."+newSHA)
 	if err != nil {
 		return nil, fmt.Errorf("git diff failed: %w", err)
 	}
@@ -657,4 +690,51 @@ func runCmd(name string, args ...string) (string, error) {
 		return text, err
 	}
 	return text, nil
+}
+
+func runGitCmd(args ...string) (string, error) {
+	gitArgs := make([]string, 0, len(args)+2)
+	if gitSafeDirectory != "" {
+		gitArgs = append(gitArgs, "-c", "safe.directory="+gitSafeDirectory)
+	}
+	gitArgs = append(gitArgs, args...)
+	return runCmd("git", gitArgs...)
+}
+
+func findGitRootFromCWD() (string, error) {
+	start, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	dir := start
+	for {
+		if hasGitDir(dir) {
+			if abs, err := filepath.Abs(dir); err == nil {
+				return abs, nil
+			}
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "", errors.New("no .git directory found in parent chain")
+}
+
+func hasGitDir(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, ".git"))
+	if err != nil {
+		return false
+	}
+	// `.git` can be a directory or a file (worktrees/submodules); both indicate a git root.
+	return info.IsDir() || info.Mode().IsRegular()
+}
+
+func bestEffortCWD() string {
+	if wd, err := os.Getwd(); err == nil && wd != "" {
+		return wd
+	}
+	return "<repo-path>"
 }

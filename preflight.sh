@@ -119,6 +119,64 @@ print(cur)
 PY
 }
 
+# ============================================================================
+# Filesystem + env helpers (portable across GNU/BSD)
+# ============================================================================
+CONTAINER_UID_DEFAULT=1000
+
+stat_uid() {
+    stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null || echo ""
+}
+
+stat_gid() {
+    stat -c '%g' "$1" 2>/dev/null || stat -f '%g' "$1" 2>/dev/null || echo ""
+}
+
+stat_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || echo ""
+}
+
+env_get() {
+    local key="$1"
+    local default_value="${2:-}"
+    [ -z "$key" ] && { echo "$default_value"; return 0; }
+    [ ! -f "$SCRIPT_DIR/.env" ] && { echo "$default_value"; return 0; }
+
+    local value
+    value="$(grep -E "^[# ]*${key}=" "$SCRIPT_DIR/.env" 2>/dev/null | tail -n1 | sed -E "s/^[# ]*${key}=//")"
+    value="$(echo "$value" | tr -d '\r' | xargs 2>/dev/null || echo "$value")"
+    if [ -z "$value" ]; then
+        echo "$default_value"
+    else
+        echo "$value"
+    fi
+}
+
+choose_shared_gid() {
+    # Prefer the host's actual asterisk group when present (local Asterisk case).
+    local ast_gid=""
+    if id asterisk &>/dev/null; then
+        ast_gid="$(id -g asterisk 2>/dev/null || true)"
+    elif getent passwd asterisk &>/dev/null; then
+        # Some systems encode primary GID in passwd entry.
+        ast_gid="$(getent passwd asterisk | cut -d: -f4 2>/dev/null || true)"
+    fi
+    if [[ "$ast_gid" =~ ^[0-9]+$ ]]; then
+        echo "$ast_gid"
+        return 0
+    fi
+
+    # Next best: align with the configured container build arg (if user already set it).
+    ast_gid="$(env_get "ASTERISK_GID" "")"
+    if [[ "$ast_gid" =~ ^[0-9]+$ ]]; then
+        echo "$ast_gid"
+        return 0
+    fi
+
+    # Fallback: container runtime user group (keeps Admin UI + ai-engine writable).
+    echo "${CONTAINER_UID_DEFAULT}"
+}
+
 print_fix_and_docs() {
     local cmd="$1"
     local docs="$2"
@@ -652,6 +710,78 @@ check_docker() {
 }
 
 # ============================================================================
+# Docker Socket GID (Admin UI needs group_add)
+# ============================================================================
+check_docker_gid() {
+    # Best-effort: only relevant when the Admin UI mounts a Docker socket.
+    # docker-compose.yml uses:
+    #   - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    #   group_add: [${DOCKER_GID:-999}]
+
+    # Prefer .env-configured socket path; fall back to default.
+    local sock
+    sock="$(env_get "DOCKER_SOCK" "/var/run/docker.sock")"
+    sock="$(echo "$sock" | tr -d '\r' | xargs 2>/dev/null || echo "$sock")"
+
+    if [ -z "$sock" ]; then
+        sock="/var/run/docker.sock"
+    fi
+
+    if [ ! -S "$sock" ]; then
+        # On some hosts (or rootless), the socket may not exist until docker starts.
+        # If docker is available, we already checked docker ps; so missing socket likely means
+        # the user isn't using socket-mount control (or is on an unsupported layout).
+        return 0
+    fi
+
+    local actual_gid
+    actual_gid="$(stat_gid "$sock")"
+    if ! [[ "$actual_gid" =~ ^[0-9]+$ ]]; then
+        log_warn "Could not determine Docker socket GID: $sock"
+        return 0
+    fi
+
+    local configured_gid
+    configured_gid="$(env_get "DOCKER_GID" "")"
+    if [ -z "$configured_gid" ]; then
+        configured_gid="999"
+    fi
+
+    if ! [[ "$configured_gid" =~ ^[0-9]+$ ]]; then
+        log_warn "DOCKER_GID in .env is not numeric: $configured_gid"
+        return 0
+    fi
+
+    if [ "$configured_gid" != "$actual_gid" ]; then
+        log_warn "Docker socket GID mismatch (Admin UI may not control containers)"
+        log_info "  Socket: $sock (gid=$actual_gid)"
+        log_info "  .env: DOCKER_GID=$configured_gid"
+        log_info "  Fix: set DOCKER_GID=$actual_gid in .env and recreate admin_ui"
+
+        if [ -f "$SCRIPT_DIR/.env" ]; then
+            if [ "$APPLY_FIXES" = true ]; then
+                if grep -qE '^[# ]*DOCKER_GID=' "$SCRIPT_DIR/.env"; then
+                    sed -i.bak "s/^[# ]*DOCKER_GID=.*/DOCKER_GID=${actual_gid}/" "$SCRIPT_DIR/.env" 2>/dev/null || \
+                        sed -i '' "s/^[# ]*DOCKER_GID=.*/DOCKER_GID=${actual_gid}/" "$SCRIPT_DIR/.env"
+                else
+                    echo "" >> "$SCRIPT_DIR/.env"
+                    echo "DOCKER_GID=${actual_gid}" >> "$SCRIPT_DIR/.env"
+                fi
+                rm -f "$SCRIPT_DIR/.env.bak" 2>/dev/null || true
+                log_ok "Updated .env with DOCKER_GID=$actual_gid"
+                log_info "  Recreate admin_ui: ${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d --force-recreate admin_ui"
+            else
+                FIX_CMDS+=("# Update .env with: DOCKER_GID=$actual_gid  (docker socket: $sock)")
+                FIX_CMDS+=("# Then recreate admin_ui:")
+                FIX_CMDS+=("${COMPOSE_CMD:-docker compose} -p asterisk-ai-voice-agent up -d --force-recreate admin_ui")
+            fi
+        fi
+    else
+        log_ok "Docker socket GID: $actual_gid (matches DOCKER_GID)"
+    fi
+}
+
+# ============================================================================
 # Docker Compose Checks
 # ============================================================================
 check_compose() {
@@ -762,33 +892,112 @@ docker compose "$@"' > /usr/local/bin/docker-compose
 # Directory Setup
 # ============================================================================
 check_directories() {
-    # Use AST_MEDIA_DIR (matches .env.example) with repo-local default (matches docker-compose.yml)
-    MEDIA_DIR="${AST_MEDIA_DIR:-$SCRIPT_DIR/asterisk_media/ai-generated}"
-    DATA_DIR="$SCRIPT_DIR/data"
+    # Host paths (repo-local). These are bind-mounted into containers.
+    #
+    # NOTE: AST_MEDIA_DIR is a *container* path (e.g., /mnt/asterisk_media/ai-generated).
+    # Preflight must not use it as a host path.
+    local MEDIA_PARENT="$SCRIPT_DIR/asterisk_media"
+    local MEDIA_DIR_HOST="$SCRIPT_DIR/asterisk_media/ai-generated"
+    local MEDIA_DIR_CONTAINER="${AST_MEDIA_DIR:-/mnt/asterisk_media/ai-generated}"
+    local DATA_DIR="$SCRIPT_DIR/data"
+    local MODELS_DIR="$SCRIPT_DIR/models"
+    local SHARED_GID
+    SHARED_GID="$(choose_shared_gid)"
+    local CONTAINER_UID="${CONTAINER_UID_DEFAULT}"
     
     # Check media directory
-    if [ -d "$MEDIA_DIR" ] && [ -w "$MEDIA_DIR" ]; then
-        log_ok "Media directory: $MEDIA_DIR"
-    else
-        if [ ! -d "$MEDIA_DIR" ]; then
-            log_warn "Media directory missing: $MEDIA_DIR"
-        else
-            log_warn "Media directory not writable: $MEDIA_DIR"
+    if [ -d "$MEDIA_DIR_HOST" ]; then
+        local media_uid media_gid media_mode parent_uid parent_gid parent_mode
+        parent_uid="$(stat_uid "$MEDIA_PARENT")"
+        parent_gid="$(stat_gid "$MEDIA_PARENT")"
+        parent_mode="$(stat_mode "$MEDIA_PARENT")"
+        media_uid="$(stat_uid "$MEDIA_DIR_HOST")"
+        media_gid="$(stat_gid "$MEDIA_DIR_HOST")"
+        media_mode="$(stat_mode "$MEDIA_DIR_HOST")"
+
+        local media_ok=true
+        # Log-to-file often targets /mnt/asterisk_media/*.log, so the parent directory must be writable too.
+        if [ "$parent_uid" != "$CONTAINER_UID" ]; then
+            media_ok=false
         fi
-        
-        # Rootless-aware fix commands
-        if [ "$DOCKER_ROOTLESS" = true ]; then
-            FIX_CMDS+=("mkdir -p $MEDIA_DIR")
-            log_info "  Rootless tip: Use volume with :Z suffix for SELinux compatibility"
+        if [[ "$parent_mode" =~ ^[0-9]+$ ]]; then
+            local parent_base_mode="${parent_mode: -3}"
+            if [[ "$parent_base_mode" =~ ^[0-9]{3}$ ]]; then
+                local parent_base_oct=$((8#$parent_base_mode))
+                if [ $((parent_base_oct & 0020)) -eq 0 ]; then
+                    media_ok=false
+                fi
+            fi
+        fi
+        if [ "$media_uid" != "$CONTAINER_UID" ]; then
+            media_ok=false
+        fi
+        # Require group-writable; setgid recommended to keep group inheritance stable.
+        if [[ "$media_mode" =~ ^[0-9]+$ ]]; then
+            local base_mode="${media_mode: -3}"
+            if [[ "$base_mode" =~ ^[0-9]{3}$ ]]; then
+                local base_oct=$((8#$base_mode))
+                if [ $((base_oct & 0020)) -eq 0 ]; then
+                    media_ok=false
+                fi
+            fi
+        fi
+
+        if [ "$media_ok" = true ]; then
+            log_ok "Media directory (host): $MEDIA_DIR_HOST"
+            log_info "  Container path: $MEDIA_DIR_CONTAINER"
         else
-            FIX_CMDS+=("mkdir -p $MEDIA_DIR")
-            FIX_CMDS+=("chown -R \$(id -u):\$(id -g) $MEDIA_DIR")
+            log_warn "Media directory permissions need alignment (host): $MEDIA_DIR_HOST"
+            log_info "  Expected: owner UID $CONTAINER_UID, group-writable (recommended: 2775), group GID $SHARED_GID"
+            log_info "  Parent: uid=${parent_uid:-unknown} gid=${parent_gid:-unknown} mode=${parent_mode:-unknown} path=$MEDIA_PARENT"
+            log_info "  Detected: uid=${media_uid:-unknown} gid=${media_gid:-unknown} mode=${media_mode:-unknown}"
+            log_info "  Container path: $MEDIA_DIR_CONTAINER"
+
+            FIX_CMDS+=("sudo chown -R $CONTAINER_UID:$SHARED_GID $SCRIPT_DIR/asterisk_media")
+            FIX_CMDS+=("sudo chmod 2775 $SCRIPT_DIR/asterisk_media $MEDIA_DIR_HOST")
+        fi
+    else
+        log_warn "Media directory missing (host): $MEDIA_DIR_HOST"
+        log_info "  Container path: $MEDIA_DIR_CONTAINER"
+
+        FIX_CMDS+=("mkdir -p $MEDIA_DIR_HOST")
+        FIX_CMDS+=("sudo chown -R $CONTAINER_UID:$SHARED_GID $SCRIPT_DIR/asterisk_media")
+        FIX_CMDS+=("sudo chmod 2775 $SCRIPT_DIR/asterisk_media $MEDIA_DIR_HOST")
+        if [ "$DOCKER_ROOTLESS" = true ]; then
+            log_info "  Rootless tip: If you cannot chown to UID $CONTAINER_UID, run containers as your host UID or use a named volume"
         fi
     fi
     
     # Check data directory (for call history SQLite DB)
-    if [ -d "$DATA_DIR" ] && [ -w "$DATA_DIR" ]; then
-        log_ok "Data directory: $DATA_DIR"
+    if [ -d "$DATA_DIR" ]; then
+        local data_uid data_gid data_mode
+        data_uid="$(stat_uid "$DATA_DIR")"
+        data_gid="$(stat_gid "$DATA_DIR")"
+        data_mode="$(stat_mode "$DATA_DIR")"
+
+        local data_ok=true
+        if [ "$data_uid" != "$CONTAINER_UID" ]; then
+            data_ok=false
+        fi
+        if [[ "$data_mode" =~ ^[0-9]+$ ]]; then
+            local base_mode="${data_mode: -3}"
+            if [[ "$base_mode" =~ ^[0-9]{3}$ ]]; then
+                local base_oct=$((8#$base_mode))
+                if [ $((base_oct & 0020)) -eq 0 ]; then
+                    data_ok=false
+                fi
+            fi
+        fi
+
+        if [ "$data_ok" = true ]; then
+            log_ok "Data directory (host): $DATA_DIR"
+        else
+            log_warn "Data directory permissions need alignment (host): $DATA_DIR"
+            log_info "  Expected: owner UID $CONTAINER_UID, group-writable (recommended: 2775), group GID $SHARED_GID"
+            log_info "  Detected: uid=${data_uid:-unknown} gid=${data_gid:-unknown} mode=${data_mode:-unknown}"
+            FIX_CMDS+=("sudo chown -R $CONTAINER_UID:$SHARED_GID $DATA_DIR")
+            FIX_CMDS+=("sudo chmod 2775 $DATA_DIR")
+        fi
         # Best-effort: validate we can create an SQLite file inside the data directory.
         # Avoid touching the real call_history.db here; use a temp file and delete it.
         if command -v python3 &>/dev/null; then
@@ -810,30 +1019,211 @@ PY
             fi
         fi
     else
-        if [ ! -d "$DATA_DIR" ]; then
-            if [ "$APPLY_FIXES" = true ]; then
-                mkdir -p "$DATA_DIR"
-                chmod 775 "$DATA_DIR"
-                # Ensure .gitkeep exists to maintain directory in git
-                touch "$DATA_DIR/.gitkeep"
-                log_ok "Created data directory: $DATA_DIR"
+        if [ "$APPLY_FIXES" = true ]; then
+            mkdir -p "$DATA_DIR"
+            chmod 2775 "$DATA_DIR"
+            # Ensure .gitkeep exists to maintain directory in git
+            touch "$DATA_DIR/.gitkeep"
+            log_ok "Created data directory: $DATA_DIR"
+        else
+            log_warn "Data directory missing: $DATA_DIR"
+            log_info "  ⚠️  Call history will NOT be recorded without this directory!"
+            log_info "  Run: ./preflight.sh --apply-fixes to create it automatically"
+            FIX_CMDS+=("mkdir -p $DATA_DIR && chmod 2775 $DATA_DIR && touch $DATA_DIR/.gitkeep")
+        fi
+    fi
+
+    # Check models directory (required for local/local_hybrid pipelines and Admin UI model downloads).
+    # The Admin UI runs as UID 1000 and must be able to create models/{stt,tts,llm,kroko}.
+    local MODEL_SUBDIRS=("stt" "tts" "llm" "kroko")
+
+    if [ -d "$MODELS_DIR" ]; then
+        local models_uid models_gid models_mode
+        models_uid="$(stat_uid "$MODELS_DIR")"
+        models_gid="$(stat_gid "$MODELS_DIR")"
+        models_mode="$(stat_mode "$MODELS_DIR")"
+
+        local models_ok=true
+        if [ "$models_uid" != "$CONTAINER_UID" ]; then
+            models_ok=false
+        fi
+        if [[ "$models_mode" =~ ^[0-9]+$ ]]; then
+            local base_mode="${models_mode: -3}"
+            if [[ "$base_mode" =~ ^[0-9]{3}$ ]]; then
+                local base_oct=$((8#$base_mode))
+                if [ $((base_oct & 0020)) -eq 0 ]; then
+                    models_ok=false
+                fi
+            fi
+        fi
+
+        # Ensure expected subdirectories exist (best-effort).
+        local missing_sub=()
+        for sub in "${MODEL_SUBDIRS[@]}"; do
+            if [ ! -d "$MODELS_DIR/$sub" ]; then
+                missing_sub+=("$MODELS_DIR/$sub")
+            fi
+        done
+
+        if [ "$models_ok" = true ] && [ ${#missing_sub[@]} -eq 0 ]; then
+            log_ok "Models directory (host): $MODELS_DIR"
+        else
+            log_warn "Models directory not ready for local AI downloads (host): $MODELS_DIR"
+            log_info "  Expected: owner UID $CONTAINER_UID, group-writable (recommended: 2775), group GID $SHARED_GID"
+            log_info "  Detected: uid=${models_uid:-unknown} gid=${models_gid:-unknown} mode=${models_mode:-unknown}"
+            if [ ${#missing_sub[@]} -gt 0 ]; then
+                log_info "  Missing: ${missing_sub[*]}"
+            fi
+            FIX_CMDS+=("sudo mkdir -p $MODELS_DIR/stt $MODELS_DIR/tts $MODELS_DIR/llm $MODELS_DIR/kroko")
+            FIX_CMDS+=("sudo chown $CONTAINER_UID:$SHARED_GID $MODELS_DIR $MODELS_DIR/stt $MODELS_DIR/tts $MODELS_DIR/llm $MODELS_DIR/kroko")
+            FIX_CMDS+=("sudo chmod 2775 $MODELS_DIR $MODELS_DIR/stt $MODELS_DIR/tts $MODELS_DIR/llm $MODELS_DIR/kroko")
+        fi
+    else
+        if [ "$APPLY_FIXES" = true ]; then
+            mkdir -p "$MODELS_DIR"/stt "$MODELS_DIR"/tts "$MODELS_DIR"/llm "$MODELS_DIR"/kroko
+            chown "$CONTAINER_UID:$SHARED_GID" "$MODELS_DIR" "$MODELS_DIR"/stt "$MODELS_DIR"/tts "$MODELS_DIR"/llm "$MODELS_DIR"/kroko 2>/dev/null || true
+            chmod 2775 "$MODELS_DIR" "$MODELS_DIR"/stt "$MODELS_DIR"/tts "$MODELS_DIR"/llm "$MODELS_DIR"/kroko 2>/dev/null || true
+            log_ok "Created models directories: $MODELS_DIR/{stt,tts,llm,kroko}"
+        else
+            log_warn "Models directory missing: $MODELS_DIR"
+            log_info "  Local AI setup (and Admin UI model downloads) will fail without this directory."
+            log_info "  Run: sudo ./preflight.sh --apply-fixes to create it automatically"
+            FIX_CMDS+=("mkdir -p $MODELS_DIR/stt $MODELS_DIR/tts $MODELS_DIR/llm $MODELS_DIR/kroko && chown $CONTAINER_UID:$SHARED_GID $MODELS_DIR $MODELS_DIR/stt $MODELS_DIR/tts $MODELS_DIR/llm $MODELS_DIR/kroko && chmod 2775 $MODELS_DIR $MODELS_DIR/stt $MODELS_DIR/tts $MODELS_DIR/llm $MODELS_DIR/kroko")
+        fi
+    fi
+}
+
+# ============================================================================
+# Project Directory Permissions (Admin UI needs to write .env + config)
+# ============================================================================
+check_project_permissions() {
+    local SHARED_GID
+    SHARED_GID="$(choose_shared_gid)"
+    local CONTAINER_UID="${CONTAINER_UID_DEFAULT}"
+
+    # Admin UI edits .env and config/ai-agent.yaml via atomic temp-file + rename.
+    # That requires the containing directories to be writable by the container UID.
+    local dirs=("$SCRIPT_DIR" "$SCRIPT_DIR/config")
+    for d in "${dirs[@]}"; do
+        [ -d "$d" ] || continue
+        local uid mode
+        uid="$(stat_uid "$d")"
+        mode="$(stat_mode "$d")"
+
+        local needs_fix=false
+        if [ "$uid" != "$CONTAINER_UID" ]; then
+            needs_fix=true
+        fi
+        if [[ "$mode" =~ ^[0-9]+$ ]]; then
+            local base_mode="${mode: -3}"
+            if [[ "$base_mode" =~ ^[0-9]{3}$ ]]; then
+                local base_oct=$((8#$base_mode))
+                # require owner write
+                if [ $((base_oct & 0200)) -eq 0 ]; then
+                    needs_fix=true
+                fi
+            fi
+        fi
+
+        if [ "$needs_fix" = true ]; then
+            log_warn "Project directory not writable by containers (host): $d"
+            log_info "  Required so Admin UI can save .env and config changes"
+            log_info "  Expected: owner UID $CONTAINER_UID, mode 2775 (recommended), group GID $SHARED_GID"
+            log_info "  Detected: uid=${uid:-unknown} mode=${mode:-unknown}"
+            FIX_CMDS+=("sudo chown $CONTAINER_UID:$SHARED_GID $d")
+            FIX_CMDS+=("sudo chmod 2775 $d")
+        fi
+    done
+}
+
+# ============================================================================
+# Data Directory Permissions (AAVA-150)
+# Always runs regardless of Asterisk location - fixes remote Asterisk case
+# ============================================================================
+check_data_permissions() {
+    local DATA_DIR="$SCRIPT_DIR/data"
+    local SHARED_GID
+    SHARED_GID="$(choose_shared_gid)"
+    local CONTAINER_UID="${CONTAINER_UID_DEFAULT}"
+    
+    # Skip if data directory doesn't exist yet (check_directories handles creation)
+    [ ! -d "$DATA_DIR" ] && return 0
+
+    # Ensure directory itself is writable by containers (ai_engine + admin_ui run as UID 1000).
+    local dir_uid dir_gid dir_mode
+    dir_uid="$(stat_uid "$DATA_DIR")"
+    dir_gid="$(stat_gid "$DATA_DIR")"
+    dir_mode="$(stat_mode "$DATA_DIR")"
+
+    local dir_needs_fix=false
+    if [ "$dir_uid" != "$CONTAINER_UID" ]; then
+        dir_needs_fix=true
+    fi
+    if [[ "$dir_mode" =~ ^[0-9]+$ ]]; then
+        local base_mode="${dir_mode: -3}"
+        if [[ "$base_mode" =~ ^[0-9]{3}$ ]]; then
+            local base_oct=$((8#$base_mode))
+            if [ $((base_oct & 0020)) -eq 0 ]; then
+                dir_needs_fix=true
+            fi
+        fi
+    fi
+
+    if [ "$dir_needs_fix" = true ]; then
+        log_warn "Data directory not aligned for containers (host): $DATA_DIR"
+        log_info "  Expected: owner UID $CONTAINER_UID, group-writable (recommended: 2775), group GID $SHARED_GID"
+        log_info "  Detected: uid=${dir_uid:-unknown} gid=${dir_gid:-unknown} mode=${dir_mode:-unknown}"
+        if [ "$APPLY_FIXES" = true ]; then
+            if sudo chown "$CONTAINER_UID:$SHARED_GID" "$DATA_DIR" 2>/dev/null && sudo chmod 2775 "$DATA_DIR" 2>/dev/null; then
+                log_ok "Fixed data directory permissions for containers"
             else
-                log_warn "Data directory missing: $DATA_DIR"
-                log_info "  ⚠️  Call history will NOT be recorded without this directory!"
-                log_info "  Run: ./preflight.sh --apply-fixes to create it automatically"
-                FIX_CMDS+=("mkdir -p $DATA_DIR && chmod 775 $DATA_DIR && touch $DATA_DIR/.gitkeep")
+                log_warn "Could not fix data directory permissions (may need sudo)"
             fi
         else
-            if [ "$APPLY_FIXES" = true ]; then
-                chmod 775 "$DATA_DIR"
-                log_ok "Fixed data directory permissions: $DATA_DIR"
-            else
-                log_warn "Data directory not writable: $DATA_DIR"
-                log_info "  ⚠️  Call history will NOT be recorded without write access!"
-                log_info "  If you see call history DB errors at runtime, check SELinux contexts and filesystem support for SQLite locks"
-                log_info "  Run: ./preflight.sh --apply-fixes to fix permissions"
-                FIX_CMDS+=("chmod 775 $DATA_DIR")
+            FIX_CMDS+=("sudo chown $CONTAINER_UID:$SHARED_GID $DATA_DIR")
+            FIX_CMDS+=("sudo chmod 2775 $DATA_DIR")
+        fi
+    fi
+
+    # Ensure call history DB files are owned by the container runtime UID (not root) and group-readable.
+    local db_files=("$DATA_DIR/call_history.db" "$DATA_DIR/call_history.db-wal" "$DATA_DIR/call_history.db-shm")
+    local db_needs_fix=false
+    for db_file in "${db_files[@]}"; do
+        if [ -f "$db_file" ]; then
+            local owner_uid
+            owner_uid="$(stat_uid "$db_file")"
+            if [ "$owner_uid" = "0" ] || [ "$owner_uid" != "$CONTAINER_UID" ]; then
+                db_needs_fix=true
+                break
             fi
+        fi
+    done
+
+    if [ "$db_needs_fix" = true ]; then
+        log_warn "call_history.db ownership/permissions may block writes by containers"
+        log_info "  Fix: run ./preflight.sh --apply-fixes (preferred). Avoid chmod 666/777."
+        if [ "$APPLY_FIXES" = true ]; then
+            local fix_success=true
+            for db_file in "${db_files[@]}"; do
+                if [ -f "$db_file" ]; then
+                    if sudo chown "$CONTAINER_UID:$SHARED_GID" "$db_file" 2>/dev/null && sudo chmod 664 "$db_file" 2>/dev/null; then
+                        log_ok "Fixed: $db_file"
+                    else
+                        log_warn "Could not fix (may need sudo): $db_file"
+                        fix_success=false
+                    fi
+                fi
+            done
+            if [ "$fix_success" = true ]; then
+                log_ok "call_history.db ownership/permissions aligned for containers"
+            fi
+        else
+            FIX_CMDS+=("sudo chown $CONTAINER_UID:$SHARED_GID $DATA_DIR/call_history.db*")
+            FIX_CMDS+=("sudo chmod 664 $DATA_DIR/call_history.db*")
+        fi
+    else
+        if [ -f "$DATA_DIR/call_history.db" ]; then
+            log_ok "call_history.db ownership: OK (writable by containers)"
         fi
     fi
 }
@@ -846,8 +1236,8 @@ check_selinux() {
     command -v getenforce &>/dev/null || return 0
     
     SELINUX_MODE=$(getenforce 2>/dev/null || echo "Disabled")
-    # Use consistent AST_MEDIA_DIR with repo-local default
-    MEDIA_DIR="${AST_MEDIA_DIR:-$SCRIPT_DIR/asterisk_media/ai-generated}"
+    # SELinux contexts apply to host paths (repo-local), not container mount paths.
+    MEDIA_DIR="$SCRIPT_DIR/asterisk_media/ai-generated"
     DATA_DIR="$SCRIPT_DIR/data"
     
     if [ "$SELINUX_MODE" = "Enforcing" ]; then
@@ -1246,19 +1636,53 @@ check_asterisk_uid_gid() {
                 fi
             else
                 # Symlink mode (works when Asterisk can traverse MEDIA_DIR)
+                # AAVA-150: Handle existing directory at symlink target
+                local symlink_blocked=false
                 if [ -e "$ASTERISK_SOUNDS_LINK" ] && [ ! -L "$ASTERISK_SOUNDS_LINK" ]; then
-                    if [ -d "$ASTERISK_SOUNDS_LINK" ] && [ -z "$(ls -A "$ASTERISK_SOUNDS_LINK" 2>/dev/null)" ]; then
-                        rmdir "$ASTERISK_SOUNDS_LINK" 2>/dev/null || sudo rmdir "$ASTERISK_SOUNDS_LINK" 2>/dev/null || true
+                    if [ -d "$ASTERISK_SOUNDS_LINK" ]; then
+                        if [ -z "$(ls -A "$ASTERISK_SOUNDS_LINK" 2>/dev/null)" ]; then
+                            # Empty directory - safe to remove
+                            rmdir "$ASTERISK_SOUNDS_LINK" 2>/dev/null || sudo rmdir "$ASTERISK_SOUNDS_LINK" 2>/dev/null || true
+                        elif [ "$APPLY_FIXES" = true ]; then
+                            # AAVA-150: Non-empty directory - auto-backup with --apply-fixes
+                            log_info "Backing up existing directory: ${ASTERISK_SOUNDS_LINK}.bak"
+                            if sudo mv "$ASTERISK_SOUNDS_LINK" "${ASTERISK_SOUNDS_LINK}.bak" 2>/dev/null; then
+                                log_ok "Backed up: $ASTERISK_SOUNDS_LINK → ${ASTERISK_SOUNDS_LINK}.bak"
+                            else
+                                log_warn "Could not backup existing directory (may need sudo)"
+                                symlink_blocked=true
+                            fi
+                        else
+                            # Without --apply-fixes, warn and add to FIX_CMDS
+                            log_warn "Asterisk sounds path exists but is not a symlink: $ASTERISK_SOUNDS_LINK"
+                            log_info "  This will cause 'ai-generated/ai-generated/' double-path issues"
+                            log_info "  Run with --apply-fixes to auto-backup and create symlink"
+                            FIX_CMDS+=("sudo mv $ASTERISK_SOUNDS_LINK ${ASTERISK_SOUNDS_LINK}.bak")
+                            FIX_CMDS+=("sudo ln -sfn $MEDIA_DIR $ASTERISK_SOUNDS_LINK")
+                            symlink_blocked=true
+                        fi
                     else
-                        log_warn "Asterisk sounds path exists but is not a symlink: $ASTERISK_SOUNDS_LINK"
-                        log_info "  Fix manually: sudo mv $ASTERISK_SOUNDS_LINK ${ASTERISK_SOUNDS_LINK}.bak && sudo ln -sfn $MEDIA_DIR $ASTERISK_SOUNDS_LINK"
+                        # It's a file, not a directory
+                        log_warn "Asterisk sounds path exists as a file (not directory): $ASTERISK_SOUNDS_LINK"
+                        if [ "$APPLY_FIXES" = true ]; then
+                            sudo mv "$ASTERISK_SOUNDS_LINK" "${ASTERISK_SOUNDS_LINK}.bak" 2>/dev/null || true
+                        else
+                            FIX_CMDS+=("sudo mv $ASTERISK_SOUNDS_LINK ${ASTERISK_SOUNDS_LINK}.bak")
+                            symlink_blocked=true
+                        fi
                     fi
                 fi
-                if ln -sfn "$MEDIA_DIR" "$ASTERISK_SOUNDS_LINK" 2>/dev/null; then
-                    log_ok "Asterisk sounds symlink: $ASTERISK_SOUNDS_LINK → $MEDIA_DIR"
-                else
-                    log_warn "Could not create Asterisk sounds symlink (may need sudo)"
-                    FIX_CMDS+=("sudo ln -sfn $MEDIA_DIR $ASTERISK_SOUNDS_LINK")
+                
+                # Only attempt symlink creation if not blocked
+                if [ "$symlink_blocked" = false ]; then
+                    if ln -sfn "$MEDIA_DIR" "$ASTERISK_SOUNDS_LINK" 2>/dev/null; then
+                        log_ok "Asterisk sounds symlink: $ASTERISK_SOUNDS_LINK → $MEDIA_DIR"
+                    elif sudo ln -sfn "$MEDIA_DIR" "$ASTERISK_SOUNDS_LINK" 2>/dev/null; then
+                        log_ok "Asterisk sounds symlink: $ASTERISK_SOUNDS_LINK → $MEDIA_DIR (via sudo)"
+                    else
+                        log_warn "Could not create Asterisk sounds symlink (may need sudo)"
+                        FIX_CMDS+=("sudo ln -sfn $MEDIA_DIR $ASTERISK_SOUNDS_LINK")
+                    fi
                 fi
             fi
         fi
@@ -1533,8 +1957,11 @@ apply_fixes() {
         check_docker >/dev/null 2>&1
         check_compose >/dev/null 2>&1
         check_directories >/dev/null 2>&1
+        check_project_permissions >/dev/null 2>&1
+        check_data_permissions >/dev/null 2>&1
         check_selinux >/dev/null 2>&1
         check_env >/dev/null 2>&1
+        check_docker_gid >/dev/null 2>&1
     fi
 }
 
@@ -1672,7 +2099,7 @@ print_summary() {
         echo ""
         echo "After fixing failures:"
         echo "  1. Re-run: ./preflight.sh"
-        echo "  2. Then run: agent doctor"
+        echo "  2. Then run: agent check"
     fi
 }
 
@@ -1691,8 +2118,11 @@ main() {
     check_docker
     check_compose
     check_directories
+    check_project_permissions
+    check_data_permissions  # AAVA-150: Always runs, regardless of Asterisk location
     check_selinux
     check_env
+    check_docker_gid
     check_asterisk
     check_asterisk_uid_gid
     check_gpu

@@ -199,12 +199,18 @@ const ContextsPage = () => {
 
     const handleAddContext = () => {
         const defaultTools = ['transfer', 'hangup_call'].filter((t) => availableTools.includes(t));
+        const preferredDefaultProfile = 'telephony_ulaw_8k';
+        const newContextProfile = (availableProfiles && availableProfiles.includes(preferredDefaultProfile))
+            ? preferredDefaultProfile
+            : '';
         setEditingContext('new_context');
         setContextForm({
             name: '',
             greeting: 'Hi {caller_name}, how can I help you today?',
             prompt: 'You are a helpful voice assistant.',
-            profile: '',
+            // Default to telephony_ulaw_8k so new contexts work on first call,
+            // even when profiles.default is telephony_responsive.
+            profile: newContextProfile,
             provider: '',
             tools: defaultTools
         });

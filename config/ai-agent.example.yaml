@@ -123,6 +123,8 @@ streaming:
 providers:
   local:
     enabled: true
+    # Local AI Server WebSocket URL. Default deployment uses host networking, so 127.0.0.1 is correct.
+    # If you run containers on a user-defined bridge network (no host networking), use ws://local_ai_server:8765.
     ws_url: "${LOCAL_WS_URL:-ws://127.0.0.1:8765}"
     connect_timeout_sec: ${LOCAL_WS_CONNECT_TIMEOUT:=2.0}
     response_timeout_sec: ${LOCAL_WS_RESPONSE_TIMEOUT:=5.0}

@@ -27,6 +27,11 @@ FROM python:3.11-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# Ensure IANA timezone support when TZ is set via .env (Admin UI → Environment)
+RUN apt-get -o Acquire::Retries=5 update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
 # Note: sox/curl/unzip removed - not needed at runtime
 # Audio processing uses Python audioop, downloads done in install.sh
 

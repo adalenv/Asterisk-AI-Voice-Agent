@@ -12,6 +12,7 @@ import sys
 import contextvars
 import uuid
 import time
+import datetime
 
 import structlog
 from structlog import dev as structlog_dev
@@ -135,6 +136,16 @@ def sanitize_secrets(logger, method_name, event_dict):
     # Sanitize the entire event_dict
     return sanitize_dict(event_dict)
 
+def add_local_timestamp(logger, method_name, event_dict):
+    """
+    Add a timezone-aware local timestamp.
+
+    This respects the container's timezone configuration (TZ + tzdata), aligning timestamps
+    across the stack (Admin UI, ai_engine, local_ai_server) when users set TZ in .env.
+    """
+    event_dict["timestamp"] = datetime.datetime.now().astimezone().isoformat()
+    return event_dict
+
 def configure_logging(log_level="INFO", log_to_file=False, log_file_path="service.log", service_name="ai-engine"):
     """
     Set up structured logging with enhanced context for troubleshooting.
@@ -187,7 +198,7 @@ def configure_logging(log_level="INFO", log_to_file=False, log_file_path="servic
             structlog.stdlib.filter_by_level,
             structlog.stdlib.add_logger_name,
             structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
+            add_local_timestamp,
             add_service_context,
             add_correlation_id,
             sanitize_secrets,  # AAVA-37: Redact sensitive information
@@ -210,7 +221,7 @@ def configure_logging(log_level="INFO", log_to_file=False, log_file_path="servic
         foreign_pre_chain=[
             structlog.stdlib.add_logger_name,
             structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
+            add_local_timestamp,
         ],
     )
 

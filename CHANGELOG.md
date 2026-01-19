@@ -12,9 +12,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Additional provider integrations
 - Enhanced monitoring features
 
+### Added
+
+- Admin UI Dashboard: show current project version in the **System Ready** card (best-effort detection via `git describe` with fallback to README parsing; supports `AAVA_PROJECT_VERSION` override).
+
+### Changed
+
+- Docs/CLI: align operator-facing version references to `v5.1.4` (avoid hardcoded `v5.0` strings in CLI help/output where possible).
+
 ### Fixed
 
 - Docker builds: pin base OS/runtime to avoid upstream tag drift (`admin_ui`/`ai_engine`: Debian 12 `bookworm` + Python 3.11; `local_ai_server`: Debian 13 `trixie` + Python 3.11 for Kroko compatibility).
+- Ollama pipelines: prevent overly-eager `hangup_call` tool calls from ending calls when the caller did not indicate end-of-call intent; support `num_ctx` pass-through and honor `tools_enabled` for tool calling.
+- Email transcripts: improve Outlook compatibility by rendering transcript newlines as `<br/>` (HTML-escaped) so caller/AI lines display correctly across clients.
+
+## [5.0.1] - 2026-01-14
+
+### Fixed
+
+- **CLI Command Names**: v5.0.0 binaries were built with old command names; this release includes the updated CLI:
+  - `agent check` - Standard diagnostics report (renamed from `agent doctor`)
+  - `agent rca` - Post-call root cause analysis (renamed from `agent troubleshoot`)
+  - `agent setup` - Interactive setup wizard (renamed from `agent init`)
+  - Legacy aliases (`doctor`, `troubleshoot`, `init`, `demo`) remain available as hidden commands for backward compatibility
+
+- **Preflight Script - Remote Asterisk Support** (AAVA-150):
+  - New `check_data_permissions()` function runs regardless of Asterisk location
+  - Fixes `call_history.db` read-only error for users with remote/containerized Asterisk
+  - Detects and fixes root-owned database files that container user cannot write to
+
+- **Preflight Script - Symlink Handling** (AAVA-150):
+  - Non-empty directories at `/var/lib/asterisk/sounds/ai-generated` now auto-backed up with `--apply-fixes`
+  - Fixes the "ai-generated/ai-generated/" double-path issue
+  - Prevents silent symlink creation failures
 
 ## [5.0.0] - 2026-01-07
 
@@ -436,7 +466,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Provider setup guides: `Provider-Deepgram-Setup.md`, `Provider-OpenAI-Setup.md`, `Provider-Google-Setup.md`
   - Developer guides: quickstart, architecture overview, architecture deep dive, common pitfalls
   - Technical references for all provider implementations
-- **Community Integration**: Discord server integration (https://discord.gg/CAVACtaY)
+- **Community Integration**: Discord server integration (https://discord.gg/ysg8fphxUe)
 - **Milestone 18**: Hybrid Pipelines Tool Implementation documentation
 
 ### Fixed

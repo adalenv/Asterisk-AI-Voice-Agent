@@ -10,10 +10,12 @@ import {
   HardDrive,
   Shield,
   Box,
-  Globe
+  Globe,
+  Tag
 } from 'lucide-react';
 import { ConfigCard } from './ui/ConfigCard';
 import axios from 'axios';
+import { describeApiError } from '../utils/apiErrors';
 
 // Types
 interface PlatformCheck {
@@ -32,6 +34,10 @@ interface PlatformCheck {
 }
 
 interface PlatformInfo {
+  project?: {
+    version: string;
+    source?: string;
+  };
   os: {
     id: string;
     version: string;
@@ -212,15 +218,19 @@ export const SystemStatus = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
 
   const fetchPlatform = async () => {
     try {
       const res = await axios.get('/api/system/platform');
       setData(res.data);
       setError(null);
+      setErrorDetails(null);
     } catch (err) {
-      console.error('Failed to fetch platform status:', err);
+      const info = describeApiError(err, '/api/system/platform');
+      console.error('Failed to fetch platform status:', info);
       setError('Failed to load system status');
+      setErrorDetails(`${info.status ? `HTTP ${info.status}` : info.kind}${info.detail ? ` - ${info.detail}` : ''}`);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -256,6 +266,7 @@ export const SystemStatus = () => {
       <ConfigCard title="System Status" icon={<Server className="w-5 h-5" />}>
         <div className="p-4 text-center text-red-400">
           {error}
+          {errorDetails && <div className="mt-1 text-xs text-muted-foreground break-words">{errorDetails}</div>}
           <button 
             onClick={handleRefresh}
             className="ml-2 text-blue-400 hover:text-blue-300"
@@ -316,6 +327,15 @@ export const SystemStatus = () => {
             <div className="text-sm text-foreground">
               {platform.os.id} {platform.os.version}
               {platform.os.is_eol && <span className="ml-1 text-yellow-500">(EOL)</span>}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Tag className="w-4 h-4 text-muted-foreground" />
+          <div>
+            <div className="text-xs text-muted-foreground">AAVA</div>
+            <div className="text-sm text-foreground" title={platform.project?.source ? `source: ${platform.project.source}` : undefined}>
+              {platform.project?.version || 'Unknown'}
             </div>
           </div>
         </div>

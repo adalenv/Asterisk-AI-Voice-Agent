@@ -464,7 +464,7 @@ const ToolForm = ({ config, onChange }: ToolFormProps) => {
                                 onChange={(e) => updateNestedConfig('send_email_summary', 'from_email', e.target.value)}
                             />
                             <FormInput
-                                label="Admin Email"
+                                label="Admin Email (Recipient)"
                                 value={config.send_email_summary?.admin_email || ''}
                                 onChange={(e) => updateNestedConfig('send_email_summary', 'admin_email', e.target.value)}
                             />
@@ -488,6 +488,11 @@ const ToolForm = ({ config, onChange }: ToolFormProps) => {
                     />
                     {config.request_transcript?.enabled !== false && (
                         <div className="mt-4 pl-4 border-l-2 border-border ml-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <FormInput
+                                label="Admin Email (BCC)"
+                                value={config.request_transcript?.admin_email || ''}
+                                onChange={(e) => updateNestedConfig('request_transcript', 'admin_email', e.target.value)}
+                            />
                             <FormSwitch
                                 label="Confirm Email"
                                 checked={config.request_transcript?.confirm_email ?? true}

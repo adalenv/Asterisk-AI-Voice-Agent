@@ -75,17 +75,24 @@ agent version
 You should see:
 ```
 Asterisk AI Voice Agent CLI
-Version:    v4.1.0
-Built:      2025-11-07T19:00:00Z
+Version:    vX.Y.Z
+Built:      YYYY-MM-DDTHH:MM:SSZ
 Repository: https://github.com/hkjarral/Asterisk-AI-Voice-Agent
 ```
 
+Note: The CLI binary and the Python engine may have different version strings depending on how the release was built.
+
 ### Available Tools
 
-- **`agent doctor`** - System health check and diagnostics
-- **`agent troubleshoot`** - Post-call analysis and RCA
-- **`agent demo`** - Audio pipeline validation
-- **`agent init`** - Interactive setup wizard
+- **`agent setup`** - Interactive setup wizard (v5.1.4)
+- **`agent check`** - Standard diagnostics report (v5.1.4)
+- **`agent rca`** - Post-call root cause analysis (v5.1.4)
+- **`agent update`** - Pull latest code + rebuild/restart as needed (v5.1+)
+
+Legacy aliases (v5.1.4; hidden from `--help`):
+- `agent init` → `agent setup`
+- `agent doctor` → `agent check`
+- `agent troubleshoot` → `agent rca`
 
 ---
 
@@ -94,7 +101,7 @@ Repository: https://github.com/hkjarral/Asterisk-AI-Voice-Agent
 ### Step 1: Run Health Check
 
 ```bash
-agent doctor
+agent check
 ```
 
 This performs comprehensive system checks:
@@ -121,7 +128,7 @@ docker compose logs ai_engine | grep -i \"call history\" | tail -n 20
 ```
 
 Common fixes:
-- Run `sudo ./preflight.sh --apply-fixes` (creates `./data`, fixes permissions, applies SELinux contexts where applicable).
+- Run `sudo ./preflight.sh --apply-fixes` (creates `./data` and `./models/*`, fixes permissions, applies SELinux contexts where applicable).
 - Avoid non-local filesystems for `./data` (some NFS setups can break SQLite locking).
 
 ### Admin UI Shows “AI Engine/Local AI Server Error” But Containers Are Running (Tier 3 / Best-effort)
@@ -144,6 +151,16 @@ If container control (start/stop/restart) fails from the UI:
 docker compose up -d --force-recreate admin_ui
 ```
 
+If the UI shows a 500 error and `admin_ui` logs contain `PermissionError: [Errno 13] Permission denied` for `/var/run/docker.sock`:
+- Your host’s `docker` group GID may not be `999` (Debian often differs), so the Admin UI user (UID 1000) can’t open the socket.
+- Fix by setting `DOCKER_GID` to the socket’s group ID and recreating `admin_ui`:
+```bash
+ls -ln /var/run/docker.sock
+DOCKER_GID=$(ls -ln /var/run/docker.sock | awk '{print $4}')
+grep -qE '^[# ]*DOCKER_GID=' .env && sed -i.bak -E "s/^[# ]*DOCKER_GID=.*/DOCKER_GID=$DOCKER_GID/" .env || echo "DOCKER_GID=$DOCKER_GID" >> .env
+docker compose up -d --force-recreate admin_ui
+```
+
 If containers are running but the UI shows “unreachable”:
 - Set explicit health probe URLs in `.env` (values must be reachable from `admin_ui`):
 ```bash
@@ -160,7 +177,7 @@ Notes:
 ### Step 2: Analyze Recent Call
 
 ```bash
-agent troubleshoot --last
+agent rca
 ```
 
 Automatically analyzes your most recent call with:
@@ -188,7 +205,12 @@ Console format works too, but JSON provides:
 - Structured data for better analysis
 - Easier field extraction
 
-**List recent calls:**
+**Analyze most recent call:**
+```bash
+agent rca
+```
+
+**Advanced (legacy alias): list recent calls:**
 ```bash
 agent troubleshoot --list
 ```
@@ -240,7 +262,7 @@ cat /etc/resolv.conf
 
 **Quick Check:**
 ```bash
-agent troubleshoot --last --symptom no-audio
+agent rca
 ```
 
 **Common Causes:**
@@ -303,7 +325,7 @@ docker compose up -d ai_engine
 
 **Quick Check:**
 ```bash
-agent troubleshoot --last --symptom garbled
+agent rca
 ```
 
 **Common Causes:**
@@ -342,7 +364,7 @@ streaming:
 #### Provider Bytes Pacing Bug
 **Check with troubleshoot:**
 ```bash
-agent troubleshoot --last
+agent rca
 ```
 
 Look for: "Provider bytes ratio" should be `~1.0`.
@@ -373,7 +395,7 @@ streaming:
 
 **Quick Check:**
 ```bash
-agent troubleshoot --last --symptom echo
+agent rca
 ```
 
 **Common Causes:**
@@ -400,7 +422,7 @@ docker logs ai_engine | grep "webrtc_aggressiveness"
 
 **Check:**
 ```bash
-agent troubleshoot --last
+agent rca
 ```
 
 Look for: "Gate closures: XX"
@@ -430,7 +452,7 @@ vad:
 
 **Quick Check:**
 ```bash
-agent troubleshoot --last --symptom interruption
+agent rca
 ```
 
 **Cause:** This is a variant of echo issue - agent hearing its own audio.
@@ -448,7 +470,7 @@ agent troubleshoot --last --symptom interruption
 
 **Quick Check:**
 ```bash
-agent troubleshoot --last --symptom one-way
+agent rca
 ```
 
 **Diagnose Direction:**
@@ -493,19 +515,19 @@ docker logs ai_engine | grep -i "transcript\|stt\|speech"
 
 ## Troubleshooting Tools
 
-### agent doctor
+### agent check
 
 **System health check and diagnostics.**
 
 ```bash
 # Basic health check
-agent doctor
+agent check
 
 # JSON output (for scripts)
-agent doctor --json
+agent check --json
 
 # Verbose output
-agent doctor -v
+agent check -v
 ```
 
 **What it checks:**
@@ -529,38 +551,22 @@ agent doctor -v
 
 ---
 
-### agent troubleshoot
+### agent rca
 
 **Post-call analysis and root cause analysis.**
 
 ```bash
 # Analyze most recent call
-agent troubleshoot --last
+agent rca
 
 # Analyze specific call
-agent troubleshoot --call 1761424308.2043
+agent rca --call 1761424308.2043
 
-# List recent calls
-agent troubleshoot --list
-
-# Symptom-specific analysis
-agent troubleshoot --last --symptom garbled
-agent troubleshoot --last --symptom no-audio
-agent troubleshoot --last --symptom echo
-agent troubleshoot --last --symptom interruption
-agent troubleshoot --last --symptom one-way
-
-# Skip LLM analysis (faster)
-agent troubleshoot --last --no-llm
-
-# Collect logs only (no analysis)
-agent troubleshoot --last --collect-only
-
-# Interactive mode (Q&A)
-agent troubleshoot --last --interactive
+# JSON output (JSON only)
+agent rca --json
 
 # Verbose output
-agent troubleshoot --last -v
+agent rca -v
 ```
 
 **What it analyzes:**
@@ -588,6 +594,8 @@ agent troubleshoot --last -v
 5. Detailed Metrics (RCA-level)
 6. Call Quality Verdict (0-100 score)
 7. AI Diagnosis (if enabled)
+
+Note: Advanced `agent troubleshoot` flags (list/symptoms/collect-only/etc.) still exist as a hidden legacy alias in v5.0, but `agent rca` is the recommended surface.
 
 ---
 
@@ -627,17 +635,17 @@ agent demo -v
 
 ---
 
-### agent init
+### agent setup
 
 **Interactive setup wizard.**
 
 ```bash
 # Run setup wizard
-agent init
+agent setup
 
-# Flags below are planned; they may exist but are not implemented in v5.0.0:
-# agent init --non-interactive
-# agent init --template <name>
+# Flags below are planned; they may exist but are not implemented in v5.1.4:
+# agent setup --non-interactive
+# agent setup --template <name>
 ```
 
 **What it configures:**
@@ -656,11 +664,11 @@ agent init
 ### Quick Diagnostics for Tool Issues
 
 ```bash
-# 1. Check system configuration
-agent config validate
+# 1. Collect standard diagnostics
+agent check
 
-# 2. Review last call for tool execution
-agent troubleshoot --last
+# 2. Review most recent call for tool execution
+agent rca
 
 # 3. Look for tool-specific errors
 docker logs ai_engine 2>&1 | grep -i "tool\|function"
@@ -718,7 +726,7 @@ docker logs ai_engine 2>&1 | grep "missing_required_parameter"
 ```
 
 **Fix**: This is a code issue (should be fixed in v4.2+). If you see this error:
-- Verify you're on latest version: `git pull origin develop`
+- Verify you're on latest version: `agent update` (or `git pull origin main`)
 - Check that `src/tools/adapters/openai.py` uses `to_openai_realtime_schema()`
 - See [Common Pitfalls](contributing/COMMON_PITFALLS.md#pitfall-1-tool-schema-format-mismatch-openai-realtime) for details
 
@@ -796,13 +804,13 @@ asterisk -rx "core show hints" | grep <extension>
 asterisk -rx "queue show <queue-name>"
 ```
 
-### Using agent troubleshoot for Tool Issues
+### Using agent rca for Tool Issues
 
-The `agent troubleshoot` command is your best friend for diagnosing tool execution:
+Use `agent rca` as the first stop for tool execution issues:
 
 ```bash
-# Analyze last call with focus on tools
-agent troubleshoot --last
+# Analyze most recent call (includes tool execution sections)
+agent rca
 
 # Look for these sections in output:
 # 1. Tool Registration: "Tools configured: 6"
@@ -865,56 +873,12 @@ For detailed explanations of tool execution issues and fixes:
 
 ---
 
-## Symptom-Based Diagnosis
+## Advanced (Legacy) Symptom Flags
 
-### Using Symptom Flags
-
-The `agent troubleshoot` tool supports 5 common symptoms:
+`agent rca` is the recommended v5.0 surface. If you need symptom-focused heuristics, the hidden legacy alias `agent troubleshoot` supports:
 
 ```bash
-# Complete silence
-agent troubleshoot --last --symptom no-audio
-
-# Distorted/fast/slow audio
-agent troubleshoot --last --symptom garbled
-
-# Agent hears itself
-agent troubleshoot --last --symptom echo
-
-# Self-interruption loop
-agent troubleshoot --last --symptom interruption
-
-# Only one direction works
-agent troubleshoot --last --symptom one-way
-```
-
-### What Symptom Analysis Provides
-
-Each symptom checker:
-1. **Findings:** Specific issues detected in logs
-2. **Root Causes:** Likely causes based on patterns
-3. **Actions:** Step-by-step remediation
-
-**Example Output:**
-```
-═══════════════════════════════════════════
-SYMPTOM ANALYSIS: garbled
-═══════════════════════════════════════════
-Distorted, fast, slow, or choppy audio
-
-Findings:
-  ❌ Jitter buffer underflows detected (45 occurrences)
-  ⚠️  Audio format issues detected
-
-Likely Root Causes:
-  • Audio pacing mismatch - playback too fast for buffer
-  • Audio codec mismatch between components
-
-Recommended Actions:
-  1. Increase jitter_buffer_ms in streaming config (try 100ms)
-  2. Check provider_bytes calculation accuracy
-  3. Verify AudioSocket format matches Asterisk dialplan (slin)
-  4. Check transcoding configuration
+agent troubleshoot --last --symptom <no-audio|garbled|echo|interruption|one-way>
 ```
 
 ---
@@ -1070,6 +1034,12 @@ ERROR: Model file not found
 make model-setup
 ```
 
+If you see permission errors (for example `PermissionError: [Errno 13] Permission denied` when the UI tries to download models), fix host mounts/permissions first:
+```bash
+sudo ./preflight.sh --apply-fixes
+docker compose up -d --force-recreate local_ai_server
+```
+
 Or check specific paths in `.env`:
 ```bash
 LOCAL_STT_MODEL_PATH=/app/models/stt/vosk-model-en-us-0.22
@@ -1116,7 +1086,7 @@ Common causes:
 
 **Diagnose:**
 ```bash
-agent troubleshoot --last
+agent rca
 ```
 
 Look for:
@@ -1163,7 +1133,7 @@ docker stats ai_engine local_ai_server
 
 **Check metrics:**
 ```bash
-agent troubleshoot --last
+agent rca
 ```
 
 **Key Metrics:**
@@ -1189,9 +1159,8 @@ agent troubleshoot --last
 # Test ARI connectivity
 curl -u asterisk:asterisk http://127.0.0.1:8088/ari/asterisk/info
 
-# Check network from container
-docker exec ai_engine ping asterisk-host
-docker exec ai_engine curl http://asterisk-host:8088/ari/asterisk/info
+# Container-side ARI probe (recommended in v5.0; avoids requiring curl/ping in ai_engine)
+agent check
 ```
 
 **Fix:** Update `.env`:
@@ -1386,11 +1355,11 @@ sudo apt-get install docker-compose-plugin
 ### 1. Collect Diagnostics
 
 ```bash
-# Run health check
-agent doctor > doctor-report.txt
+# Run standard diagnostics report (recommended)
+agent check > agent-check.txt
 
-# Analyze recent call
-agent troubleshoot --last > troubleshoot-report.txt
+# Analyze most recent call
+agent rca > agent-rca.txt
 
 # Collect logs
 docker logs --since 1h ai_engine > ai-engine.log 2>&1
@@ -1416,8 +1385,8 @@ Search for:
 
 **Include:**
 1. Symptom description
-2. Output from `agent doctor`
-3. Output from `agent troubleshoot --last`
+2. Output from `agent check`
+3. Output from `agent rca`
 4. Relevant log excerpts (redact API keys!)
 5. Configuration (redact credentials!)
 6. Environment details (OS, Docker version, Asterisk version)
@@ -1458,17 +1427,15 @@ Network: Bridge mode
 ### Essential Commands
 
 ```bash
-# Health check
-agent doctor
+# Standard diagnostics report (share this output when asking for help)
+agent check
 
-# Analyze last call
-agent troubleshoot --last
+# Post-call RCA (most recent call)
+agent rca
 
-# List recent calls
-agent troubleshoot --list
-
-# Check specific symptom
-agent troubleshoot --last --symptom garbled
+# Advanced (legacy alias): list recent calls / symptom heuristics
+# agent troubleshoot --list
+# agent troubleshoot --last --symptom garbled
 
 # View logs
 docker logs -f ai_engine
@@ -1503,7 +1470,7 @@ streaming:
 
 ```
 [from-ai-agent]
-exten => s,1,NoOp(AI Voice Agent v4.0)
+exten => s,1,NoOp(AI Voice Agent v5.1.4)
  same => n,Answer()
  same => n,Set(AI_CONTEXT=demo_openai)  ; Optional: select context
  same => n,Stasis(asterisk-ai-voice-agent)
@@ -1525,7 +1492,7 @@ See [docs/Transport-Mode-Compatibility.md](Transport-Mode-Compatibility.md) for 
 
 ## Appendix: Metric Thresholds
 
-### Quality Metrics (from agent troubleshoot)
+### Quality Metrics (from agent rca)
 
 | Metric | Excellent | Acceptable | Poor | Critical |
 |--------|-----------|------------|------|----------|
@@ -1546,5 +1513,5 @@ See [docs/Transport-Mode-Compatibility.md](Transport-Mode-Compatibility.md) for 
 
 ---
 
-**Last Updated:** November 7, 2025  
-**Version:** 4.0.0
+**Last Updated:** January 12, 2026  
+**Version:** 5.0

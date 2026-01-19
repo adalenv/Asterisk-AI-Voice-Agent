@@ -56,8 +56,9 @@ ELEVENLABS_AGENT_ID=agent_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 **Test API Key**:
 ```bash
-curl -X GET "https://api.elevenlabs.io/v1/user" \
-  -H "xi-api-key: ${ELEVENLABS_API_KEY}"
+# Test API key and Agent ID together (from project root)
+curl -X GET "https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=$(grep ELEVENLABS_AGENT_ID .env | cut -d'=' -f2)" \
+  -H "xi-api-key: $(grep ELEVENLABS_API_KEY .env | cut -d'=' -f2)"
 ```
 
 ### 5. Configure Provider

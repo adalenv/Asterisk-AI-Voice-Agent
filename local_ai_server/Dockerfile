@@ -100,7 +100,8 @@ FROM python:3.11-slim-trixie
 ARG INCLUDE_KROKO_EMBEDDED=false
 
 # Install runtime dependencies
-RUN apt-get -o Acquire::Retries=5 update && apt-get install -y \
+RUN apt-get -o Acquire::Retries=5 update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    tzdata \
     libsndfile1 \
     libasound2 \
     libportaudio2 \

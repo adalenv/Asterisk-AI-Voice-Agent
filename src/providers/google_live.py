@@ -24,6 +24,7 @@ import json
 import time
 import struct
 import audioop
+import re
 from typing import Any, Dict, Optional, List
 from collections import deque
 
@@ -106,6 +107,14 @@ class GoogleLiveProvider(AIProviderInterface):
         self._setup_ack_event: Optional[asyncio.Event] = None  # ACK gate like Deepgram
         self._hangup_after_response: bool = False  # Flag to trigger hangup after next response
         self._farewell_in_progress: bool = False  # Track if farewell is being spoken
+        self._hangup_fallback_armed: bool = False
+        self._hangup_fallback_emitted: bool = False
+        self._hangup_fallback_task: Optional[asyncio.Task] = None
+        self._hangup_fallback_armed_at: Optional[float] = None
+        self._hangup_fallback_audio_started: bool = False
+        self._last_audio_out_monotonic: Optional[float] = None
+        self._user_end_intent: Optional[str] = None
+        self._assistant_farewell_intent: Optional[str] = None
         # Conversation state
         self._conversation_history: List[Dict[str, Any]] = []
         
@@ -118,6 +127,9 @@ class GoogleLiveProvider(AIProviderInterface):
         # Transcription buffering - hold latest partial until turnComplete
         self._input_transcription_buffer: str = ""
         self._output_transcription_buffer: str = ""
+        self._model_text_buffer: str = ""
+        self._last_final_user_text: str = ""
+        self._last_final_assistant_text: str = ""
         
         # Turn latency tracking (Milestone 21 - Call History)
         self._turn_start_time: Optional[float] = None
@@ -130,6 +142,218 @@ class GoogleLiveProvider(AIProviderInterface):
         self._session_start_time: Optional[float] = None
         # Tool response sizing: keep Google toolResponse payloads small to avoid provider errors.
         self._tool_response_max_bytes: int = 8000
+
+    @staticmethod
+    def _norm_text(value: str) -> str:
+        return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+    @classmethod
+    def _detect_user_end_intent(cls, text: str) -> Optional[str]:
+        t = cls._norm_text(text)
+        if not t:
+            return None
+        markers = (
+            "no transcript",
+            "no transcript needed",
+            "don't send a transcript",
+            "do not send a transcript",
+            "no need for a transcript",
+            "no thanks",
+            "no thank you",
+            "that's all",
+            "that is all",
+            "that's it",
+            "that is it",
+            "nothing else",
+            "all set",
+            "all good",
+            "end the call",
+            "end call",
+            "hang up",
+            "hangup",
+            "goodbye",
+            "bye",
+        )
+        for m in markers:
+            if m in t:
+                return m
+        return None
+
+    @classmethod
+    def _detect_assistant_farewell(cls, text: str) -> Optional[str]:
+        t = cls._norm_text(text)
+        if not t:
+            return None
+        markers = (
+            "goodbye",
+            "bye",
+            "thank you for calling",
+            "thanks for calling",
+            "have a great day",
+            "have a good day",
+            "take care",
+            "ending the call",
+            "i'll let you go",
+        )
+        for m in markers:
+            if m in t:
+                return m
+        return None
+
+    async def _ensure_hangup_fallback_watchdog(self) -> None:
+        if self._hangup_fallback_task and not self._hangup_fallback_task.done():
+            return
+        if not self._call_id:
+            return
+        self._hangup_fallback_task = asyncio.create_task(
+            self._hangup_fallback_watchdog_loop(),
+            name=f"google-live-hangup-fallback-{self._call_id}",
+        )
+
+    async def _hangup_fallback_watchdog_loop(self) -> None:
+        """
+        If Gemini speaks a farewell but never emits a toolCall, or if turnComplete never arrives,
+        the engine may not see AgentAudioDone(streaming_done=True) and won't check cleanup_after_tts.
+
+        This watchdog observes output audio idle time and, when appropriate, emits AgentAudioDone
+        and HangupReady to reliably tear down the call.
+        """
+        call_id = self._call_id
+        # Keep conservative defaults; engine still applies farewell_hangup_delay_sec before ARI hangup.
+        idle_sec = float(getattr(self.config, "hangup_fallback_audio_idle_sec", 1.25) or 1.25)
+        min_armed_sec = float(getattr(self.config, "hangup_fallback_min_armed_sec", 0.8) or 0.8)
+
+        try:
+            while self._call_id == call_id and not self._hangup_fallback_emitted:
+                if not self._hangup_fallback_armed:
+                    await asyncio.sleep(0.2)
+                    continue
+
+                now = time.monotonic()
+                last_audio = self._last_audio_out_monotonic
+                armed_at = self._hangup_fallback_armed_at or now
+                if (now - armed_at) < min_armed_sec:
+                    await asyncio.sleep(0.2)
+                    continue
+                if not self._hangup_fallback_audio_started or last_audio is None:
+                    await asyncio.sleep(0.2)
+                    continue
+                if (now - last_audio) < idle_sec:
+                    await asyncio.sleep(0.2)
+                    continue
+
+                # Audio has been idle long enough; treat as end-of-response.
+                had_audio = bool(self._hangup_fallback_audio_started)
+                if self._in_audio_burst:
+                    self._in_audio_burst = False
+                    if self.on_event:
+                        await self.on_event(
+                            {
+                                "type": "AgentAudioDone",
+                                "call_id": call_id,
+                                "streaming_done": True,
+                            }
+                        )
+
+                if self.on_event:
+                    await self.on_event(
+                        {
+                            "type": "HangupReady",
+                            "call_id": call_id,
+                            "reason": "fallback_audio_idle",
+                            "had_audio": had_audio,
+                        }
+                    )
+
+                self._hangup_fallback_emitted = True
+                logger.info(
+                    "🔚 Hangup fallback watchdog emitted HangupReady",
+                    call_id=call_id,
+                    idle_sec=idle_sec,
+                    user_end_intent=self._user_end_intent,
+                    assistant_farewell_intent=self._assistant_farewell_intent,
+                )
+                return
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.debug(
+                "Hangup fallback watchdog failed",
+                call_id=call_id,
+                error=str(e),
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _normalize_response_modalities(value: Any) -> List[str]:
+        """
+        Live API expects `generationConfig.responseModalities` as a list of modality strings.
+
+        Our config historically stores this as a string ("audio", "text", "audio_text").
+        Normalize to the documented list form, using the canonical "AUDIO"/"TEXT" tokens.
+        """
+        if value is None:
+            return ["AUDIO"]
+
+        def normalize_token(token: str) -> Optional[str]:
+            token_norm = (token or "").strip().upper()
+            if not token_norm:
+                return None
+            if token_norm in ("AUDIO", "AUDIO_ONLY"):
+                return "AUDIO"
+            if token_norm in ("TEXT", "TEXT_ONLY"):
+                return "TEXT"
+            if token_norm in ("AUDIO_TEXT", "TEXT_AUDIO", "AUDIO+TEXT", "TEXT+AUDIO", "AUDIO,TEXT", "TEXT,AUDIO"):
+                # Caller will expand this at the top-level.
+                return token_norm
+            return token_norm
+
+        tokens: List[str] = []
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                if isinstance(item, str):
+                    t = normalize_token(item)
+                    if t:
+                        tokens.append(t)
+        elif isinstance(value, str):
+            # Support compact forms: "audio_text", "audio,text", "audio+text".
+            raw = value.strip()
+            if any(sep in raw for sep in (",", "+", " ")):
+                parts = [p for p in re.split(r"[,+\\s]+", raw) if p]
+                for p in parts:
+                    t = normalize_token(p)
+                    if t:
+                        tokens.append(t)
+            else:
+                t = normalize_token(raw)
+                if t:
+                    tokens.append(t)
+        else:
+            tokens = [str(value).strip().upper()]
+
+        modalities: List[str] = []
+        for t in tokens:
+            if t in ("AUDIO_TEXT", "TEXT_AUDIO", "AUDIO+TEXT", "TEXT+AUDIO", "AUDIO,TEXT", "TEXT,AUDIO"):
+                for expanded in ("AUDIO", "TEXT"):
+                    if expanded not in modalities:
+                        modalities.append(expanded)
+                continue
+            if t in ("AUDIO", "TEXT") and t not in modalities:
+                modalities.append(t)
+
+        return modalities or ["AUDIO"]
+
+    def _ws_is_open(self) -> bool:
+        ws = self.websocket
+        if not ws:
+            return False
+        try:
+            state = getattr(ws, "state", None)
+            if state is not None and getattr(state, "name", None) is not None:
+                return state.name == "OPEN"
+        except Exception:
+            pass
+        return bool(getattr(ws, "open", False))
 
     @staticmethod
     def get_capabilities() -> Optional[ProviderCapabilities]:
@@ -275,10 +499,12 @@ class GoogleLiveProvider(AIProviderInterface):
         # Use instructions from config (like OpenAI Realtime pattern)
         system_prompt = self.config.instructions
         
+        response_modalities = self._normalize_response_modalities(self.config.response_modalities)
+
         # Build generation config from configurable parameters
         # https://gist.github.com/quartzjer/9636066e96b4f904162df706210770e4
         generation_config = {
-            "responseModalities": self.config.response_modalities,  # Configurable: "audio", "text", or "audio_text"
+            "responseModalities": response_modalities,
             "speechConfig": {
                 "voiceConfig": {
                     "prebuiltVoiceConfig": {
@@ -300,7 +526,7 @@ class GoogleLiveProvider(AIProviderInterface):
             "Google Live speech configuration",
             call_id=self._call_id,
             voice_name=voice_cfg.get("voiceName"),
-            response_modalities=generation_config.get("responseModalities"),
+            response_modalities=response_modalities,
         )
 
         # Build tools config using context tool list (filtered by engine)
@@ -332,12 +558,14 @@ class GoogleLiveProvider(AIProviderInterface):
         setup_msg = {
             "setup": {
                 "model": f"models/{model_name}",
-                "generation_config": generation_config,
+                # Live API expects camelCase field names.
+                "generationConfig": generation_config,
             }
         }
 
         if system_prompt:
-            setup_msg["setup"]["system_instruction"] = {
+            # Live API expects `systemInstruction` (Content).
+            setup_msg["setup"]["systemInstruction"] = {
                 "parts": [{"text": system_prompt}]
             }
 
@@ -532,12 +760,11 @@ class GoogleLiveProvider(AIProviderInterface):
                 # Send realtime input (using camelCase keys per actual API)
                 message = {
                     "realtimeInput": {  # camelCase not snake_case
-                        "mediaChunks": [  # camelCase
-                            {
-                                "mimeType": f"audio/pcm;rate={provider_rate}",  # camelCase + rate from config
-                                "data": audio_b64,
-                            }
-                        ]
+                        # `mediaChunks` is deprecated in the Live API schema; prefer `audio`.
+                        "audio": {
+                            "mimeType": f"audio/pcm;rate={provider_rate}",
+                            "data": audio_b64,
+                        },
                     }
                 }
                 
@@ -651,6 +878,8 @@ class GoogleLiveProvider(AIProviderInterface):
             await self._handle_server_content(data)
         elif message_type == "toolCall":
             await self._handle_tool_call(data)
+        elif message_type == "toolCallCancellation":
+            await self._handle_tool_call_cancellation(data)
         elif message_type == "goAway":
             await self._handle_go_away(data)
         # Note: inputTranscription and outputTranscription are NOT separate message types
@@ -676,6 +905,16 @@ class GoogleLiveProvider(AIProviderInterface):
     async def _handle_server_content(self, data: Dict[str, Any]) -> None:
         """Handle serverContent message (audio, text, etc.)."""
         content = data.get("serverContent", {})
+
+        logger.debug(
+            "Google Live serverContent envelope",
+            call_id=self._call_id,
+            keys=list(content.keys()),
+            has_input=bool(content.get("inputTranscription")),
+            has_output=bool(content.get("outputTranscription")),
+            has_turn_complete=bool(content.get("turnComplete")),
+            has_model_turn=bool(content.get("modelTurn")),
+        )
         
         # Handle input transcription (user speech) - per official API docs
         # CONFIRMED BY TESTING: API sends INCREMENTAL fragments, not cumulative updates
@@ -699,7 +938,16 @@ class GoogleLiveProvider(AIProviderInterface):
                     fragment=text,
                     buffer_length=len(self._input_transcription_buffer),
                 )
-        
+                intent = self._detect_user_end_intent(self._input_transcription_buffer)
+                if intent and not self._user_end_intent:
+                    self._user_end_intent = intent
+                    logger.info(
+                        "Google Live detected user end-of-call intent",
+                        call_id=self._call_id,
+                        intent=intent,
+                        buffer_preview=self._input_transcription_buffer[:120],
+                    )
+
         # Handle output transcription (AI speech) - per official API docs
         # Like inputTranscription, API sends incremental fragments that must be concatenated
         output_transcription = content.get("outputTranscription")
@@ -714,6 +962,19 @@ class GoogleLiveProvider(AIProviderInterface):
                     fragment=text,
                     buffer_length=len(self._output_transcription_buffer),
                 )
+                farewell = self._detect_assistant_farewell(self._output_transcription_buffer)
+                if farewell and not self._assistant_farewell_intent:
+                    self._assistant_farewell_intent = farewell
+                    logger.info(
+                        "Google Live detected assistant farewell intent",
+                        call_id=self._call_id,
+                        intent=farewell,
+                        buffer_preview=self._output_transcription_buffer[:120],
+                    )
+                await self._maybe_arm_cleanup_after_tts(
+                    user_text=self._input_transcription_buffer,
+                    assistant_text=self._output_transcription_buffer,
+                )
         
         # Check if model turn is complete - THIS is when we save the final transcription
         turn_complete = content.get("turnComplete", False)
@@ -722,6 +983,7 @@ class GoogleLiveProvider(AIProviderInterface):
         if turn_complete:
             # Save user speech if buffered
             if self._input_transcription_buffer:
+                self._last_final_user_text = self._input_transcription_buffer
                 logger.info(
                     "Google Live final user transcription (turnComplete)",
                     call_id=self._call_id,
@@ -729,16 +991,25 @@ class GoogleLiveProvider(AIProviderInterface):
                 )
                 await self._track_conversation_message("user", self._input_transcription_buffer)
                 self._input_transcription_buffer = ""
-            
-            # Save AI speech if buffered
-            if self._output_transcription_buffer:
+
+            # Save AI speech if buffered (prefer outputTranscription, fall back to modelTurn.text)
+            assistant_final_text = (self._output_transcription_buffer or self._model_text_buffer or "").strip()
+            if assistant_final_text:
+                self._last_final_assistant_text = assistant_final_text
                 logger.info(
                     "Google Live final AI transcription (turnComplete)",
                     call_id=self._call_id,
-                    text=self._output_transcription_buffer[:150],
+                    text=assistant_final_text[:150],
                 )
-                await self._track_conversation_message("assistant", self._output_transcription_buffer)
+                await self._track_conversation_message("assistant", assistant_final_text)
+                # Fallback: if the model speaks a clear farewell but doesn't emit a hangup_call toolCall,
+                # arm engine-level hangup after TTS completion.
+                await self._maybe_arm_cleanup_after_tts(
+                    user_text=self._last_final_user_text,
+                    assistant_text=self._last_final_assistant_text,
+                )
                 self._output_transcription_buffer = ""
+                self._model_text_buffer = ""
             
             # Reset turn tracking for next turn (Milestone 21)
             self._turn_start_time = None
@@ -761,10 +1032,90 @@ class GoogleLiveProvider(AIProviderInterface):
                     call_id=self._call_id,
                     text_preview=text[:100],
                 )
+                self._model_text_buffer += text
+                farewell = self._detect_assistant_farewell(self._model_text_buffer)
+                if farewell and not self._assistant_farewell_intent:
+                    self._assistant_farewell_intent = farewell
+                    logger.info(
+                        "Google Live detected assistant farewell intent (modelTurn.text)",
+                        call_id=self._call_id,
+                        intent=farewell,
+                        buffer_preview=self._model_text_buffer[:120],
+                    )
+                await self._maybe_arm_cleanup_after_tts(
+                    user_text=self._input_transcription_buffer,
+                    assistant_text=self._model_text_buffer,
+                )
 
         # Handle turn completion
         if turn_complete:
             await self._handle_turn_complete()
+
+    async def _maybe_arm_cleanup_after_tts(self, *, user_text: str, assistant_text: str) -> None:
+        """
+        Gemini Live tool calling is model-driven (AUTO) and may not emit a `toolCall` even when it
+        speaks a farewell. To keep call teardown reliable, detect obvious end-of-call turns and set
+        `cleanup_after_tts=True` so the engine hangs up after audio playback completes.
+        """
+        if not self._call_id:
+            return
+        session_store = getattr(self, "_session_store", None)
+        if not session_store:
+            return
+
+        if self._hangup_fallback_armed:
+            return
+
+        user_reason = self._detect_user_end_intent(user_text) or self._user_end_intent
+        if not user_reason:
+            return
+        assistant_reason = self._detect_assistant_farewell(assistant_text) or self._assistant_farewell_intent
+
+        # "No transcript" and explicit hangup intents are strong indicators that the call is ending,
+        # even if output transcription is missing or the model doesn't include a canonical "goodbye".
+        strong_user_markers = {
+            "no transcript",
+            "no transcript needed",
+            "don't send a transcript",
+            "do not send a transcript",
+            "no need for a transcript",
+            "hang up",
+            "hangup",
+            "end the call",
+            "end call",
+            "goodbye",
+            "bye",
+        }
+        if user_reason not in strong_user_markers and not assistant_reason:
+            return
+
+        try:
+            session = await session_store.get_by_call_id(self._call_id)
+            if not session:
+                return
+            if getattr(session, "cleanup_after_tts", False):
+                return
+            session.cleanup_after_tts = True
+            await session_store.upsert_call(session)
+            self._hangup_fallback_armed = True
+            self._hangup_fallback_armed_at = time.monotonic()
+            self._hangup_fallback_audio_started = False
+            await self._ensure_hangup_fallback_watchdog()
+            logger.info(
+                "🔚 Armed cleanup_after_tts fallback (no toolCall required)",
+                call_id=self._call_id,
+                user_reason=user_reason,
+                assistant_reason=assistant_reason,
+                user_hint=(user_text or "")[:120],
+                assistant_hint=(assistant_text or "")[:120],
+            )
+        except Exception as e:
+            logger.debug(
+                "Failed to arm cleanup_after_tts fallback",
+                call_id=self._call_id,
+                error=str(e),
+                exc_info=True,
+            )
 
     async def _handle_audio_output(self, audio_b64: str) -> None:
         """
@@ -774,6 +1125,9 @@ class GoogleLiveProvider(AIProviderInterface):
             audio_b64: Base64-encoded PCM16 audio (at output_sample_rate_hz from config)
         """
         try:
+            self._last_audio_out_monotonic = time.monotonic()
+            if self._hangup_fallback_armed:
+                self._hangup_fallback_audio_started = True
             # Decode base64
             pcm16_provider = base64.b64decode(audio_b64)
             
@@ -859,6 +1213,10 @@ class GoogleLiveProvider(AIProviderInterface):
                         "streaming_done": True,
                     }
                 )
+            # If we armed cleanup_after_tts, the engine will handle hangup on AgentAudioDone.
+            # Prevent the watchdog from emitting duplicate HangupReady events.
+            if self._hangup_fallback_armed:
+                self._hangup_fallback_emitted = True
 
         # Mark greeting as complete after first turn
         if not self._greeting_completed:
@@ -893,6 +1251,8 @@ class GoogleLiveProvider(AIProviderInterface):
             
             # Reset hangup flag
             self._hangup_after_response = False
+            # Stop the watchdog from double-firing.
+            self._hangup_fallback_emitted = True
 
     async def _handle_tool_call(self, data: Dict[str, Any]) -> None:
         """Handle toolCall message."""
@@ -951,6 +1311,12 @@ class GoogleLiveProvider(AIProviderInterface):
                 if func_name == "hangup_call" and result:
                     if result.get("will_hangup"):
                         self._hangup_after_response = True
+                        # Also arm the provider-side watchdog as a safety net if turnComplete never arrives.
+                        if not self._hangup_fallback_armed:
+                            self._hangup_fallback_armed = True
+                            self._hangup_fallback_armed_at = time.monotonic()
+                            self._hangup_fallback_audio_started = False
+                            await self._ensure_hangup_fallback_watchdog()
                         logger.info(
                             "🔚 Hangup tool executed - next response will trigger hangup",
                             call_id=self._call_id
@@ -1007,6 +1373,22 @@ class GoogleLiveProvider(AIProviderInterface):
                 error=str(e),
                 exc_info=True,
             )
+
+    async def _handle_tool_call_cancellation(self, data: Dict[str, Any]) -> None:
+        """Handle toolCallCancellation message (server canceled one or more pending tool calls)."""
+        cancellation = data.get("toolCallCancellation") or {}
+        ids = (
+            cancellation.get("ids")
+            or cancellation.get("functionCallIds")
+            or cancellation.get("toolCallIds")
+            or cancellation.get("callIds")
+        )
+        logger.warning(
+            "Google Live tool call cancellation",
+            call_id=self._call_id,
+            ids=ids,
+            cancellation_keys=list(cancellation.keys()) if isinstance(cancellation, dict) else None,
+        )
 
     async def _track_conversation_message(self, role: str, text: str) -> None:
         """
@@ -1067,12 +1449,21 @@ class GoogleLiveProvider(AIProviderInterface):
 
     async def _keepalive_loop(self) -> None:
         """Send periodic keepalive messages."""
-        while self.websocket and self.websocket.state.name == "OPEN":
+        while self._ws_is_open():
             try:
                 await asyncio.sleep(_KEEPALIVE_INTERVAL_SEC)
-                # Send empty realtime input as keepalive (camelCase)
-                if self._setup_complete:
-                    await self._send_message({"realtimeInput": {}})
+                # Use WebSocket ping frames (protocol-level) rather than undocumented API messages.
+                # The Live API docs require `realtimeInput` messages to have a valid payload; sending
+                # `{ "realtimeInput": {} }` can be treated as an unsupported operation (observed as
+                # 1008 close + 501 NotImplemented in dashboards).
+                if self._setup_complete and self.websocket:
+                    ping = getattr(self.websocket, "ping", None)
+                    if callable(ping):
+                        pong_waiter = ping()
+                        if asyncio.iscoroutine(pong_waiter):
+                            pong_waiter = await pong_waiter
+                        if pong_waiter is not None:
+                            await asyncio.wait_for(pong_waiter, timeout=5.0)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1116,6 +1507,11 @@ class GoogleLiveProvider(AIProviderInterface):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._keepalive_task
 
+        if self._hangup_fallback_task and not self._hangup_fallback_task.done():
+            self._hangup_fallback_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._hangup_fallback_task
+
         # Close WebSocket
         if self.websocket and self.websocket.state.name == "OPEN":
             await self.websocket.close()
@@ -1127,6 +1523,17 @@ class GoogleLiveProvider(AIProviderInterface):
         self._setup_complete = False
         self._input_buffer.clear()  # Clear audio buffer
         self._conversation_history.clear()
+        self._hangup_after_response = False
+        self._hangup_fallback_armed = False
+        self._hangup_fallback_emitted = False
+        self._hangup_fallback_armed_at = None
+        self._hangup_fallback_audio_started = False
+        self._last_audio_out_monotonic = None
+        self._user_end_intent = None
+        self._assistant_farewell_intent = None
+        self._model_text_buffer = ""
+        self._input_transcription_buffer = ""
+        self._output_transcription_buffer = ""
 
         if self._session_start_time:
             duration = time.time() - self._session_start_time

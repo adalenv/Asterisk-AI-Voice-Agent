@@ -17,7 +17,7 @@ contexts:
   default:
     greeting: Hello
     profile: telephony_ulaw_8k
-    prompt: You are Asterisk, a Assistant. Be helpful and concise.
+    prompt: You are Asterisk, an AI Assistant. Be helpful and concise.
     provider: local
   demo_deepgram:
     greeting: >-
@@ -29,7 +29,7 @@ contexts:
       configuration.
 
 
-      ABOUT ASTERISK AI VOICE AGENT v4.5.2:
+      ABOUT ASTERISK AI VOICE AGENT v5.0:
 
       - Open-source (MIT), production-ready AI voice agent for Asterisk/FreePBX
 
@@ -42,7 +42,7 @@ contexts:
       - Full Demo Video: youtube.com/watch?v=ZGrr9-Q85xA
 
 
-      6 PRODUCTION CONFIGURATIONS WITH PRICING:
+      5 GOLDEN BASELINES + FULLY LOCAL OPTION:
 
       1. Google Gemini Live - Fastest response under 1 second, multilingual, about 2.5 cents per minute
 
@@ -143,7 +143,7 @@ contexts:
       - If the caller switches languages, switch with them naturally
 
 
-      ABOUT ASTERISK AI VOICE AGENT v4.5.2:
+      ABOUT ASTERISK AI VOICE AGENT v5.0:
 
       - Open-source (MIT), production-ready AI voice agent for Asterisk/FreePBX
 
@@ -156,7 +156,7 @@ contexts:
       - Full Demo Video: youtube.com/watch?v=ZGrr9-Q85xA
 
 
-      6 PRODUCTION CONFIGURATIONS WITH PRICING:
+      5 GOLDEN BASELINES + FULLY LOCAL OPTION:
 
       1. Google Gemini Live - Fastest response under 1 second, multilingual, about 2.5 cents per minute
 
@@ -327,7 +327,7 @@ contexts:
       configuration.
 
 
-      ABOUT ASTERISK AI VOICE AGENT v4.5.2:
+      ABOUT ASTERISK AI VOICE AGENT v5.0:
 
       - Open-source (MIT), production-ready AI voice agent for Asterisk/FreePBX
 
@@ -340,7 +340,7 @@ contexts:
       - Full Demo Video: youtube.com/watch?v=ZGrr9-Q85xA
 
 
-      6 PRODUCTION CONFIGURATIONS WITH PRICING:
+      5 GOLDEN BASELINES + FULLY LOCAL OPTION:
 
       1. Google Gemini Live - Fastest response under 1 second, multilingual, about 2.5 cents per minute
 
@@ -492,7 +492,7 @@ contexts:
       configuration.
 
 
-      ABOUT ASTERISK AI VOICE AGENT v4.5.2:
+      ABOUT ASTERISK AI VOICE AGENT v5.0:
 
       - Open-source (MIT), production-ready AI voice agent for Asterisk/FreePBX
 
@@ -505,7 +505,7 @@ contexts:
       - Full Demo Video: youtube.com/watch?v=ZGrr9-Q85xA
 
 
-      6 PRODUCTION CONFIGURATIONS WITH PRICING:
+      5 GOLDEN BASELINES + FULLY LOCAL OPTION:
 
       1. Google Gemini Live - Fastest response under 1 second, multilingual, about 2.5 cents per minute
 
@@ -599,7 +599,7 @@ contexts:
       premium voice quality.
 
 
-      ABOUT ASTERISK AI VOICE AGENT v4.5.2:
+      ABOUT ASTERISK AI VOICE AGENT v5.0:
 
       - Open-source (MIT), production-ready AI voice agent for Asterisk/FreePBX
 
@@ -612,7 +612,7 @@ contexts:
       - Full Demo Video: youtube.com/watch?v=ZGrr9-Q85xA
 
 
-      6 PRODUCTION CONFIGURATIONS WITH PRICING:
+      5 GOLDEN BASELINES + FULLY LOCAL OPTION:
 
       1. Google Gemini Live - Fastest response under 1 second, multilingual, about 2.5 cents per minute
 
@@ -685,7 +685,7 @@ contexts:
 
       - If yes, use request_transcript tool to get their email
 
-      - Then confirm if there is anything else, and use hangup_call tool with a warm farewell
+      - Then confirm if there is anything else, if not then use hangup_call tool with a warm farewell to end the call.
     provider: elevenlabs_agent
     tools:
       - transfer
@@ -874,7 +874,7 @@ pipelines:
     stt: local_stt
     tts: local_tts
 profiles:
-  default: telephony_responsive
+  default: telephony_ulaw_8k
   openai_realtime_24k:
     chunk_ms: 20
     idle_cutoff_ms: 0
@@ -974,6 +974,8 @@ providers:
     tts_voice_name: Aoede
     type: full
   local:
+    # Local AI Server WebSocket URL. Default deployment uses host networking, so 127.0.0.1 is correct.
+    # If you run containers on a user-defined bridge network (no host networking), use ws://local_ai_server:8765.
     base_url: ${LOCAL_WS_URL:-ws://127.0.0.1:8765}
     auth_token: ${LOCAL_WS_AUTH_TOKEN:-}
     capabilities:
@@ -1006,6 +1008,7 @@ providers:
     max_tokens: 32
     temperature: 0.4
     type: local
+    # Uses LOCAL_WS_URL (see providers.local.base_url note above).
     ws_url: ${LOCAL_WS_URL:-ws://127.0.0.1:8765}
   local_stt:
     auth_token: ${LOCAL_WS_AUTH_TOKEN:-}
@@ -1018,6 +1021,7 @@ providers:
     stt_backend: vosk
     stt_model: models/stt/vosk-model-en-us-0.22
     type: local
+    # Uses LOCAL_WS_URL (see providers.local.base_url note above).
     ws_url: ${LOCAL_WS_URL:-ws://127.0.0.1:8765}
   local_tts:
     auth_token: ${LOCAL_WS_AUTH_TOKEN:-}
@@ -1027,6 +1031,7 @@ providers:
     response_timeout_sec: ${LOCAL_WS_RESPONSE_TIMEOUT:=10.0}
     tts_voice: models/tts/en_US-lessac-medium.onnx
     type: local
+    # Uses LOCAL_WS_URL (see providers.local.base_url note above).
     ws_url: ${LOCAL_WS_URL:-ws://127.0.0.1:8765}
   openai_llm:
     capabilities:

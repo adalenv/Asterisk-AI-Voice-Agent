@@ -100,7 +100,15 @@ const EnvPage = () => {
 
         setSaving(true);
         try {
-            const response = await axios.post('/api/config/env', env, {
+            const envToSave = { ...env };
+            // If file logging is enabled, ensure LOG_FILE_PATH is persisted (UI shows a recommended default).
+            const logToFile = (envToSave['LOG_TO_FILE'] || '').toLowerCase();
+            const logEnabled = logToFile === '1' || logToFile === 'true' || logToFile === 'on' || logToFile === 'yes';
+            if (logEnabled && !(envToSave['LOG_FILE_PATH'] || '').trim()) {
+                envToSave['LOG_FILE_PATH'] = '/mnt/asterisk_media/ai-engine.log';
+            }
+
+            const response = await axios.post('/api/config/env', envToSave, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             const plan = (response.data?.apply_plan || []) as Array<{ service: string; method: string; endpoint: string }>;
@@ -256,6 +264,7 @@ const EnvPage = () => {
 	        'STREAMING_LOG_LEVEL', 'LOG_TO_FILE', 'LOG_FILE_PATH',
 	        'LOCAL_WS_URL', 'LOCAL_WS_CONNECT_TIMEOUT', 'LOCAL_WS_RESPONSE_TIMEOUT', 'LOCAL_WS_CHUNK_MS',
 	        'LOCAL_WS_HOST', 'LOCAL_WS_PORT', 'LOCAL_WS_AUTH_TOKEN',
+            'TZ',
 	        // STT backends
 	        'LOCAL_STT_BACKEND', 'LOCAL_STT_MODEL_PATH',
         'KROKO_URL', 'KROKO_API_KEY', 'KROKO_LANGUAGE', 'KROKO_EMBEDDED', 'KROKO_MODEL_PATH', 'KROKO_PORT',
@@ -280,6 +289,15 @@ const EnvPage = () => {
         const v = val.toLowerCase();
         return v === 'true' || v === '1' || v === 'on' || v === 'yes';
     };
+
+    const logFilePath = (env['LOG_FILE_PATH'] || '').trim();
+    const defaultContainerMediaPrefix = '/mnt/asterisk_media/';
+    const hostLogPathHint = logFilePath.startsWith(defaultContainerMediaPrefix)
+        ? `./asterisk_media/${logFilePath.slice(defaultContainerMediaPrefix.length)}`
+        : './asterisk_media/ai-engine.log';
+    const logFilePathTooltip = logFilePath.startsWith(defaultContainerMediaPrefix) || !logFilePath
+        ? `This is a path inside the ai_engine container. With the default docker-compose mount (./asterisk_media → /mnt/asterisk_media), the host file is ${hostLogPathHint}. You can confirm mounts in Admin → Docker Services.`
+        : 'This is a path inside the ai_engine container. To find the host file location, confirm the ai_engine mounts in Admin → Docker Services.';
 
     return (
         <div className="space-y-6">
@@ -477,6 +495,20 @@ const EnvPage = () => {
                 </ConfigCard>
             </ConfigSection>
 
+            <ConfigSection title="Time Zone" description="Timezone used for timestamps and scheduling.">
+                <ConfigCard>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <FormInput
+                            label="TZ"
+                            tooltip="IANA timezone name used inside containers (e.g., America/Phoenix). Leave empty to use UTC. Requires restart to take effect."
+                            value={env['TZ'] || ''}
+                            onChange={(e) => updateEnv('TZ', e.target.value)}
+                            placeholder="America/Phoenix"
+                        />
+                    </div>
+                </ConfigCard>
+            </ConfigSection>
+
             {/* Logging Section */}
             <ConfigSection title="Logging" description="System logging configuration.">
                 <ConfigCard>
@@ -518,20 +550,31 @@ const EnvPage = () => {
                                 { value: 'never', label: 'Never' },
                             ]}
                         />
-                        <FormSwitch
-                            id="log-to-file"
-                            label="Log to File"
-                            description="Enable logging to file."
-                            checked={isTrue(env['LOG_TO_FILE'])}
-                            onChange={(e) => updateEnv('LOG_TO_FILE', e.target.checked ? '1' : '0')}
-                        />
-                        <div className="col-span-full">
-                            <FormInput
-                                label="Log File Path"
-                                value={env['LOG_FILE_PATH'] || '/mnt/asterisk_media/ai-engine.log'}
-                                onChange={(e) => updateEnv('LOG_FILE_PATH', e.target.value)}
-                            />
-                        </div>
+	                        <FormSwitch
+	                            id="log-to-file"
+	                            label="Log to File"
+	                            description="Enable logging to file."
+                                tooltip="Writes ai_engine logs to LOG_FILE_PATH (inside the container). If LOG_FILE_PATH is under /mnt/asterisk_media, the file is on the host under ./asterisk_media."
+	                            checked={isTrue(env['LOG_TO_FILE'])}
+	                            onChange={(e) => {
+	                                const enabled = e.target.checked;
+	                                updateEnv('LOG_TO_FILE', enabled ? '1' : '0');
+	                                // If the user enables file logging but LOG_FILE_PATH is not set,
+	                                // auto-populate the standard shared volume location so it persists into .env.
+	                                if (enabled && !(env['LOG_FILE_PATH'] || '').trim()) {
+	                                    updateEnv('LOG_FILE_PATH', '/mnt/asterisk_media/ai-engine.log');
+	                                }
+	                            }}
+	                        />
+	                        <div className="col-span-full">
+	                            <FormInput
+	                                label="Log File Path"
+                                    tooltip={logFilePathTooltip}
+	                                value={env['LOG_FILE_PATH'] || ''}
+	                                onChange={(e) => updateEnv('LOG_FILE_PATH', e.target.value)}
+	                                placeholder="/mnt/asterisk_media/ai-engine.log"
+	                            />
+	                        </div>
                     </div>
                 </ConfigCard>
             </ConfigSection>
@@ -685,13 +728,13 @@ const EnvPage = () => {
                         />
 
                         {/* Vosk Settings */}
-                        {(env['LOCAL_STT_BACKEND'] || 'vosk') === 'vosk' && (
-                            <FormInput
-                                label="Vosk Model Path"
-                                value={env['VOSK_MODEL_PATH'] || '/app/models/stt/vosk-model-en-us-0.22'}
-                                onChange={(e) => updateEnv('VOSK_MODEL_PATH', e.target.value)}
-                            />
-                        )}
+	                        {(env['LOCAL_STT_BACKEND'] || 'vosk') === 'vosk' && (
+	                            <FormInput
+	                                label="Vosk Model Path"
+	                                value={env['LOCAL_STT_MODEL_PATH'] || '/app/models/stt/vosk-model-en-us-0.22'}
+	                                onChange={(e) => updateEnv('LOCAL_STT_MODEL_PATH', e.target.value)}
+	                            />
+	                        )}
 
                         {/* Kroko Settings */}
                         {env['LOCAL_STT_BACKEND'] === 'kroko' && (
@@ -768,13 +811,13 @@ const EnvPage = () => {
                         />
 
                         {/* Piper Settings */}
-                        {(env['LOCAL_TTS_BACKEND'] || 'piper') === 'piper' && (
-                            <FormInput
-                                label="Piper Model Path"
-                                value={env['PIPER_MODEL_PATH'] || '/app/models/tts/en_US-lessac-medium.onnx'}
-                                onChange={(e) => updateEnv('PIPER_MODEL_PATH', e.target.value)}
-                            />
-                        )}
+	                        {(env['LOCAL_TTS_BACKEND'] || 'piper') === 'piper' && (
+	                            <FormInput
+	                                label="Piper Model Path"
+	                                value={env['LOCAL_TTS_MODEL_PATH'] || '/app/models/tts/en_US-lessac-medium.onnx'}
+	                                onChange={(e) => updateEnv('LOCAL_TTS_MODEL_PATH', e.target.value)}
+	                            />
+	                        )}
 
 	                        {/* Kokoro Settings */}
 	                        {env['LOCAL_TTS_BACKEND'] === 'kokoro' && (
@@ -852,12 +895,12 @@ const EnvPage = () => {
                     <h3 className="text-sm font-semibold text-muted-foreground mb-4">LLM (Large Language Model)</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="col-span-full">
-                            <FormInput
-                                label="LLM Model Path"
-                                value={env['LOCAL_LLM_MODEL'] || '/app/models/llm/phi-3-mini-4k-instruct.Q4_K_M.gguf'}
-                                onChange={(e) => updateEnv('LOCAL_LLM_MODEL', e.target.value)}
-                            />
-                        </div>
+	                            <FormInput
+	                                label="LLM Model Path"
+	                                value={env['LOCAL_LLM_MODEL_PATH'] || '/app/models/llm/phi-3-mini-4k-instruct.Q4_K_M.gguf'}
+	                                onChange={(e) => updateEnv('LOCAL_LLM_MODEL_PATH', e.target.value)}
+	                            />
+	                        </div>
                         <FormInput
                             label="Context Size"
                             type="number"

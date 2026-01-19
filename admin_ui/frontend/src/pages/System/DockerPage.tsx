@@ -3,6 +3,7 @@ import { Container, RefreshCw, AlertCircle, Clock, CheckCircle2, XCircle, HardDr
 import { ConfigSection } from '../../components/ui/ConfigSection';
 import { ConfigCard } from '../../components/ui/ConfigCard';
 import axios from 'axios';
+import { ApiErrorInfo, buildDockerAccessHints, describeApiError } from '../../utils/apiErrors';
 
 interface ContainerInfo {
     id: string;
@@ -13,6 +14,18 @@ interface ContainerInfo {
     uptime?: string;
     started_at?: string;
     ports?: string[];
+    mounts?: MountInfo[];
+}
+
+interface MountInfo {
+    type?: string;
+    source?: string;
+    destination?: string;
+    rw?: boolean;
+    mode?: string;
+    propagation?: string;
+    name?: string;
+    driver?: string;
 }
 
 interface DiskUsage {
@@ -31,12 +44,25 @@ interface Toast {
 const DockerPage = () => {
     const [containers, setContainers] = useState<ContainerInfo[]>([]);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<ApiErrorInfo | null>(null);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [toasts, setToasts] = useState<Toast[]>([]);
     const [diskUsage, setDiskUsage] = useState<DiskUsage | null>(null);
     const [diskLoading, setDiskLoading] = useState(false);
     const [pruning, setPruning] = useState(false);
+    const [expandedMounts, setExpandedMounts] = useState<Record<string, boolean>>({});
+
+    const mountSourceLabel = (m: MountInfo) => {
+        if ((m.type || '').toLowerCase() === 'volume') {
+            return m.name ? `volume:${m.name}` : (m.source || 'volume');
+        }
+        return m.source || m.name || '';
+    };
+
+    const isInterestingMount = (m: MountInfo) => {
+        const dest = (m.destination || '').toLowerCase();
+        return dest.includes('asterisk_media') || dest.includes('data') || dest.includes('/mnt/');
+    };
 
     const showToast = (message: string, type: 'success' | 'error' | 'warning') => {
         const id = Date.now();
@@ -96,8 +122,9 @@ const DockerPage = () => {
             const res = await axios.get('/api/system/containers');
             setContainers(res.data);
         } catch (err: any) {
-            console.error('Failed to fetch containers', err);
-            setError('Failed to load container status. Ensure Docker is running and the backend has access.');
+            const info = describeApiError(err, '/api/system/containers');
+            console.error('Failed to fetch containers', info);
+            setError(info);
         } finally {
             setLoading(false);
         }
@@ -156,7 +183,21 @@ const DockerPage = () => {
             {error && (
                 <div className="bg-destructive/10 border border-destructive/20 text-destructive p-4 rounded-md flex items-center">
                     <AlertCircle className="w-5 h-5 mr-2" />
-                    {error}
+                    <div className="min-w-0">
+                        <div className="font-medium">Unable to load container status</div>
+                        <div className="text-sm text-muted-foreground break-words">
+                            {error.status ? `HTTP ${error.status}` : error.kind}
+                            {error.detail ? ` - ${error.detail}` : ''}
+                        </div>
+                        <details className="mt-2 text-sm text-muted-foreground">
+                            <summary className="cursor-pointer hover:text-foreground">Troubleshooting steps</summary>
+                            <ul className="list-disc pl-5 mt-2 space-y-1">
+                                {buildDockerAccessHints(error).map((h, idx) => (
+                                    <li key={idx}>{h}</li>
+                                ))}
+                            </ul>
+                        </details>
+                    </div>
                 </div>
             )}
 
@@ -270,6 +311,12 @@ const DockerPage = () => {
                         containers.map(container => {
                             const containerName = container.name.replace(/^\//, '');
                             const isRestarting = actionLoading === containerName;
+                            const mounts = container.mounts || [];
+                            const expanded = !!expandedMounts[container.id];
+                            const filtered = mounts.filter(isInterestingMount);
+                            const collapsed = (filtered.length > 0 ? filtered : mounts).slice(0, 2);
+                            const mountsToShow = expanded ? mounts : collapsed;
+                            const canToggleMounts = mounts.length > collapsed.length;
                             
                             return (
                                 <ConfigCard key={container.id} className="p-4">
@@ -325,6 +372,56 @@ const DockerPage = () => {
                                             </button>
                                         </div>
                                     </div>
+
+                                    {mounts.length > 0 && (
+                                        <div className="mt-3 pt-3 border-t">
+                                            <div className="flex items-center justify-between">
+                                                <div className="text-xs font-medium text-muted-foreground">Mounts</div>
+                                                {canToggleMounts && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setExpandedMounts(prev => ({ ...prev, [container.id]: !expanded }))}
+                                                        className="text-xs text-primary hover:underline"
+                                                    >
+                                                        {expanded ? 'Hide' : `Show all (${mounts.length})`}
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <div className="mt-2 space-y-1">
+                                                {mountsToShow.map((m, idx) => {
+                                                    const dest = m.destination || '';
+                                                    const src = mountSourceLabel(m) || '<unknown>';
+                                                    const mode = m.rw === false ? 'ro' : 'rw';
+                                                    const isMedia = dest.includes('/mnt/asterisk_media') || dest.toLowerCase().includes('asterisk_media');
+
+                                                    return (
+                                                        <div
+                                                            key={`${container.id}-mount-${idx}`}
+                                                            className={`flex items-center justify-between gap-2 rounded border px-2 py-1 ${
+                                                                isMedia ? 'bg-blue-500/10 border-blue-500/20' : 'bg-muted/30 border-border'
+                                                            }`}
+                                                            title={`${src} → ${dest}`}
+                                                        >
+                                                            <div className="flex items-center gap-2 min-w-0">
+                                                                <span className="text-xs font-mono truncate">{src}</span>
+                                                                <span className="text-xs text-muted-foreground">→</span>
+                                                                <span className="text-xs font-mono truncate">{dest}</span>
+                                                            </div>
+                                                            <span className="text-[11px] text-muted-foreground flex-shrink-0">{mode}</span>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {!expanded && mounts.length > mountsToShow.length && (
+                                                    <div className="text-[11px] text-muted-foreground">
+                                                        +{mounts.length - mountsToShow.length} more (click “Show all”)
+                                                    </div>
+                                                )}
+                                                <div className="text-[11px] text-muted-foreground">
+                                                    Left is host path/volume, right is container path.
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
                                 </ConfigCard>
                             );
                         })

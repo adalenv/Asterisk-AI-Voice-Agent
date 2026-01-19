@@ -3,6 +3,7 @@ import axios from 'axios';
 import { RefreshCw, Pause, Play, Terminal } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { parseAnsi } from '../../utils/ansi';
+import { describeApiError } from '../../utils/apiErrors';
 
 type LogLevel = 'error' | 'warning' | 'info' | 'debug';
 type LogCategory = 'call' | 'provider' | 'audio' | 'transport' | 'vad' | 'tools' | 'config';
@@ -188,8 +189,16 @@ const LogsPage = () => {
             const res = await axios.get(`/api/logs/${container}`, { params });
             setLogs(res.data.logs);
         } catch (err: any) {
-            console.error("Failed to fetch logs", err);
-            setLogs(`Failed to fetch logs for ${container}. Ensure the container is running and backend can access Docker. Details: ${err?.message || err}`);
+            const info = describeApiError(err, `/api/logs/${container}`);
+            console.error("Failed to fetch logs", info);
+            setLogs(
+                `Failed to fetch logs for ${container}.\n` +
+                `${info.status ? `HTTP ${info.status}` : info.kind}${info.detail ? ` - ${info.detail}` : ''}\n\n` +
+                `Troubleshooting:\n` +
+                `- Check: docker compose -p asterisk-ai-voice-agent logs --tail=200 admin_ui\n` +
+                `- Check Docker socket access: ls -ln /var/run/docker.sock\n` +
+                `- If you changed .env or ran preflight, recreate admin_ui: docker compose -p asterisk-ai-voice-agent up -d --force-recreate admin_ui\n`
+            );
         } finally {
             setLoading(false);
         }
@@ -229,10 +238,14 @@ const LogsPage = () => {
             setEvents(res.data.events || []);
             setEventsMeta(res.data || null);
         } catch (err: any) {
-            console.error("Failed to fetch events", err);
+            const info = describeApiError(err, `/api/logs/${container}/events`);
+            console.error("Failed to fetch events", info);
             setEvents([]);
             setEventsMeta(null);
-            setLogs(`Failed to fetch log events for ${container}. Details: ${err?.message || err}`);
+            setLogs(
+                `Failed to fetch log events for ${container}.\n` +
+                `${info.status ? `HTTP ${info.status}` : info.kind}${info.detail ? ` - ${info.detail}` : ''}\n`
+            );
         } finally {
             setLoading(false);
         }

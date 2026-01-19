@@ -2,13 +2,13 @@
 
 # Asterisk AI Voice Agent
 
-![Version](https://img.shields.io/badge/version-5.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-5.1.4-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-compose-blue.svg)
 ![Asterisk](https://img.shields.io/badge/asterisk-18+-orange.svg)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/hkjarral/Asterisk-AI-Voice-Agent)
-[![Discord](https://dcbadge.limes.pink/api/server/GME7sy5b2w?style=plastic)](https://discord.gg/GME7sy5b2w)
+[![Discord](https://dcbadge.limes.pink/api/server/ysg8fphxUe?style=plastic)](https://discord.gg/ysg8fphxUe)
 
 The most powerful, flexible open-source AI voice agent for Asterisk/FreePBX. Featuring a **modular pipeline architecture** that lets you mix and match STT, LLM, and TTS providers, plus **5 production-ready golden baselines** validated for enterprise deployment.
 
@@ -21,7 +21,7 @@ The most powerful, flexible open-source AI voice agent for Asterisk/FreePBX. Fea
 ## 📖 Table of Contents
 
 - [🚀 Quick Start](#-quick-start)
-- [🎉 What's New](#-whats-new-in-v500)
+- [🎉 What's New](#-whats-new-in-v514)
 - [🌟 Why Asterisk AI Voice Agent?](#-why-asterisk-ai-voice-agent)
 - [✨ Features](#-features)
 - [🎥 Demo](#-demo)
@@ -107,10 +107,10 @@ For users who prefer the command line or need headless setup.
 ### Option A: Interactive CLI
 ```bash
 ./install.sh
-agent init
+agent setup
 ```
 
-> Note: `agent quickstart` is still available for backward compatibility, but `agent init` is the recommended CLI wizard for v5+.
+> Note: Legacy commands `agent init`, `agent doctor`, and `agent troubleshoot` remain available as hidden aliases in CLI v5.1.4.
 
 ### Option B: Manual Setup
 ```bash
@@ -126,7 +126,7 @@ docker compose up -d
 Add this to your FreePBX (`extensions_custom.conf`):
 ```asterisk
 [from-ai-agent]
-exten => s,1,NoOp(Asterisk AI Voice Agent v5.0.0)
+exten => s,1,NoOp(Asterisk AI Voice Agent v5.1.4)
  ; Optional per-call overrides:
  ; - AI_PROVIDER selects a provider/pipeline (otherwise uses default_provider from ai-agent.yaml)
  ; - AI_CONTEXT selects a context/persona (otherwise uses default context)
@@ -143,7 +143,7 @@ Notes:
 ### Test Your Agent
 **Health check:**
 ```bash
-agent doctor
+agent check
 ```
 
 **View logs:**
@@ -153,7 +153,7 @@ docker compose logs -f ai_engine
 
 ---
 
-## 🎉 What's New in v5.0.0
+## 🎉 What's New in v5.1.4
 
 <details open>
 <summary><b>Latest Updates</b></summary>
@@ -254,6 +254,13 @@ docker compose logs -f ai_engine
    - Config: `config/ai-agent.golden-local-hybrid.yaml`
    - *Best for: Audio privacy, cost control, compliance.*
 
+### Fully Local (Optional)
+
+AVA also supports a **Fully Local** mode (100% on-premises, no cloud APIs). This is **not** one of the golden baselines because performance depends heavily on your hardware (especially the local LLM).
+
+- See: `docs/LOCAL_ONLY_SETUP.md`
+- Hardware guidance: `docs/HARDWARE_REQUIREMENTS.md`
+
 ### 🏠 Self-Hosted LLM with Ollama (No API Key Required)
 
 Run your own local LLM using [Ollama](https://ollama.ai) - perfect for privacy-focused deployments:
@@ -287,9 +294,10 @@ active_pipeline: local_ollama
 ### Technical Features
 
 - **Tool Calling System**: AI-powered actions (transfers, emails) work with any provider.
-- **Agent CLI Tools**: `doctor`, `troubleshoot`, `demo`, `init` commands.
+- **Agent CLI Tools**: `setup`, `check`, `rca`, `update`, `version` commands (legacy aliases: `init`, `doctor`, `troubleshoot`).
 - **Modular Pipeline System**: Independent STT, LLM, and TTS provider selection.
-- **Dual Transport Support**: AudioSocket and ExternalMedia RTP (see Transport Compatibility matrix).
+- **Dual Transport Support**: AudioSocket and ExternalMedia RTP (the shipped default config uses ExternalMedia; both are supported — see the transport matrix).
+- **Streaming-First Downstream**: Streaming playback when possible, with automatic fallback to file playback for robustness.
 - **High-Performance Architecture**: Separate `ai_engine` and `local_ai_server` containers.
 - **Observability**: Built-in **Call History** for per-call debugging + optional `/metrics` scraping.
 - **State Management**: SessionStore for centralized, typed call state.
@@ -383,13 +391,11 @@ curl -sSL https://raw.githubusercontent.com/hkjarral/Asterisk-AI-Voice-Agent/mai
 
 **Commands:**
 ```bash
-agent init               # Interactive setup wizard (recommended)
-# agent quickstart        # Backward-compatible legacy wizard
-agent dialplan            # Generate dialplan snippets
-agent config validate     # Validate configuration
-agent doctor --fix        # System health check
-agent troubleshoot        # Analyze specific call
-agent demo                # Demo features
+agent setup               # Interactive setup wizard (recommended)
+agent check               # Standard diagnostics report (share this output when asking for help)
+agent update              # Pull latest code + rebuild/restart as needed
+agent rca --call <call_id> # Post-call RCA (use Call History to find call_id)
+agent version             # Version information
 ```
 
 ---
@@ -504,7 +510,7 @@ Contributions are welcome! Please see our [Contributing Guide](CONTRIBUTING.md).
 
 ## 💬 Community
 
-- **[Discord Server](https://discord.gg/GME7sy5b2w)** - Support and discussions
+- **[Discord Server](https://discord.gg/ysg8fphxUe)** - Support and discussions
 - [GitHub Issues](https://github.com/hkjarral/Asterisk-AI-Voice-Agent/issues) - Bug reports
 - [GitHub Discussions](https://github.com/hkjarral/Asterisk-AI-Voice-Agent/discussions) - General chat
 
@@ -516,9 +522,28 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ---
 
-## 🙏 Show Your Support
+## 💖 Support This Project
 
-If you find this project useful, please give it a ⭐️ on [GitHub](https://github.com/hkjarral/Asterisk-AI-Voice-Agent)!
+Asterisk AI Voice Agent is **free and open source**. If it's saving you money, consider supporting development:
+
+<p align="center">
+  <a href="https://github.com/sponsors/hkjarral">
+    <img src="https://img.shields.io/badge/Sponsor_on_GitHub-❤️-pink?logo=github&style=for-the-badge" alt="GitHub Sponsors">
+  </a>
+  <a href="https://ko-fi.com/asteriskaivoiceagent">
+    <img src="https://img.shields.io/badge/Buy_me_a_coffee-☕-yellow?logo=ko-fi&style=for-the-badge" alt="Ko-fi">
+  </a>
+  <a href="https://meetify.com/aava1">
+    <img src="https://img.shields.io/badge/Book_Consultation-📅-blue?style=for-the-badge" alt="Book Consultation">
+  </a>
+</p>
+
+Your support funds:
+- 🐛 Faster bug fixes and issue responses  
+- ✨ New provider integrations and features  
+- 📚 Better documentation and tutorials
+
+If you find this project useful, please also give it a ⭐️!
 
 ## Star History
 

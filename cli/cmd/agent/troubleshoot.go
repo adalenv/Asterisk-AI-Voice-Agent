@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/hkjarral/asterisk-ai-voice-agent/cli/internal/troubleshoot"
 	"github.com/spf13/cobra"
 )
@@ -12,11 +14,13 @@ var (
 	troubleshootCollectOnly bool
 	troubleshootNoLLM       bool
 	troubleshootList        bool
+	troubleshootJSON        bool
 )
 
 var troubleshootCmd = &cobra.Command{
-	Use:   "troubleshoot",
-	Short: "Post-call analysis and RCA",
+	Use:    "troubleshoot",
+	Short:  "Post-call analysis and RCA",
+	Hidden: true, // v5.0: prefer `agent rca`
 	Long: `Analyze call issues and provide root cause analysis.
 
 Usage Examples:
@@ -45,12 +49,12 @@ Features:
   - Actionable recommendations`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		verbose, _ := cmd.Flags().GetBool("verbose")
-		
+
 		// If --last flag is used, set callID to "last"
 		if cmd.Flags().Changed("last") || troubleshootCallID == "" {
 			troubleshootCallID = "last"
 		}
-		
+
 		runner := troubleshoot.NewRunner(
 			troubleshootCallID,
 			troubleshootSymptom,
@@ -58,9 +62,14 @@ Features:
 			troubleshootCollectOnly,
 			troubleshootNoLLM,
 			troubleshootList,
+			troubleshootJSON,
 			verbose,
 		)
-		return runner.Run()
+		err := runner.Run()
+		if troubleshootJSON && err != nil {
+			os.Exit(1)
+		}
+		return err
 	},
 }
 
@@ -72,6 +81,7 @@ func init() {
 	troubleshootCmd.Flags().BoolVarP(&troubleshootInteractive, "interactive", "i", false, "interactive mode")
 	troubleshootCmd.Flags().BoolVar(&troubleshootCollectOnly, "collect-only", false, "only collect logs, no analysis")
 	troubleshootCmd.Flags().BoolVar(&troubleshootNoLLM, "no-llm", false, "skip LLM analysis")
-	
+	troubleshootCmd.Flags().BoolVar(&troubleshootJSON, "json", false, "output as JSON (JSON only)")
+
 	rootCmd.AddCommand(troubleshootCmd)
 }

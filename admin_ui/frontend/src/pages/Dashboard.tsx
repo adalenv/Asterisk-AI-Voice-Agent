@@ -3,6 +3,7 @@ import { Activity, Cpu, HardDrive, RefreshCw, FolderCheck, AlertTriangle, CheckC
 import axios from 'axios';
 import { HealthWidget } from '../components/HealthWidget';
 import { SystemStatus } from '../components/SystemStatus';
+import { ApiErrorInfo, buildDockerAccessHints, describeApiError } from '../utils/apiErrors';
 
 interface Container {
     id: string;
@@ -52,29 +53,45 @@ const Dashboard = () => {
     const [refreshing, setRefreshing] = useState(false);
     const [fixingDirectories, setFixingDirectories] = useState(false);
 
-    const [error, setError] = useState<string | null>(null);
-    const [errorDetails, setErrorDetails] = useState<string | null>(null);
+    const [containersError, setContainersError] = useState<ApiErrorInfo | null>(null);
+    const [metricsError, setMetricsError] = useState<ApiErrorInfo | null>(null);
 
     const fetchData = async () => {
-        try {
-            setError(null);
-            setErrorDetails(null);
-            const [containersRes, metricsRes, dirHealthRes] = await Promise.all([
-                axios.get('/api/system/containers'),
-                axios.get('/api/system/metrics'),
-                axios.get('/api/system/directories').catch(() => ({ data: null }))
-            ]);
-            setContainers(containersRes.data);
-            setMetrics(metricsRes.data);
-            setDirectoryHealth(dirHealthRes.data);
-        } catch (err: any) {
-            console.error('Failed to fetch dashboard data:', err);
-            setError('Failed to connect to backend system API. Ensure the backend is running and Docker socket is reachable.');
-            setErrorDetails(err?.message || JSON.stringify(err));
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
+        setContainersError(null);
+        setMetricsError(null);
+
+        const results = await Promise.allSettled([
+            axios.get('/api/system/containers'),
+            axios.get('/api/system/metrics'),
+            axios.get('/api/system/directories'),
+        ]);
+
+        const [containersRes, metricsRes, dirHealthRes] = results;
+
+        if (containersRes.status === 'fulfilled') {
+            setContainers(containersRes.value.data);
+        } else {
+            const info = describeApiError(containersRes.reason, '/api/system/containers');
+            console.error('Failed to fetch containers:', info);
+            setContainersError(info);
         }
+
+        if (metricsRes.status === 'fulfilled') {
+            setMetrics(metricsRes.value.data);
+        } else {
+            const info = describeApiError(metricsRes.reason, '/api/system/metrics');
+            console.error('Failed to fetch metrics:', info);
+            setMetricsError(info);
+        }
+
+        if (dirHealthRes.status === 'fulfilled') {
+            setDirectoryHealth(dirHealthRes.value.data);
+        } else {
+            setDirectoryHealth(null);
+        }
+
+        setLoading(false);
+        setRefreshing(false);
     };
 
     const handleFixDirectories = async () => {
@@ -213,25 +230,6 @@ const Dashboard = () => {
         );
     }
 
-    if (error) {
-        return (
-            <div className="flex flex-col items-center justify-center h-full space-y-4">
-                <div className="text-destructive text-center max-w-xl">
-                    <h2 className="text-xl font-bold mb-2">Error Loading Dashboard</h2>
-                    <p className="mb-2">{error}</p>
-                    {errorDetails && <p className="text-xs text-muted-foreground break-all">Details: {errorDetails}</p>}
-                    <p className="text-sm text-muted-foreground">If running locally, ensure Docker is running and that admin-ui can access /var/run/docker.sock.</p>
-                </div>
-                <button
-                    onClick={() => { setError(null); setErrorDetails(null); setLoading(true); fetchData(); }}
-                    className="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                    Retry
-                </button>
-            </div>
-        );
-    }
-
     return (
         <div className="space-y-8">
             <div className="flex justify-between items-center">
@@ -244,6 +242,67 @@ const Dashboard = () => {
                     <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
                 </button>
             </div>
+
+            {(containersError || metricsError) && (
+                <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                            <div className="text-sm font-semibold text-destructive">Some system data could not be loaded</div>
+                            <div className="mt-1 text-sm text-muted-foreground">
+                                This usually means the Admin UI backend cannot access the Docker daemon (docker socket mount/GID mismatch), or the backend is still starting.
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => { setRefreshing(true); fetchData(); }}
+                            className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 text-sm"
+                            disabled={refreshing}
+                        >
+                            Retry
+                        </button>
+                    </div>
+
+                    <div className="mt-3 space-y-2 text-sm">
+                        {containersError && (
+                            <div className="break-words">
+                                <span className="font-medium">Containers:</span>{' '}
+                                <span className="text-muted-foreground">
+                                    {containersError.status ? `HTTP ${containersError.status}` : containersError.kind}{' '}
+                                    {containersError.detail ? `- ${containersError.detail}` : ''}
+                                </span>
+                            </div>
+                        )}
+                        {metricsError && (
+                            <div className="break-words">
+                                <span className="font-medium">Metrics:</span>{' '}
+                                <span className="text-muted-foreground">
+                                    {metricsError.status ? `HTTP ${metricsError.status}` : metricsError.kind}{' '}
+                                    {metricsError.detail ? `- ${metricsError.detail}` : ''}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+
+                    <details className="mt-3">
+                        <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
+                            Troubleshooting steps (copy/paste)
+                        </summary>
+                        <div className="mt-2 space-y-2 text-sm">
+                            <ul className="list-disc pl-5 space-y-1">
+                                {(buildDockerAccessHints(containersError || metricsError!) || []).map((h, idx) => (
+                                    <li key={idx}>{h}</li>
+                                ))}
+                            </ul>
+                            <div className="rounded-md bg-muted p-3 font-mono text-xs overflow-auto">
+                                docker compose -p asterisk-ai-voice-agent ps{'\n'}
+                                docker compose -p asterisk-ai-voice-agent logs --tail=200 admin_ui{'\n'}
+                                ls -ln /var/run/docker.sock{'\n'}
+                                grep -E '^(DOCKER_SOCK|DOCKER_GID)=' .env || true{'\n'}
+                                docker compose -p asterisk-ai-voice-agent up -d --force-recreate admin_ui
+                            </div>
+                        </div>
+                    </details>
+                </div>
+            )}
 
             {/* Health Widget */}
             <HealthWidget />

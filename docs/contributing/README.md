@@ -59,15 +59,16 @@ Technical specs for each provider:
 1. Fork and clone the repository
 2. Create a feature branch from `develop`
 3. Make changes following our code style
-4. Test with real calls using `agent troubleshoot`
+4. Test with real calls using `agent rca`
 5. Submit PR with testing evidence
 
 ### Using Agent CLI
 
 ```bash
-agent doctor           # System health check
-agent troubleshoot     # Debug last call
-agent config validate  # Validate configuration
+agent check           # Standard diagnostics report
+agent rca             # Post-call root cause analysis (most recent call)
+agent setup           # Interactive setup wizard (if needed)
+agent update          # Pull latest code + apply updates
 ```
 
 See [cli/README.md](../../cli/README.md) for complete CLI reference.
@@ -99,7 +100,7 @@ For end-user and operator documentation, see the parent [/docs](../) directory:
 
 ## 🆘 Getting Help
 
-- **Join our Discord:** [https://discord.gg/GME7sy5b2w](https://discord.gg/GME7sy5b2w) - Community support and discussions
+- **Join our Discord:** [https://discord.gg/ysg8fphxUe](https://discord.gg/ysg8fphxUe) - Community support and discussions
 - **Stuck on something?** Check [Common Pitfalls](COMMON_PITFALLS.md)
 - **Architecture questions?** See [Architecture Deep Dive](architecture-deep-dive.md)
 - **Tool issues?** See [Tool Development](tool-development.md)

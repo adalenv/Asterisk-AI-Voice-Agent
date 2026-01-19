@@ -6,10 +6,37 @@ import psutil
 import os
 import shutil
 import logging
+import re
+import subprocess
 import yaml
 from services.fs import upsert_env_vars
 
 logger = logging.getLogger(__name__)
+
+def _extract_mounts(container) -> List[dict]:
+    """
+    Normalize Docker mount info into a stable, UI-friendly shape.
+    Returns a list of dicts with snake_case keys.
+    """
+    mounts: List[dict] = []
+    try:
+        raw_mounts = container.attrs.get("Mounts", []) or []
+        for m in raw_mounts:
+            mounts.append(
+                {
+                    "type": m.get("Type"),
+                    "source": m.get("Source"),
+                    "destination": m.get("Destination"),
+                    "rw": m.get("RW"),
+                    "mode": m.get("Mode"),
+                    "propagation": m.get("Propagation"),
+                    "name": m.get("Name"),
+                    "driver": m.get("Driver"),
+                }
+            )
+    except Exception as e:
+        logger.debug("Error extracting mounts for %s: %s", getattr(container, "name", "<unknown>"), e)
+    return mounts
 
 
 def _dotenv_value(key: str) -> Optional[str]:
@@ -175,7 +202,8 @@ async def get_containers():
                 "state": c.attrs['State']['Status'],
                 "uptime": uptime,
                 "started_at": started_at,
-                "ports": ports
+                "ports": ports,
+                "mounts": _extract_mounts(c),
             })
         return result
     except Exception as e:
@@ -228,32 +256,74 @@ async def start_container(container_id: str):
     logger.info("Starting %s from %s", _sanitize_for_log(service_name), _sanitize_for_log(project_root))
     
     try:
-        # Use docker compose with --build to ensure image exists
         compose_cmd = get_docker_compose_cmd()
+
+        if service_name == "local_ai_server":
+            # Fast path: start without build if the image is already present.
+            cmd_no_build = compose_cmd + ["-p", "asterisk-ai-voice-agent", "up", "-d", "--no-build", service_name]
+            result = subprocess.run(
+                cmd_no_build,
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode == 0:
+                return {"status": "success", "output": result.stdout or "Container started"}
+
+            stderr = (result.stderr or result.stdout or "").strip()
+            needs_build_markers = [
+                "No such image",
+                "pull access denied",
+                "failed to solve",
+                "unable to find image",
+                "requires build",
+            ]
+            if any(m.lower() in stderr.lower() for m in needs_build_markers):
+                # Slow path: build may take many minutes. Run it in background and write output to a file.
+                log_path = os.path.join(project_root, "logs", "local_ai_server_start.log")
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                logf = open(log_path, "a")
+                logf.write("\n\n=== local_ai_server start (dashboard) ===\n")
+                logf.flush()
+
+                cmd_build = compose_cmd + ["-p", "asterisk-ai-voice-agent", "up", "-d", "--build", service_name]
+                subprocess.Popen(
+                    cmd_build,
+                    cwd=project_root,
+                    stdout=logf,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                return {
+                    "status": "starting",
+                    "output": f"Local AI Server build/start initiated in background; this can take several minutes. See {log_path} or container logs once created.",
+                }
+
+            raise HTTPException(status_code=500, detail=f"Failed to start: {stderr or 'Unknown error'}")
+
+        # Use docker compose with --build to ensure image exists
         cmd = compose_cmd + ["-p", "asterisk-ai-voice-agent", "up", "-d", "--build", service_name]
-        
+
         result = subprocess.run(
             cmd,
             cwd=project_root,
             capture_output=True,
             text=True,
-            timeout=300  # 5 min timeout for potential build
+            timeout=300,  # 5 min timeout for potential build (non-local-ai services)
         )
-        
+
         logger.debug(
             "start returncode=%s stdout=%s stderr=%s",
             result.returncode,
             (result.stdout or "")[:2000],
             (result.stderr or "")[:2000],
         )
-        
+
         if result.returncode == 0:
             return {"status": "success", "output": result.stdout or "Container started"}
         else:
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Failed to start: {result.stderr or result.stdout}"
-            )
+            raise HTTPException(status_code=500, detail=f"Failed to start: {result.stderr or result.stdout}")
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="Timeout waiting for container start")
     except FileNotFoundError:
@@ -430,14 +500,16 @@ async def _start_via_compose(container_id: str, service_map: dict):
     
     try:
         compose_cmd = get_docker_compose_cmd()
-        cmd = compose_cmd + ["-p", "asterisk-ai-voice-agent", "up", "-d", "--no-build", service_name]
+        build_flag = "--build" if service_name == "local_ai_server" else "--no-build"
+        timeout_sec = 1800 if service_name == "local_ai_server" else 120
+        cmd = compose_cmd + ["-p", "asterisk-ai-voice-agent", "up", "-d", build_flag, service_name]
         
         result = subprocess.run(
             cmd,
             cwd=project_root,
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=timeout_sec
         )
         
         if result.returncode == 0:
@@ -1055,6 +1127,7 @@ async def get_system_health():
             ])
 
             last_error: Optional[str] = None
+            errors_by_uri: dict = {}
             for uri in candidates:
                 logger.debug("Checking Local AI at %s", uri)
                 try:
@@ -1106,6 +1179,7 @@ async def get_system_health():
                                 "probe": {
                                     "selected": uri,
                                     "attempted": candidates,
+                                    "errors": errors_by_uri,
                                 }
                                 ,
                                 "warning": warning,
@@ -1114,15 +1188,27 @@ async def get_system_health():
                             last_error = "Invalid response type"
                 except Exception as e:
                     last_error = f"{type(e).__name__}: {str(e)}"
+                    errors_by_uri[uri] = last_error
                     continue
+
+            # Prefer an actionable error for the configured URL (if set),
+            # otherwise for localhost (most common on host-network installs).
+            preferred_error = None
+            if env_uri:
+                preferred_error = errors_by_uri.get(env_uri)
+            if not preferred_error:
+                preferred_error = errors_by_uri.get("ws://127.0.0.1:8765")
+            if not preferred_error:
+                preferred_error = last_error
 
             return {
                 "status": "error",
-                "details": {"error": last_error or "Unreachable"},
+                "details": {"error": preferred_error or "Unreachable"},
                 "probe": {
                     "selected": None,
                     "attempted": candidates,
-                    "error": last_error or "Unreachable",
+                    "errors": errors_by_uri,
+                    "error": preferred_error or "Unreachable",
                 }
             }
         except Exception as e:
@@ -1437,6 +1523,7 @@ class PlatformInfo(BaseModel):
     os: dict
     docker: dict
     compose: dict
+    project: dict = None
     selinux: dict = None
     directories: dict
     asterisk: dict = None
@@ -1449,6 +1536,59 @@ class PlatformResponse(BaseModel):
 
 _PLATFORMS_CACHE = None
 _PLATFORMS_CACHE_MTIME = None
+
+
+def _detect_project_version(project_root: str) -> dict:
+    """
+    Best-effort project version detection for Admin UI.
+
+    Preference order:
+      1) AAVA_PROJECT_VERSION env var (operator override)
+      2) git describe (when repo checkout is present)
+      3) Parse README.md for a `vX.Y.Z` token
+      4) unknown
+    """
+    override = (os.getenv("AAVA_PROJECT_VERSION") or "").strip()
+    if override:
+        return {"version": override, "source": "env"}
+
+    try:
+        # Use -c safe.directory to avoid "dubious ownership" failures on some hosts.
+        proc = subprocess.run(
+            [
+                "git",
+                "-c",
+                f"safe.directory={project_root}",
+                "-C",
+                project_root,
+                "describe",
+                "--tags",
+                "--always",
+                "--dirty",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+        )
+        if proc.returncode == 0:
+            version = (proc.stdout or "").strip()
+            if version:
+                return {"version": version, "source": "git"}
+    except Exception:
+        pass
+
+    try:
+        readme_path = os.path.join(project_root, "README.md")
+        if os.path.exists(readme_path):
+            with open(readme_path, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+            m = re.search(r"\bv\d+\.\d+\.\d+\b", text)
+            if m:
+                return {"version": m.group(0), "source": "readme"}
+    except Exception:
+        pass
+
+    return {"version": "unknown", "source": "unknown"}
 
 
 def _github_docs_url(path_or_url: Optional[str]) -> Optional[str]:
@@ -1589,21 +1729,44 @@ def _detect_os():
 
 def _detect_docker():
     """Detect Docker version and mode."""
+    sock_path = "/var/run/docker.sock"
+    socket_present = os.path.exists(sock_path)
     docker_info = {
         "installed": False,
+        "reachable": False,
         "version": None,
+        "api_version": None,
         "mode": "unknown",
         "status": "error",
         "message": "Docker not detected",
-        "socket_present": os.path.exists("/var/run/docker.sock"),
+        "socket_present": socket_present,
+        "socket_path": sock_path,
+        "socket_gid": None,
+        "socket_mode": None,
+        "process_uid": os.getuid(),
+        "process_gid": os.getgid(),
+        "process_groups": list(os.getgroups()),
         "cli_present": shutil.which("docker") is not None,
         "is_docker_desktop": False,
+        "permission_denied": False,
+        "needs_docker_gid": None,
     }
+
+    if socket_present:
+        try:
+            st = os.stat(sock_path)
+            docker_info["socket_gid"] = int(getattr(st, "st_gid", 0))
+            docker_info["socket_mode"] = oct(getattr(st, "st_mode", 0) & 0o777)
+            if docker_info["socket_gid"] is not None:
+                docker_info["needs_docker_gid"] = docker_info["socket_gid"] not in set(docker_info["process_groups"] or [])
+        except Exception:
+            pass
     
     try:
         client = docker.from_env()
         version_info = client.version()
         docker_info["installed"] = True
+        docker_info["reachable"] = True
         docker_info["version"] = version_info.get("Version", "unknown")
         docker_info["api_version"] = version_info.get("ApiVersion", "unknown")
         docker_info["status"] = "ok"
@@ -1640,7 +1803,18 @@ def _detect_docker():
             docker_info["mode"] = "rootful"
             
     except Exception as e:
-        docker_info["message"] = str(e)
+        msg = str(e) if e is not None else "unknown error"
+        docker_info["message"] = msg
+        docker_info["reachable"] = False
+
+        # Distinguish common "Docker installed but not accessible" cases.
+        # In practice this is usually a docker.sock mount/GID mismatch in admin_ui.
+        lowered = msg.lower()
+        if "permission denied" in lowered or "errno 13" in lowered:
+            docker_info["installed"] = docker_info["cli_present"] or docker_info["socket_present"]
+            docker_info["status"] = "error"
+            docker_info["permission_denied"] = True
+            docker_info["message"] = "Docker daemon not accessible from Admin UI (permission denied to docker.sock)"
     
     return docker_info
 
@@ -2006,6 +2180,28 @@ def _build_checks(os_info, docker_info, compose_info, selinux_info, dir_info, as
                     "docs_label": "AAVA installation docs",
                 }
             })
+    elif docker_info.get("permission_denied"):
+        checks.append({
+            "id": "docker_socket_perms",
+            "status": "error",
+            "message": (
+                "Admin UI cannot access Docker socket (permission denied). "
+                f"Socket gid={docker_info.get('socket_gid')}, process groups={docker_info.get('process_groups')}"
+            ),
+            "blocking": True,
+            "action": {
+                "type": "command",
+                "label": "Set DOCKER_GID and recreate admin_ui",
+                "value": "\n".join([
+                    "ls -ln /var/run/docker.sock",
+                    "DOCKER_GID=$(ls -ln /var/run/docker.sock | awk '{print $4}')",
+                    "grep -qE '^[# ]*DOCKER_GID=' .env && sed -i.bak -E \"s/^[# ]*DOCKER_GID=.*/DOCKER_GID=$DOCKER_GID/\" .env || echo \"DOCKER_GID=$DOCKER_GID\" >> .env",
+                    "docker compose -p asterisk-ai-voice-agent up -d --force-recreate admin_ui",
+                ]),
+                "docs_url": _github_docs_url("docs/TROUBLESHOOTING_GUIDE.md"),
+                "docs_label": "Troubleshooting guide",
+            },
+        })
     elif docker_info["status"] == "error":
         docs_url = _github_docs_url(docker_cfg.get("aava_docs")) or "https://docs.docker.com/engine/install/"
         start_cmd = docker_cfg.get("start_cmd") or "sudo systemctl start docker"
@@ -2224,6 +2420,8 @@ async def get_platform():
     selinux_info = _detect_selinux()
     dir_info = _detect_directories()
     asterisk_info = _detect_asterisk()
+    project_root = os.getenv("PROJECT_ROOT", "/app/project")
+    project_info = _detect_project_version(project_root)
 
     platforms = _load_platforms_yaml()
     platform_key = _select_platform_key(platforms, os_info.get("id"), os_info.get("family"))
@@ -2244,6 +2442,7 @@ async def get_platform():
             "os": os_info,
             "docker": docker_info,
             "compose": compose_info,
+            "project": project_info,
             "selinux": selinux_info,
             "directories": dir_info,
             "asterisk": asterisk_info,

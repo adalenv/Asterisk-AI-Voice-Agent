@@ -2,7 +2,7 @@
 
 This document explains how contributors can connect their AI IDE to the project's Linear workspace via MCP (Model Context Protocol).
 
-This is **optional** – join our [Discord server](https://discord.gg/CAVACtaY) for community support and feature discussions. MCP just makes it easier for tools like AVA to read/update issues directly.
+This is **optional** – join our [Discord server](https://discord.gg/ysg8fphxUe) for community support and feature discussions. MCP just makes it easier for tools like AVA to read/update issues directly.
 
 ---
 
@@ -55,7 +55,7 @@ When `linear-mcp-server` is available and configured:
 
 If MCP is not available or fails, AVA falls back to:
 
-- The project [Discord server](https://discord.gg/CAVACtaY) for community discussions
+- The project [Discord server](https://discord.gg/ysg8fphxUe) for community discussions
 - `docs/ROADMAP.md` and milestone files
 
 as the canonical specs for community-requested features.

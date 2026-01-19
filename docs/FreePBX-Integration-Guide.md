@@ -1,6 +1,6 @@
 # FreePBX Integration Guide
 
-Complete guide for integrating Asterisk AI Voice Agent v5.0.0+ with FreePBX.
+Complete guide for integrating Asterisk AI Voice Agent v5.1.4+ with FreePBX.
 
 ## 1. Overview
 
@@ -188,7 +188,7 @@ asterisk-host:/mnt/asterisk_media  /mnt/asterisk_media  nfs  defaults  0  0
 **Option 2: Docker Named Volume** (for containerized Asterisk)
 
 ```yaml
-# In docker-compose.yml for both Asterisk and ai-engine:
+# In docker-compose.yml for both Asterisk and ai_engine:
 volumes:
   asterisk_media:
     driver: local
@@ -202,7 +202,7 @@ services:
     volumes:
       - asterisk_media:/mnt/asterisk_media
   
-  ai-engine:
+  ai_engine:
     volumes:
       - asterisk_media:/mnt/asterisk_media
 ```
@@ -428,14 +428,14 @@ docker compose up -d local_ai_server
 # Wait for health (first start may take 5-10 min to load models)
 docker compose logs -f local_ai_server
 
-# Once healthy, start ai-engine
+# Once healthy, start ai_engine
 docker compose up -d --build ai_engine
 ```
 
 ### 4.2 Monitor Startup
 
 ```bash
-# Watch ai-engine logs
+# Watch ai_engine logs
 docker compose logs -f ai_engine
 
 # Look for these key messages:
@@ -534,7 +534,7 @@ curl http://127.0.0.1:15000/metrics | grep ai_agent
 
 **Solution**:
 ```bash
-# Check ai-engine logs
+# Check ai_engine logs
 docker compose logs ai_engine | tail -50
 
 # Look for:

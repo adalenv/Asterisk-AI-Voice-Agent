@@ -200,7 +200,7 @@ const ProfilesPage = () => {
     const handleDeleteProfile = async (profileName: string) => {
         const currentProfiles = config.profiles || {};
         const currentProfileKeys = Object.keys(currentProfiles).filter((k) => k !== 'default');
-        const currentDefaultProfile = currentProfiles.default || 'telephony_responsive';
+        const currentDefaultProfile = currentProfiles.default || 'telephony_ulaw_8k';
 
         if (currentProfileKeys.length <= 1) {
             alert('Cannot delete the last remaining audio profile.');
@@ -210,7 +210,7 @@ const ProfilesPage = () => {
         const contextsUsing = getContextsUsingProfile(profileName);
         const remainingProfiles = currentProfileKeys.filter((p) => p !== profileName);
         const fallbackDefault =
-            (remainingProfiles.includes('telephony_responsive') ? 'telephony_responsive' : remainingProfiles[0]) || 'telephony_responsive';
+            (remainingProfiles.includes('telephony_ulaw_8k') ? 'telephony_ulaw_8k' : remainingProfiles[0]) || 'telephony_ulaw_8k';
 
         const isDefault = currentDefaultProfile === profileName || currentProfiles.default === profileName;
 
@@ -263,7 +263,7 @@ const ProfilesPage = () => {
 
     const profiles = config.profiles || {};
     const profileKeys = Object.keys(profiles).filter(k => k !== 'default');
-    const defaultProfile = profiles.default || 'telephony_responsive';
+    const defaultProfile = profiles.default || 'telephony_ulaw_8k';
 
 	return (
 		<div className="space-y-6">

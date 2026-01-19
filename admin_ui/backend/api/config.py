@@ -439,6 +439,18 @@ async def update_env(env_data: Dict[str, Optional[str]]):
     - Already-quoted values from UI are stored as-is (no double-quoting)
     """
     try:
+        # If file logging is enabled but no path is provided, default to the shared media volume.
+        # This matches the UI recommendation and prevents "log to file" from silently falling back
+        # to a non-writable working directory inside the container.
+        try:
+            log_to_file_raw = env_data.get("LOG_TO_FILE")
+            log_to_file = str(log_to_file_raw or "").strip().lower()
+            enabled = log_to_file in ("1", "true", "yes", "on")
+            if enabled and not (str(env_data.get("LOG_FILE_PATH") or "").strip()):
+                env_data["LOG_FILE_PATH"] = "/mnt/asterisk_media/ai-engine.log"
+        except Exception:
+            pass
+
         # A12: Validate env data before writing
         for key, value in env_data.items():
             if not key or not key.strip():
@@ -596,6 +608,8 @@ async def update_env(env_data: Dict[str, Optional[str]]):
                 _is_prefix(key, ("ASTERISK_", "LOG_", "DIAG_", "CALL_HISTORY_", "HEALTH_"))
                 or key in ("OPENAI_API_KEY", "DEEPGRAM_API_KEY", "GOOGLE_API_KEY", "ELEVENLABS_API_KEY", "ELEVENLABS_AGENT_ID", "TZ", "STREAMING_LOG_LEVEL")
                 or _is_prefix(key, ("AUDIO_TRANSPORT", "DOWNSTREAM_MODE", "AUDIOSOCKET_", "EXTERNAL_MEDIA_", "BARGE_IN_"))
+                # Local provider runtime uses these env vars via ${LOCAL_WS_*} placeholders in ai-agent.yaml
+                or _is_prefix(key, ("LOCAL_WS_",))
             )
 
         def _local_ai_env_key(key: str) -> bool:
@@ -606,7 +620,7 @@ async def update_env(env_data: Dict[str, Optional[str]]):
 
         def _admin_ui_env_key(key: str) -> bool:
             return (
-                key in ("JWT_SECRET", "DOCKER_SOCK")
+                key in ("JWT_SECRET", "DOCKER_SOCK", "DOCKER_GID", "TZ")
                 or _is_prefix(key, ("UVICORN_", "ADMIN_UI_"))
             )
 

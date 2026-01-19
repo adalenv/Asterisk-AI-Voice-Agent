@@ -1,12 +1,12 @@
-# Asterisk AI Voice Agent - Installation Guide (v5.0.0)
+# Asterisk AI Voice Agent - Installation Guide (v5.1.4)
 
-This guide provides detailed instructions for setting up the Asterisk AI Voice Agent v5.0.0 on your server.
+This guide provides detailed instructions for setting up the Asterisk AI Voice Agent v5.1.4 on your server.
 
 ## Three Setup Paths
 
 Choose the path that best fits your experience level:
 
-## Upgrade from v4.6.0 → v5.0.0 (Existing Checkout)
+## Upgrade from v4.6.0 → v5.1.4 (Existing Checkout)
 
 This section is for operators upgrading an existing repo checkout (not a fresh install).
 
@@ -18,11 +18,11 @@ This section is for operators upgrading an existing repo checkout (not a fresh i
 
 ### 1) Pull the new release
 
-Once `v5.0.0` is published:
+Once `v5.1.4` is published:
 
 ```bash
 git fetch --tags
-git checkout v5.0.0
+git checkout v5.1.4
 ```
 
 If you track branches instead of tags:
@@ -32,16 +32,26 @@ git checkout main
 git pull
 ```
 
+If you have the CLI installed, this is equivalent (and safer for common operator workflows):
+
+```bash
+agent update
+```
+
 ### 2) Re-run preflight (recommended)
 
 ```bash
 sudo ./preflight.sh --apply-fixes
 ```
 
+Preflight ensures required host directories exist with correct permissions, including:
+- `./data` (Call History SQLite and runtime state)
+- `./models/{stt,tts,llm,kroko}` (mounted into `ai_engine` and `local_ai_server` as `/app/models`)
+
 If preflight reports warnings or failures, resolve them first, then re-run preflight until it returns clean:
 - Troubleshooting: `docs/TROUBLESHOOTING_GUIDE.md`
 - Re-run: `sudo ./preflight.sh --apply-fixes`
-- Verify: `agent doctor`
+- Verify: `agent check`
 
 ### 3) Upgrade checklist (4.5.3 → 4.6.0)
 
@@ -69,7 +79,7 @@ docker compose up -d --build --force-recreate local_ai_server
 
 ```bash
 curl -sS http://localhost:15000/health
-agent doctor
+agent check
 ```
 
 > ⚠️ **Operator note (production hardening):** `ai_engine` exposes a health/metrics server on port `15000`.
@@ -97,7 +107,7 @@ docker compose up -d ai_engine
 ```
 
 If you hit permission/container/health issues during setup, start with:
-- `agent doctor`
+- `agent check`
 - `sudo ./preflight.sh --apply-fixes`
 - `docs/TROUBLESHOOTING_GUIDE.md`
 
@@ -131,16 +141,16 @@ See [Admin UI Setup Guide](../admin_ui/UI_Setup_Guide.md) for detailed instructi
 git clone https://github.com/hkjarral/Asterisk-AI-Voice-Agent.git
 cd Asterisk-AI-Voice-Agent
 
-# Run installer
-./install.sh
+	# Run installer
+	./install.sh
 
-# Run CLI wizard
-agent init
-```
+	# Run CLI wizard
+	agent setup
+	```
 
 **Best for:** Headless servers, scripted deployments, CLI preference
 
-> Note: `agent quickstart` is still available for backward compatibility, but `agent init` is the recommended CLI wizard for v5+.
+	> Note: `agent quickstart` and `agent init` are still available for backward compatibility, but `agent setup` is the recommended CLI wizard for v5.1.4.
 
 ---
 
@@ -155,7 +165,7 @@ cd Asterisk-AI-Voice-Agent
 ```
 
 The installer will:
-1. Guide you through **3 baseline choices**:
+1. Guide you through **3 baseline choices** (a fast-path subset):
    - **OpenAI Realtime** - Fastest (0.5-1.5s), requires OPENAI_API_KEY
    - **Deepgram Voice Agent** - Enterprise (1-2s), requires DEEPGRAM_API_KEY + OPENAI_API_KEY
    - **Local Hybrid** - Privacy-focused (3-7s), requires OPENAI_API_KEY + 8GB RAM
@@ -167,6 +177,10 @@ The installer will:
 **Best for:** Advanced users, custom configurations, specific requirements
 
 If you want to use additional providers (e.g., Google Live, ElevenLabs) or switch between multiple golden configs, use the Admin UI Setup Wizard (Path A) or edit `config/ai-agent.yaml` directly.
+
+Notes:
+- The project ships **5 golden baseline configs** under `config/ai-agent.golden-*.yaml`.
+- A **Fully Local** mode is also supported (100% on-premises), but requires stronger hardware for local LLM inference; see `docs/LOCAL_ONLY_SETUP.md` and `docs/HARDWARE_REQUIREMENTS.md`.
 
 **Local note:** This project does **not** bundle models in images. For recommended local build/run profiles (including a smaller `local-core` build), see `docs/LOCAL_PROFILES.md`.
 
@@ -433,7 +447,7 @@ Add to `/etc/asterisk/extensions_custom.conf`:
 
 ```asterisk
 [from-ai-agent]
-exten => s,1,NoOp(Asterisk AI Voice Agent v5.0.0)
+exten => s,1,NoOp(Asterisk AI Voice Agent v5.1.4)
  same => n,Stasis(asterisk-ai-voice-agent)
  same => n,Hangup()
 ```

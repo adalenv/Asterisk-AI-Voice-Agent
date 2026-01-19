@@ -73,6 +73,129 @@ def _disk_preflight(path: str, *, required_bytes: int = 0) -> Tuple[bool, Option
     return True, None
 
 
+def _detect_host_project_path_via_docker() -> Optional[str]:
+    """
+    When the Admin UI calls docker-compose from inside the container, the daemon (on the host)
+    resolves bind mount paths using the host filesystem.
+
+    This helper finds the host-side path backing /app/project.
+    """
+    try:
+        client = docker.from_env()
+        container = client.containers.get("admin_ui")
+        mounts = container.attrs.get("Mounts", []) or []
+        for m in mounts:
+            if m.get("Destination") == "/app/project":
+                src = m.get("Source")
+                if src:
+                    return str(src)
+    except Exception:
+        return None
+    return None
+
+
+def _attempt_fix_models_permissions() -> Dict[str, Any]:
+    """
+    Best-effort remediation for common fresh-install issue:
+    - ./models (host) exists but is owned by root (or non-writable),
+      so admin_ui (UID 1000) can't create models/{stt,tts,llm,kroko}.
+    """
+    results: Dict[str, Any] = {"success": False, "messages": [], "errors": []}
+
+    host_project_path = _detect_host_project_path_via_docker()
+    if not host_project_path:
+        results["errors"].append("Could not detect host project path for /app/project mount")
+        return results
+
+    # Best-effort: align group ownership with the repo's install/preflight behavior.
+    # If ASTERISK_GID is set in .env, prefer it; otherwise, fall back to appuser's default GID (1000).
+    models_gid = "1000"
+    try:
+        from dotenv import dotenv_values
+
+        if os.path.exists(ENV_PATH):
+            env_values = dotenv_values(ENV_PATH)
+            gid = (env_values.get("ASTERISK_GID") or "").strip()
+            if gid.isdigit():
+                models_gid = gid
+    except Exception:
+        pass
+
+    try:
+        client = docker.from_env()
+
+        script = f"""
+set -eu
+mkdir -p /project/models/stt /project/models/tts /project/models/llm /project/models/kroko
+chown -R 1000:{models_gid} /project/models || true
+chmod -R ug+rwX /project/models || true
+find /project/models -type d -exec chmod 2775 {{}} + 2>/dev/null || true
+echo "models permissions fixed"
+"""
+        output = client.containers.run(
+            "alpine:latest",
+            command=["sh", "-c", script],
+            volumes={host_project_path: {"bind": "/project", "mode": "rw"}},
+            remove=True,
+        )
+        msg = (output.decode().strip() if output else "").strip()
+        if msg:
+            results["messages"].append(msg)
+        results["success"] = True
+        return results
+    except Exception as e:
+        results["errors"].append(f"models permission fix failed: {e}")
+        return results
+
+
+def _ensure_models_dir_ready(path: str) -> None:
+    def _is_writable_dir(dir_path: str) -> bool:
+        if not os.path.isdir(dir_path):
+            return False
+        try:
+            fd, tmp = tempfile.mkstemp(prefix=".model_write_test_", dir=dir_path)
+            os.close(fd)
+            os.remove(tmp)
+            return True
+        except Exception:
+            return False
+
+    if os.path.exists(path) and not os.path.isdir(path):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Models path exists but is not a directory: {path}. Remove or rename it and retry.",
+        )
+
+    if os.path.isdir(path) and _is_writable_dir(path):
+        return
+
+    try:
+        os.makedirs(path, exist_ok=True)
+    except PermissionError:
+        pass
+
+    if _is_writable_dir(path):
+        return
+
+    fix = _attempt_fix_models_permissions()
+    if not fix.get("success"):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Permission denied writing models directory ({path}). "
+                f"Run: sudo ./preflight.sh --apply-fixes"
+            ),
+        )
+    if not _is_writable_dir(path):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Permission denied writing models directory ({path}) after attempted auto-fix. "
+                f"Run: sudo ./preflight.sh --apply-fixes"
+            ),
+        )
+
+
 def _url_content_length(url: str) -> Optional[int]:
     try:
         req = urllib.request.Request(url, method="HEAD")
@@ -1043,7 +1166,7 @@ async def download_single_model(request: SingleModelDownload):
         return {"status": "error", "message": f"Invalid model type: {request.type}"}
     
     # Ensure target directory exists
-    os.makedirs(target_dir, exist_ok=True)
+    _ensure_models_dir_ready(target_dir)
 
     url_lower = (request.download_url or "").lower()
     is_archive_guess = any(x in url_lower for x in (".zip", ".tar.gz", ".tgz", ".tar.bz2", ".tar"))
@@ -1260,6 +1383,13 @@ async def download_selected_models(selection: ModelSelection):
     """Download user-selected models from the catalog."""
     from settings import PROJECT_ROOT
 
+    # Ensure base models directory exists and is writable before starting downloads.
+    _ensure_models_dir_ready(os.path.join(PROJECT_ROOT, "models"))
+    _ensure_models_dir_ready(os.path.join(PROJECT_ROOT, "models", "stt"))
+    _ensure_models_dir_ready(os.path.join(PROJECT_ROOT, "models", "tts"))
+    _ensure_models_dir_ready(os.path.join(PROJECT_ROOT, "models", "llm"))
+    _ensure_models_dir_ready(os.path.join(PROJECT_ROOT, "models", "kroko"))
+
     # Get full catalog
     catalog = get_full_catalog()
     
@@ -1341,7 +1471,7 @@ async def download_selected_models(selection: ModelSelection):
     skip_kokoro_download = tts_model.get("backend") == "kokoro" and kokoro_mode in ("api", "hf")
 
     models_dir = os.path.join(PROJECT_ROOT, "models")
-    os.makedirs(models_dir, exist_ok=True)
+    _ensure_models_dir_ready(models_dir)
 
     # Disk preflight (best-effort: HEAD Content-Length). Archives need extra room for extraction.
     urls: List[Tuple[str, bool]] = []
@@ -1788,7 +1918,7 @@ async def start_local_ai_server():
     """Start the local-ai-server container.
     
     Also sets up media paths for audio playback to work correctly.
-    Uses --force-recreate to handle cases where container is already running.
+    Uses --no-build when possible (fast), falls back to background build if needed.
     """
     import subprocess
     from settings import PROJECT_ROOT
@@ -1798,68 +1928,99 @@ async def start_local_ai_server():
     media_setup = setup_media_paths()
     print(f"DEBUG: Media setup result: {media_setup}")
     
-    # Check if container is already running
-    already_running = False
-    try:
-        client = docker.from_env()
-        try:
-            container = client.containers.get("local_ai_server")
-            already_running = container.status == "running"
-            print(f"DEBUG: local_ai_server container status: {container.status}")
-        except docker.errors.NotFound:
-            print("DEBUG: local_ai_server container not found, will create")
-    except Exception as e:
-        print(f"DEBUG: Could not check container status: {e}")
-    
     try:
         # AAVA-140: Check if GPU is available (set by preflight.sh)
         gpu_available = os.environ.get("GPU_AVAILABLE", "").lower() == "true"
-        
+
         # Build docker compose command - use GPU override file if GPU detected
+        cmd_base = ["docker", "compose", "-p", "asterisk-ai-voice-agent"]
         if gpu_available:
             print("DEBUG: GPU detected (GPU_AVAILABLE=true), using docker-compose.gpu.yml")
-            cmd = ["docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.gpu.yml", "up", "-d"]
-        else:
-            cmd = ["docker", "compose", "up", "-d"]
-        
-        # Explicitly remove container if it exists to avoid "Conflict" errors
-        try:
-            client = docker.from_env()
-            try:
-                old_container = client.containers.get("local_ai_server")
-                print(f"DEBUG: Removing existing local_ai_server container ({old_container.status})")
-                old_container.remove(force=True)
-            except docker.errors.NotFound:
-                pass
-        except Exception as e:
-            print(f"DEBUG: Error removing container: {e}")
+            cmd_base += ["-f", "docker-compose.yml", "-f", "docker-compose.gpu.yml"]
 
-        if already_running:
-            cmd.append("--force-recreate")
-            print("DEBUG: Container already running, using --force-recreate")
-        cmd.append("local_ai_server")
-        
+        # Fast path: start from existing image (avoid triggering a rebuild on every click)
+        cmd_no_build = cmd_base + ["up", "-d", "--no-build", "local_ai_server"]
         result = subprocess.run(
-            cmd,
+            cmd_no_build,
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=60,
         )
-        
         if result.returncode == 0:
             return {
                 "success": True,
-                "message": "Local AI Server started successfully" + (" (recreated)" if already_running else ""),
+                "message": "Local AI Server started.",
                 "media_setup": media_setup,
-                "recreated": already_running
             }
-        else:
+
+        stderr = (result.stderr or result.stdout or "").strip()
+
+        # If a stale container name is blocking startup, remove and retry once.
+        if "Conflict" in stderr and "local_ai_server" in stderr:
+            try:
+                client = docker.from_env()
+                try:
+                    old_container = client.containers.get("local_ai_server")
+                    print(f"DEBUG: Removing conflicting local_ai_server container ({old_container.status})")
+                    old_container.remove(force=True)
+                except docker.errors.NotFound:
+                    pass
+            except Exception as e:
+                print(f"DEBUG: Error removing conflicting container: {e}")
+
+            retry = subprocess.run(
+                cmd_no_build,
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if retry.returncode == 0:
+                return {
+                    "success": True,
+                    "message": "Local AI Server started.",
+                    "media_setup": media_setup,
+                }
+            stderr = (retry.stderr or retry.stdout or "").strip()
+
+        # Slow path: image missing or needs build; kick off build+up in background.
+        needs_build_markers = [
+            "No such image",
+            "pull access denied",
+            "failed to solve",
+            "unable to find image",
+            "requires build",
+        ]
+        if any(m.lower() in stderr.lower() for m in needs_build_markers):
+            log_path = os.path.join(PROJECT_ROOT, "logs", "local_ai_server_start.log")
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            logf = open(log_path, "a")
+            logf.write("\n\n=== local_ai_server start (wizard) ===\n")
+            logf.flush()
+
+            cmd_build = cmd_base + ["up", "-d", "--build", "local_ai_server"]
+            subprocess.Popen(
+                cmd_build,
+                cwd=PROJECT_ROOT,
+                stdout=logf,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+
             return {
-                "success": False,
-                "message": f"Failed to start: {result.stderr or result.stdout}",
-                "media_setup": media_setup
+                "success": True,
+                "message": f"Local AI Server build/start initiated in background; this can take several minutes. See {log_path} or container logs once created.",
+                "media_setup": media_setup,
             }
+
+        return {
+            "success": False,
+            "message": f"Failed to start local_ai_server: {stderr or 'Unknown error'}",
+            "media_setup": media_setup,
+        }
+    except FileNotFoundError as e:
+        return {"success": False, "message": f"Failed to start: {e}", "media_setup": media_setup}
     except Exception as e:
         return {"success": False, "message": str(e), "media_setup": media_setup}
 
@@ -1903,6 +2064,17 @@ async def get_local_server_logs():
     except subprocess.TimeoutExpired:
         return {"logs": [], "ready": False, "error": "Timeout getting logs"}
     except Exception as e:
+        # Fallback: if container isn't created yet (e.g., still building), show the build/start log if present.
+        try:
+            import os
+
+            log_path = os.path.join(os.getenv("PROJECT_ROOT", "/app/project"), "logs", "local_ai_server_start.log")
+            if os.path.exists(log_path):
+                with open(log_path, "r") as f:
+                    tail = f.read().splitlines()[-50:]
+                return {"logs": tail[-20:], "ready": False, "error": str(e)}
+        except Exception:
+            pass
         return {"logs": [], "ready": False, "error": str(e)}
 
 
@@ -2504,16 +2676,6 @@ async def save_setup_config(config: SetupConfig):
                     })
                 providers["local"]["greeting"] = config.greeting
                 providers["local"]["instructions"] = f"You are {config.ai_name}, a {config.ai_role}. Be helpful and concise."
-                # Start local-ai-server container with GPU support if available (AAVA-140)
-                try:
-                    gpu_available = os.environ.get("GPU_AVAILABLE", "").lower() == "true"
-                    if gpu_available:
-                        cmd = ["docker", "compose", "-p", "asterisk-ai-voice-agent", "-f", "docker-compose.yml", "-f", "docker-compose.gpu.yml", "up", "-d", "local_ai_server"]
-                    else:
-                        cmd = ["docker", "compose", "-p", "asterisk-ai-voice-agent", "up", "-d", "local_ai_server"]
-                    subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, timeout=120)
-                except Exception as e:
-                    print(f"Error starting local_ai_server: {e}")
 
             elif config.provider == "local_hybrid":
                 # local_hybrid is a PIPELINE (Local STT + Cloud/Local LLM + Local TTS)
@@ -2592,17 +2754,6 @@ async def save_setup_config(config: SetupConfig):
                     "llm": llm_component,
                     "tts": "local_tts"
                 }
-                
-                # Start local-ai-server container with GPU support if available (AAVA-140)
-                try:
-                    gpu_available = os.environ.get("GPU_AVAILABLE", "").lower() == "true"
-                    if gpu_available:
-                        cmd = ["docker", "compose", "-p", "asterisk-ai-voice-agent", "-f", "docker-compose.yml", "-f", "docker-compose.gpu.yml", "up", "-d", "local_ai_server"]
-                    else:
-                        cmd = ["docker", "compose", "-p", "asterisk-ai-voice-agent", "up", "-d", "local_ai_server"]
-                    subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, timeout=120)
-                except Exception as e:
-                    print(f"Error starting local_ai_server: {e}")
 
             # C6 Fix: Create default context
             yaml_config.setdefault("contexts", {})["default"] = {

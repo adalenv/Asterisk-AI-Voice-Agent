@@ -19,6 +19,10 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
         onChange({ ...config, [field]: value });
     };
 
+    const updateConfigPatch = (patch: Record<string, any>) => {
+        onChange({ ...config, ...patch });
+    };
+
     const fallbackTools = [
         'transfer',
         'attended_transfer',
@@ -78,18 +82,15 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
 
     const handleOverrideChange = (raw: string) => {
         if (!raw) {
-            updateConfig('provider', '');
-            updateConfig('pipeline', '');
+            updateConfigPatch({ provider: '', pipeline: '' });
             return;
         }
         if (raw.startsWith('pipeline:')) {
-            updateConfig('pipeline', raw.slice('pipeline:'.length));
-            updateConfig('provider', '');
+            updateConfigPatch({ pipeline: raw.slice('pipeline:'.length), provider: '' });
             return;
         }
         if (raw.startsWith('provider:')) {
-            updateConfig('provider', raw.slice('provider:'.length));
-            updateConfig('pipeline', '');
+            updateConfigPatch({ provider: raw.slice('provider:'.length), pipeline: '' });
         }
     };
 

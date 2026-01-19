@@ -6,7 +6,11 @@ import os
 # Configure logging level from environment (default INFO)
 _level_name = os.getenv("LOCAL_LOG_LEVEL", "INFO").upper()
 _level = getattr(logging, _level_name, logging.INFO)
-logging.basicConfig(level=_level)
+logging.basicConfig(
+    level=_level,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S %z",
+)
 
 # Suppress noisy websockets connection logs unless DEBUG level
 # These "connection open/close" messages spam the logs during health checks
@@ -26,4 +30,3 @@ PCM16_TARGET_RATE = 16000
 
 def _normalize_text(value: str) -> str:
     return " ".join((value or "").strip().lower().split())
-

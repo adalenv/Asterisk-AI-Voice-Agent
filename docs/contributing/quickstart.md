@@ -123,7 +123,7 @@ At minimum, you will add a context like:
 
 ```asterisk
 [from-ai-agent]
-exten => s,1,NoOp(Asterisk AI Voice Agent v4.x)
+exten => s,1,NoOp(Asterisk AI Voice Agent v5.1.4)
  same => n,Stasis(asterisk-ai-voice-agent)
  same => n,Hangup()
 ```
@@ -143,16 +143,13 @@ Typical flow:
 agent version
 
 # Run interactive setup (configures ARI, provider, transport)
-agent init
+agent setup
 
 # Run system health checks
-agent doctor
-
-# Optionally run a demo without real calls
-agent demo
+agent check
 ```
 
-Use `agent init` to plug in your Asterisk ARI host/port/user/pass and provider settings if the installer didn’t already capture them.
+Use `agent setup` to plug in your Asterisk ARI host/port/user/pass and provider settings if the installer didn’t already capture them.
 
 ---
 
@@ -198,7 +195,7 @@ In Windsurf or your AI-enabled IDE:
   - “I want to add a calendar appointment tool.”
   - “I want to improve queue transfers.”
 - AVA (defined in `AVA.mdc`) will:
-  - Map your request to the roadmap and Linear specs (or [Discord discussions](https://discord.gg/CAVACtaY)).
+  - Map your request to the roadmap and Linear specs (or [Discord discussions](https://discord.gg/ysg8fphxUe)).
   - Tell you which files to touch, which configs to update, and which docs to read.
   - Propose a short plan and a checklist (tests, docs, PR requirements).
 
@@ -226,7 +223,7 @@ For telephony-facing changes (providers, pipelines, tools):
 - Use:
 
   ```bash
-  agent troubleshoot --last
+  agent rca
   ```
 
   and, if needed:
@@ -257,7 +254,7 @@ Before you open a PR:
   - Reference any Linear issue IDs (e.g., `AAVA-63`) if applicable.
   - Include a brief test summary:
     - Calls placed (IDs).
-    - `agent doctor` / `agent troubleshoot` results.
+    - `agent check` / `agent rca` results.
 
 For branching and PR details, also see `CONTRIBUTING.md`.
 
@@ -274,7 +271,7 @@ For branching and PR details, also see `CONTRIBUTING.md`.
   - `docs/TOOL_CALLING_GUIDE.md`
   - `docs/ASTERISK_QUEUE_SETUP.md`
 - For community-requested 4.2 features:
-  - Join our [Discord server](https://discord.gg/CAVACtaY) for discussions
+  - Join our [Discord server](https://discord.gg/ysg8fphxUe) for discussions
 
 If you get stuck at any point, ask AVA in your AI IDE to:
 

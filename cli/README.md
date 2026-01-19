@@ -6,15 +6,20 @@ Go-based command-line interface for Asterisk AI Voice Agent operations.
 
 The `agent` CLI provides a comprehensive set of tools for setup, diagnostics, and troubleshooting. All commands are built as a single Go binary for easy distribution.
 
-**Current Status**: ✅ Binary builds available for v4.1+
+**Current Status**: ✅ CLI v5.1.4 (simplified surface)
 
 ## Available Commands
 
-- **`agent init`** - Interactive setup wizard
-- **`agent doctor`** - System health check and diagnostics
-- **`agent demo`** - Audio pipeline validation
-- **`agent troubleshoot`** - Post-call analysis and RCA
+- **`agent setup`** - Interactive setup wizard
+- **`agent check`** - Standard diagnostics report
+- **`agent rca`** - Post-call root cause analysis
+- **`agent update`** - Pull latest code + rebuild/restart as needed
 - **`agent version`** - Show version information
+
+Legacy aliases (hidden from `--help` in v5.1.4):
+- `agent init` → `agent setup`
+- `agent doctor` → `agent check`
+- `agent troubleshoot` → `agent rca`
 
 ## Installation
 
@@ -104,13 +109,13 @@ make cli-release
 
 ## Command Reference
 
-### `agent init` - Interactive Setup Wizard
+### `agent setup` - Interactive Setup Wizard
 
 Guided setup wizard to configure Asterisk AI Voice Agent from scratch.
 
 **Usage:**
 ```bash
-agent init
+agent setup
 ```
 
 **Steps:**
@@ -121,7 +126,7 @@ agent init
 
 **Example:**
 ```bash
-$ agent init
+$ agent setup
 
 Step 1/4: Asterisk ARI Connection
 Enter Asterisk host [127.0.0.1]: 
@@ -150,18 +155,17 @@ Setup complete! 🎉
 
 ---
 
-### `agent doctor` - System Health Check
+### `agent check` - Standard Diagnostics Report
 
 Comprehensive health check and diagnostics tool.
 
 **Usage:**
 ```bash
-agent doctor [flags]
+agent check [--json] [-v] [--no-color]
 ```
 
 **Flags:**
-- `--fix` - Attempt to auto-fix issues (future)
-- `--json` - Output as JSON
+- `--json` - Output as JSON (JSON only)
 - `--verbose` - Show detailed check output
 
 **Exit Codes:**
@@ -169,19 +173,16 @@ agent doctor [flags]
 - `1` - Warnings detected (non-critical) ⚠️
 - `2` - Failures detected (critical) ❌
 
-**Checks Performed:**
-- Docker daemon and containers running
-- Asterisk ARI connectivity
-- AudioSocket/RTP ports available
-- Configuration file validity
-- API keys present
-- Provider API connectivity
-- Recent call history
-- Disk space availability
+**What it includes (high-level):**
+- Docker + Compose environment details
+- `ai_engine` container status, mounts, and network mode
+- Container-side ARI probes + app registration check
+- Transport compatibility + advertise host alignment
+- Best-effort internet/DNS reachability (FYI / skip on failure)
 
 **Example:**
 ```bash
-$ agent doctor
+$ agent check
 
 [1/11] Docker Daemon...     ✅ Docker running (v26.1.4)
 [2/11] Containers...        ✅ ai_engine running (healthy)
@@ -197,7 +198,7 @@ Summary: 10 passed, 0 warnings, 0 failures
 
 **Use in Scripts:**
 ```bash
-if ! agent doctor; then
+if ! agent check; then
     echo "Health check failed"
     exit 1
 fi
@@ -205,159 +206,54 @@ fi
 
 ---
 
-### `agent demo` - Audio Pipeline Validation
+### `agent rca` - Post-Call Analysis
 
-Tests audio pipeline without making real calls.
-
-**Usage:**
-```bash
-agent demo [flags]
-```
-
-**Flags:**
-- `--provider <name>` - Test specific provider
-- `--duration <seconds>` - Test duration (default: 10)
-- `--verbose` - Show detailed test output
-
-**What It Tests:**
-1. Audio capture and VAD
-2. Provider STT/LLM/TTS integration
-3. Audio quality and latency
-4. Playback path
-
-**Example:**
-```bash
-$ agent demo
-
-Testing Audio Pipeline (OpenAI Realtime)
-✓ Audio capture initialized
-✓ Provider connection established
-✓ Test audio processed (latency: 245ms)
-✓ Playback successful
-
-Pipeline validated successfully!
-```
-
----
-
-### `agent troubleshoot` - Post-Call Analysis
-
-Analyze call issues with root cause analysis.
+Analyze the most recent call (or a specific call ID) and print an RCA report.
 
 **Usage:**
 ```bash
 # Analyze most recent call
-agent troubleshoot
+agent rca
 
 # Analyze specific call
-agent troubleshoot <call_id>
+agent rca --call <call_id>
 
-# With verbose output
-agent troubleshoot --verbose <call_id>
+# JSON-only output
+agent rca --json
+
+# Verbose output
+agent rca -v
 ```
 
-**Analysis Includes:**
-- Call duration and timeline
-- Audio transport issues
-- Provider errors and latency
-- Tool execution problems
-- Configuration mismatches
-- Suggested fixes
-
-**Example:**
+Advanced (legacy alias; hidden from `agent --help`):
 ```bash
-$ agent troubleshoot 1763582071.6214
-
-Analyzing call 1763582071.6214...
-
-Call Summary:
-  Duration: 43.2s
-  Provider: local_hybrid
-  Transport: ExternalMedia RTP
-  Tools Used: transfer
-
-Issues Found:
-  ✅ No critical issues
-  ⚠️  High latency detected (3.2s avg)
-
-Recommendations:
-  - Consider OpenAI Realtime for lower latency
-  - Check network connectivity to cloud LLM
-
-Detailed logs: /var/log/ai_engine/call-1763582071.6214.log
+agent troubleshoot --list
+agent troubleshoot --last --symptom <no-audio|garbled|echo|interruption|one-way>
 ```
 
 ---
 
-### `agent dialplan` - Generate Dialplan Snippets
+## Hidden (Legacy) Commands
 
-Generate Asterisk dialplan configuration for a provider.
+CLI v5.1.4 intentionally keeps a small visible surface (`agent setup/check/rca/update/version`). For backwards compatibility and advanced workflows, these commands still exist but are hidden from `agent --help`:
 
-**Usage:**
+- Compatibility aliases: `agent init`, `agent doctor`, `agent troubleshoot`
+- Advanced tools: `agent demo`, `agent dialplan`, `agent config validate`
+
+### `agent update` - Update Installation
+
+Safely updates an existing repo checkout to the latest `origin/main` and applies changes:
+
 ```bash
-agent dialplan [--provider <name>]
+cd /root/Asterisk-AI-Voice-Agent
+agent update
 ```
 
-**Flags:**
-- `--provider` - Provider name (openai_realtime, deepgram, local_hybrid, google_live)
-
-**Example:**
-```bash
-$ agent dialplan --provider openai_realtime
-
-Add this snippet to: /etc/asterisk/extensions_custom.conf
-
-[from-ai-agent-openai]
-exten => s,1,NoOp(AI Agent - OpenAI Realtime)
- same => n,Set(AI_PROVIDER=openai_realtime)
- same => n,Stasis(asterisk-ai-voice-agent)
- same => n,Hangup()
-
-FreePBX Setup:
-  1. Admin → Config Edit → extensions_custom.conf
-  2. Paste snippet above
-  3. Save and Apply Config
-  4. Create Custom Destination: from-ai-agent-openai,s,1
-```
-
----
-
-### `agent config validate` - Configuration Validation
-
-Validate `config/ai-agent.yaml` for errors.
-
-**Usage:**
-```bash
-agent config validate [--file <path>] [--fix] [--strict]
-```
-
-**Flags:**
-- `--file` - Path to config file (default: config/ai-agent.yaml)
-- `--fix` - Attempt to auto-fix issues
-- `--strict` - Treat warnings as errors
-
-**Checks:**
-- YAML syntax
-- Required fields present
-- Provider configurations valid
-- Sample rate alignment
-- Transport compatibility
-
-**Example:**
-```bash
-$ agent config validate
-
-Validating config/ai-agent.yaml...
-✓ YAML syntax valid
-✓ Required fields present
-✓ Provider 'openai_realtime' enabled
-✓ Sample rates aligned (24000 Hz)
-
-Summary: 4 passed, 0 warnings, 0 errors
-✅ Configuration valid
-```
-
----
+Notes:
+- Creates backups of `.env` and `config/ai-agent.yaml` before updating.
+- Uses fast-forward only; if your local branch has diverged, it will stop and print guidance.
+- Rebuilds/restarts only the impacted services, then runs `agent check` (unless `--skip-check`).
+- If a newer CLI release is available, `agent update` can self-update the `agent` binary first (default; disable with `--self-update=false`).
 
 ### `agent version` - Show Version
 
@@ -369,9 +265,9 @@ agent version
 **Output:**
 ```
 Asterisk AI Voice Agent CLI
-Version: 4.1.0
-Build: 2025-11-19
-Go: 1.21.0
+Version: vX.Y.Z
+Built: YYYY-MM-DDTHH:MM:SSZ
+Repository: https://github.com/hkjarral/Asterisk-AI-Voice-Agent
 ```
 
 ---
@@ -381,30 +277,21 @@ Go: 1.21.0
 ### First-Time Setup
 ```bash
 # 1. Run interactive setup
-agent init
+agent setup
 
-# 2. Validate installation
-agent doctor
+# 2. Run standard diagnostics report
+agent check
 
-# 3. Test audio pipeline
-agent demo
-
-# 4. Generate dialplan snippet
-agent dialplan
-
-# 5. Make a test call
+# 3. Make a test call
 ```
 
 ### Troubleshooting Issues
 ```bash
-# 1. Run health check
-agent doctor
+# 1. Run standard diagnostics report (attach output to issues)
+agent check
 
-# 2. Analyze recent call
-agent troubleshoot
-
-# 3. Validate configuration
-agent config validate
+# 2. Analyze most recent call
+agent rca
 ```
 
 ### CI/CD Integration
@@ -412,8 +299,7 @@ agent config validate
 #!/bin/bash
 # Pre-deployment validation
 
-agent config validate --strict || exit 1
-agent doctor || exit 1
+agent check --json || exit 1
 
 echo "✅ Validation passed - deploying..."
 ```
@@ -432,16 +318,29 @@ echo "✅ Validation passed - deploying..."
 cli/
 ├── cmd/agent/           # Main CLI commands
 │   ├── main.go          # Root command and app entry
-│   ├── init.go          # Setup wizard
-│   ├── doctor.go        # Health checks
-│   ├── demo.go          # Audio validation
-│   ├── troubleshoot.go  # Post-call analysis
+│   ├── setup.go         # Interactive setup wizard (v5.1.4)
+│   ├── check.go         # Standard diagnostics report (v5.1.4)
+│   ├── rca.go           # Post-call RCA (v5.1.4)
 │   └── version.go       # Version command
+│
+│   # Hidden (legacy / advanced)
+│   ├── init.go          # Legacy alias of setup
+│   ├── doctor_alias.go  # Legacy alias of check
+│   ├── troubleshoot.go  # Legacy alias of rca (advanced flags)
+│   ├── quickstart.go    # Legacy setup wizard
+│   ├── demo.go          # Pipeline demo tool
+│   ├── dialplan.go      # Dialplan generator
+│   ├── config.go        # Config validate, etc.
+│   └── helpers.go       # Shared helpers
 └── internal/            # Internal packages
-    ├── wizard/          # Interactive setup wizard
-    ├── health/          # Health check system
-    ├── audio/           # Audio test utilities
-    └── rca/             # Root cause analysis
+    ├── check/           # agent check implementation
+    ├── troubleshoot/    # RCA engine (used by agent rca / troubleshoot)
+    ├── wizard/          # Interactive setup wizard implementation
+    ├── demo/            # Demo runner
+    ├── dialplan/        # Dialplan snippets
+    ├── config/          # Config validation
+    ├── validator/       # API key + input validation helpers
+    └── health/          # Legacy health checks (kept for compatibility)
 ```
 
 ### Dependencies
@@ -465,14 +364,9 @@ go test ./...
 go test -cover ./...
 ```
 
-## Planned Features (v4.1)
+## Roadmap
 
-- [ ] Automated binary builds (Makefile target)
-- [ ] `agent config validate` - Pre-flight config validation
-- [ ] `agent test` - Automated test call execution
-- [ ] Windows support
-- [ ] Shell completion (bash, zsh, fish)
-- [ ] Package managers (apt, yum, brew)
+See `docs/ROADMAP.md`.
 
 ## Exit Codes
 
@@ -486,7 +380,7 @@ Use in scripts:
 
 ```bash
 #!/bin/bash
-if ! ./bin/agent doctor; then
+if ! ./bin/agent check; then
     echo "Health check failed - see output above"
     exit 1
 fi

@@ -1,5 +1,7 @@
 # Milestone 13 — Config Cleanup & Migration
 
+Note (CLI v5.1+): The public CLI surface is now `agent setup`, `agent check`, `agent rca`, `agent update`, and `agent version`. Legacy command names used below (`agent doctor`, etc.) remain available as hidden aliases for compatibility.
+
 ## Objective
 
 Simplify configuration and reduce operator footguns by establishing clear separation between production and diagnostic settings. Move diagnostic knobs to environment variables, deprecate legacy settings, and provide automated migration path.

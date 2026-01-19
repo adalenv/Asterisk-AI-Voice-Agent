@@ -138,6 +138,50 @@ PY
     fi
 }
 
+setup_models_directory() {
+    print_info "Setting up models directory for local AI..."
+
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    MODELS_DIR="$SCRIPT_DIR/models"
+    CONTAINER_UID=1000
+
+    # Resolve asterisk group for shared access (best-effort).
+    AST_GID=$(id -g asterisk 2>/dev/null || echo 995)
+
+    # Create expected layout (Admin UI downloads expect these paths).
+    $SUDO mkdir -p "$MODELS_DIR/stt" "$MODELS_DIR/tts" "$MODELS_DIR/llm" "$MODELS_DIR/kroko" || true
+
+    # Ensure the appuser inside containers can write new model files.
+    $SUDO chown "$CONTAINER_UID:$AST_GID" "$MODELS_DIR" "$MODELS_DIR/stt" "$MODELS_DIR/tts" "$MODELS_DIR/llm" "$MODELS_DIR/kroko" 2>/dev/null || true
+    $SUDO chmod 2775 "$MODELS_DIR" "$MODELS_DIR/stt" "$MODELS_DIR/tts" "$MODELS_DIR/llm" "$MODELS_DIR/kroko" 2>/dev/null || true
+
+    # Handle SELinux context on RHEL-family systems (Sangoma/FreePBX)
+    if command -v getenforce &>/dev/null; then
+        SELINUX_MODE=$(getenforce 2>/dev/null || echo "Disabled")
+        if [ "$SELINUX_MODE" = "Enforcing" ]; then
+            print_info "SELinux is Enforcing - setting container context for models directory..."
+            if command -v semanage &>/dev/null; then
+                # Add SELinux context for container access
+                $SUDO semanage fcontext -a -t container_file_t "$MODELS_DIR(/.*)?" 2>/dev/null || true
+                $SUDO restorecon -Rv "$MODELS_DIR" 2>/dev/null || true
+                print_success "SELinux context applied to models directory"
+            else
+                print_warning "semanage not found - SELinux context not set"
+                print_info "  Install with: $SUDO yum install -y policycoreutils-python-utils"
+                print_info "  Then run: $SUDO semanage fcontext -a -t container_file_t '$MODELS_DIR(/.*)?'"
+                print_info "            $SUDO restorecon -Rv '$MODELS_DIR'"
+            fi
+        fi
+    fi
+
+    if [ -d "$MODELS_DIR" ]; then
+        print_success "Models directory ready: $MODELS_DIR"
+    else
+        print_warning "Models directory missing; local AI setup may fail (expected: $MODELS_DIR)"
+        print_info "  Tip: Run: sudo ./preflight.sh --apply-fixes"
+    fi
+}
+
 print_success() {
     echo -e "${COLOR_GREEN}SUCCESS: $1${COLOR_RESET}"
 }
@@ -1419,9 +1463,10 @@ offer_cli_installation() {
         print_success "agent CLI already installed: $version"
         echo ""
         print_info "Available commands:"
-        print_info "  • agent dialplan  - Generate dialplan snippets"
-        print_info "  • agent doctor    - Health check"
-        print_info "  • agent demo      - Test audio pipeline"
+        print_info "  • agent setup     - Interactive setup wizard"
+        print_info "  • agent check     - Standard diagnostics report"
+        print_info "  • agent rca       - Post-call root cause analysis"
+        print_info "  • agent version   - Version information"
         echo ""
         return 0
     fi
@@ -1453,10 +1498,9 @@ offer_cli_installation() {
     
     # Offer installation
     echo "The agent CLI provides helpful tools for setup and troubleshooting:"
-    echo "  • agent dialplan  - Generate dialplan configuration"
-    echo "  • agent doctor    - System health check"
-    echo "  • agent demo      - Test audio pipeline"
-    echo "  • agent troubleshoot - Post-call analysis"
+    echo "  • agent setup     - Interactive setup wizard"
+    echo "  • agent check     - Standard diagnostics report"
+    echo "  • agent rca       - Post-call root cause analysis"
     echo ""
     
     read -p "Install agent CLI tool? [Y/n]: " install_cli
@@ -1503,18 +1547,10 @@ offer_cli_installation() {
             local version=$(agent version 2>/dev/null | head -1 || echo "installed")
             print_success "Verified: $version"
             echo ""
-            
-            # Offer to run dialplan generator
-            echo "Generate dialplan configuration now?"
-            echo "  This will print the dialplan snippet you need to add to Asterisk"
-            echo ""
-            read -p "Run 'agent dialplan' now? [Y/n]: " run_dialplan
-            
-            if [[ ! "$run_dialplan" =~ ^[Nn]$ ]]; then
-                echo ""
-                agent dialplan --provider "$PROFILE" --file /etc/asterisk/extensions_custom.conf || true
-                echo ""
-            fi
+            print_info "Next steps:"
+            print_info "  1) Run setup: agent setup"
+            print_info "  2) Run diagnostics: agent check"
+            print_info "  3) After a test call: agent rca"
         fi
     else
         print_warning "Could not download agent CLI (network issue or release not available)"
@@ -1593,7 +1629,7 @@ print_final_summary() {
     echo ""
     print_info "🔍 Next steps:"
     print_info "  1. Access Admin UI: http://<server-ip>:3003"
-    print_info "  2. Configure dialplan (see snippet above or run: agent dialplan)"
+    print_info "  2. Configure dialplan (see snippet above or run: agent setup)"
     print_info "  3. Make a test call to verify everything works"
     print_info "  4. Check logs: docker compose -p asterisk-ai-voice-agent logs -f ai_engine"
     print_info "  5. Switch pipelines: Edit config/ai-agent.yaml (change default_provider)"
@@ -1614,6 +1650,7 @@ main() {
     select_config_template
     setup_media_paths
     setup_data_directory
+    setup_models_directory
     start_services
 }
 

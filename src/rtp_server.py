@@ -241,14 +241,7 @@ class RTPServer:
         out_ssrc = session.outbound_ssrc
         if out_ssrc is None:
             logger.debug("RTP send deferred; SSRC not established", call_id=call_id)
-        return False
-
-    def has_remote_endpoint(self, call_id: str) -> bool:
-        """Return True once we've learned the inbound RTP (ip,port) for this call."""
-        session = self.sessions.get(call_id)
-        if not session:
             return False
-        return bool(session.remote_host) and bool(session.remote_port)
 
         # Initialise outbound sequence / timestamp the first time we transmit.
         if not session.send_sequence_initialized:
@@ -291,6 +284,13 @@ class RTPServer:
         session.timestamp = (session.timestamp + self.SAMPLES_PER_PACKET) & 0xFFFFFFFF
         session.frames_processed += 1
         return True
+
+    def has_remote_endpoint(self, call_id: str) -> bool:
+        """Return True once we've learned the inbound RTP (ip,port) for this call."""
+        session = self.sessions.get(call_id)
+        if not session:
+            return False
+        return bool(session.remote_host) and bool(session.remote_port)
 
     async def _rtp_receiver_loop(self, session: RTPSession) -> None:
         """Per-session receive loop that forwards inbound audio to the engine."""

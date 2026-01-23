@@ -7759,7 +7759,10 @@ class Engine:
                 # follows up with an assistant turn), play a minimal server-side goodbye prompt so the
                 # call doesn't end abruptly.
                 played_farewell_fallback = False
-                if not had_audio:
+                # IMPORTANT: Do not play a canned farewell by default. This can clash with provider
+                # voices (e.g., Google Live / OpenAI Realtime) and can cut off in-flight streaming.
+                # If you want a fallback prompt, opt-in via tools.hangup_call.fallback_media_uri.
+                if not had_audio and reason in ("fallback_no_audio", "farewell_timeout", "farewell_no_audio"):
                     try:
                         session = await self.session_store.get_by_call_id(call_id)
                         if session and session.caller_channel_id:
@@ -7768,21 +7771,20 @@ class Engine:
                             media_uri = None
                             if isinstance(hangup_cfg, dict):
                                 media_uri = hangup_cfg.get("fallback_media_uri") or hangup_cfg.get("farewell_fallback_media_uri")
-                            if not media_uri:
-                                media_uri = "sound:goodbye"
-
-                            pb = await self.ari_client.play_media(session.caller_channel_id, media_uri)
-                            playback_id = pb.get("id") if isinstance(pb, dict) else None
-                            if playback_id:
-                                waiter = asyncio.get_running_loop().create_future()
-                                self._ari_playback_waiters[playback_id] = waiter
-                                try:
-                                    await asyncio.wait_for(waiter, timeout=8.0)
-                                except asyncio.TimeoutError:
-                                    pass
-                                finally:
-                                    self._ari_playback_waiters.pop(playback_id, None)
-                                played_farewell_fallback = True
+                            media_uri = (media_uri or "").strip()
+                            if media_uri:
+                                pb = await self.ari_client.play_media(session.caller_channel_id, media_uri)
+                                playback_id = pb.get("id") if isinstance(pb, dict) else None
+                                if playback_id:
+                                    waiter = asyncio.get_running_loop().create_future()
+                                    self._ari_playback_waiters[playback_id] = waiter
+                                    try:
+                                        await asyncio.wait_for(waiter, timeout=8.0)
+                                    except asyncio.TimeoutError:
+                                        pass
+                                    finally:
+                                        self._ari_playback_waiters.pop(playback_id, None)
+                                    played_farewell_fallback = True
                     except Exception:
                         logger.debug("Farewell fallback playback failed", call_id=call_id, exc_info=True)
 

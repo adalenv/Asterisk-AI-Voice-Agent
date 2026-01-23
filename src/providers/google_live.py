@@ -117,6 +117,11 @@ class GoogleLiveProvider(AIProviderInterface):
         self._assistant_farewell_intent: Optional[str] = None
         self._turn_has_assistant_output: bool = False
         self._hangup_ready_emitted: bool = False
+        # If the model calls hangup_call but does not produce any audio shortly after, prompt it
+        # to speak the farewell message (keeps the goodbye in the model's voice, avoids engine-side canned audio).
+        self._force_farewell_task: Optional[asyncio.Task] = None
+        self._force_farewell_text: str = ""
+        self._force_farewell_sent: bool = False
         # Conversation state
         self._conversation_history: List[Dict[str, Any]] = []
         
@@ -1393,6 +1398,8 @@ class GoogleLiveProvider(AIProviderInterface):
                 if func_name == "hangup_call" and result:
                     if result.get("will_hangup"):
                         self._hangup_after_response = True
+                        self._force_farewell_text = str(result.get("message") or "").strip()
+                        self._force_farewell_sent = False
                         # Also arm the provider-side watchdog as a safety net if turnComplete never arrives.
                         if not self._hangup_fallback_armed:
                             self._hangup_fallback_armed = True
@@ -1424,6 +1431,9 @@ class GoogleLiveProvider(AIProviderInterface):
                     call_id=self._call_id,
                     function=func_name,
                 )
+
+                if func_name == "hangup_call" and self._force_farewell_text:
+                    self._schedule_forced_farewell_if_needed()
                 
                 # Log tool call to session for call history (Milestone 21)
                 try:
@@ -1471,6 +1481,57 @@ class GoogleLiveProvider(AIProviderInterface):
             ids=ids,
             cancellation_keys=list(cancellation.keys()) if isinstance(cancellation, dict) else None,
         )
+
+    def _schedule_forced_farewell_if_needed(self) -> None:
+        if self._force_farewell_sent:
+            return
+        if self._force_farewell_task and not self._force_farewell_task.done():
+            return
+        self._force_farewell_task = asyncio.create_task(self._maybe_force_farewell_after_hangup())
+
+    async def _maybe_force_farewell_after_hangup(self) -> None:
+        try:
+            # Grace window: if the model starts speaking, don't send a duplicate farewell request.
+            await asyncio.sleep(0.9)
+            if not self._call_id or not self._setup_complete or not self._ws_is_open():
+                return
+            if not self._hangup_after_response:
+                return
+            if self._force_farewell_sent:
+                return
+            if self._hangup_fallback_audio_started:
+                return
+
+            farewell = (self._force_farewell_text or "").strip()
+            if not farewell:
+                return
+
+            msg = {
+                "clientContent": {
+                    "turns": [
+                        {
+                            "role": "user",
+                            "parts": [{"text": f"Please say exactly this farewell to the caller, then stop: {farewell}"}],
+                        }
+                    ],
+                    "turnComplete": True,
+                }
+            }
+            await self._send_message(msg)
+            self._force_farewell_sent = True
+            logger.info(
+                "✅ Forced farewell prompt sent after hangup_call (no audio observed)",
+                call_id=self._call_id,
+                farewell_preview=farewell[:80],
+            )
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug(
+                "Failed to send forced farewell prompt",
+                call_id=self._call_id,
+                exc_info=True,
+            )
 
     async def _track_conversation_message(self, role: str, text: str) -> None:
         """
@@ -1594,6 +1655,11 @@ class GoogleLiveProvider(AIProviderInterface):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._hangup_fallback_task
 
+        if self._force_farewell_task and not self._force_farewell_task.done():
+            self._force_farewell_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._force_farewell_task
+
         # Close WebSocket
         if self._ws_is_open():
             await self.websocket.close()
@@ -1609,6 +1675,8 @@ class GoogleLiveProvider(AIProviderInterface):
         self._hangup_fallback_emitted = False
         self._hangup_fallback_armed_at = None
         self._hangup_fallback_audio_started = False
+        self._force_farewell_text = ""
+        self._force_farewell_sent = False
         self._last_audio_out_monotonic = None
         self._user_end_intent = None
         self._assistant_farewell_intent = None

@@ -97,6 +97,9 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         self._hangup_after_response: bool = False  # Flag to trigger hangup after next response
         self._farewell_timeout_task: Optional[asyncio.Task] = None  # Timeout fallback for hangup
         self._in_audio_burst: bool = False
+        # Track whether ANY audio was emitted during a given response (response_id -> bool).
+        # _in_audio_burst is only "currently emitting", and is often false by response.done.
+        self._audio_seen_response_ids: set[str] = set()
         self._response_audio_start_time: Optional[float] = None  # Track when audio started for interruption cooldown
         self._min_response_time_before_interrupt: float = 2.5  # Minimum seconds of audio before allowing interruption (increased for farewells)
         self._first_output_chunk_logged: bool = False
@@ -1344,6 +1347,11 @@ class OpenAIRealtimeProvider(AIProviderInterface):
             response_id = response.get("id")
             if response_id:
                 self._current_response_id = response_id
+                # Reset per-response audio tracking.
+                try:
+                    self._audio_seen_response_ids.discard(response_id)
+                except Exception:
+                    pass
                 
                 # Mark first response as greeting response (protected from barge-in)
                 if not self._greeting_completed and self._greeting_response_id is None:
@@ -1451,8 +1459,11 @@ class OpenAIRealtimeProvider(AIProviderInterface):
             return
 
         if event_type in ("response.completed", "response.error", "response.cancelled", "response.done"):
-            # Track if audio was emitted during this response
-            had_audio_burst = self._in_audio_burst
+            # Track whether ANY audio was emitted during this response (not just "currently emitting").
+            current_response_id = self._current_response_id
+            had_audio_for_response = bool(
+                current_response_id and current_response_id in self._audio_seen_response_ids
+            )
             
             # Reset audio start time when response fully completes - allows interruption for next response
             self._response_audio_start_time = None
@@ -1465,7 +1476,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
             # Only emit additional audio_done if this response actually had audio output
             # This prevents premature hangup when tool responses complete (no audio yet)
             # The farewell response will emit audio_done when IT completes with audio
-            if event_type in ("response.completed", "response.done") and not had_audio_burst:
+            if event_type in ("response.completed", "response.done") and not had_audio_for_response:
                 # DEBUG: Log response details to understand why no audio
                 response_data = event.get("response", {})
                 output_items = response_data.get("output", [])
@@ -1496,7 +1507,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                 logger.info(
                     "✅ Greeting response completed - re-enabling turn_detection",
                     call_id=self._call_id,
-                    had_audio=had_audio_burst
+                    had_audio=had_audio_for_response
                 )
                 # Re-enable turn_detection now that greeting is fully generated
                 await self._re_enable_vad()
@@ -1528,7 +1539,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                 self._cancel_farewell_timeout()
                 
                 # If farewell has audio, trigger hangup immediately
-                if had_audio_burst:
+                if had_audio_for_response:
                     logger.info(
                         "🔚 Farewell response completed with audio - triggering hangup",
                         call_id=self._call_id,
@@ -1543,7 +1554,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                                 "type": "HangupReady",
                                 "call_id": self._call_id,
                                 "reason": "farewell_completed",
-                                "had_audio": had_audio_burst
+                                "had_audio": True
                             })
                     except Exception as e:
                         logger.error(
@@ -1581,6 +1592,13 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                 self._farewell_response_id = None
                 self._hangup_after_response = False
             
+            # Drop per-response audio tracking to avoid unbounded growth.
+            try:
+                if current_response_id:
+                    self._audio_seen_response_ids.discard(current_response_id)
+            except Exception:
+                pass
+
             self._pending_response = False
             self._current_response_id = None  # Clear response ID after completion
             if self._transcript_buffer:
@@ -1789,6 +1807,13 @@ class OpenAIRealtimeProvider(AIProviderInterface):
 
         if not raw_bytes:
             return
+        
+        # Mark audio observed for this response id (used for reliable hangup behavior).
+        try:
+            if self._current_response_id:
+                self._audio_seen_response_ids.add(self._current_response_id)
+        except Exception:
+            pass
 
         # Track turn latency on first audio output (Milestone 21 - Call History)
         if self._turn_start_time is not None and not self._turn_first_audio_received:

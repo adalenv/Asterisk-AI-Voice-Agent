@@ -1,12 +1,12 @@
-# Asterisk AI Voice Agent - Installation Guide (v5.1.4)
+# Asterisk AI Voice Agent - Installation Guide (v5.1.6)
 
-This guide provides detailed instructions for setting up the Asterisk AI Voice Agent v5.1.4 on your server.
+This guide provides detailed instructions for setting up the Asterisk AI Voice Agent v5.1.6 on your server.
 
 ## Three Setup Paths
 
 Choose the path that best fits your experience level:
 
-## Upgrade from v4.6.0 → v5.1.4 (Existing Checkout)
+## Upgrade from v4.6.0 → v5.1.6 (Existing Checkout)
 
 This section is for operators upgrading an existing repo checkout (not a fresh install).
 
@@ -18,11 +18,11 @@ This section is for operators upgrading an existing repo checkout (not a fresh i
 
 ### 1) Pull the new release
 
-Once `v5.1.4` is published:
+Once `v5.1.6` is published:
 
 ```bash
 git fetch --tags
-git checkout v5.1.4
+git checkout v5.1.6
 ```
 
 If you track branches instead of tags:
@@ -47,6 +47,47 @@ sudo ./preflight.sh --apply-fixes
 Preflight ensures required host directories exist with correct permissions, including:
 - `./data` (Call History SQLite and runtime state)
 - `./models/{stt,tts,llm,kroko}` (mounted into `ai_engine` and `local_ai_server` as `/app/models`)
+- `./asterisk_media/ai-generated` (mounted as `/mnt/asterisk_media/ai-generated` for generated audio)
+
+> Note: Admin UI health checks validate the media directory from within the `admin_ui` container.
+> On some systems Asterisk uses a non-default group ID; newer releases auto-detect this at `admin_ui` startup so the UI doesn't incorrectly warn after reboot.
+
+#### Media directory persistence across reboots (important)
+
+Generated audio is written to the host under:
+
+- `./asterisk_media/ai-generated` (host)
+- mounted into containers as `/mnt/asterisk_media/ai-generated`
+
+For **Asterisk file playback** (e.g., `sound:ai-generated/...`) the host Asterisk must be able to read those files under:
+
+- `/var/lib/asterisk/sounds/ai-generated`
+
+Preflight (and `install.sh`) uses the following strategy:
+
+1. **Prefer a symlink**: `/var/lib/asterisk/sounds/ai-generated` → `./asterisk_media/ai-generated` (works when the `asterisk` user can traverse the repo path).
+2. **Fallback to a bind mount** when the repo path is not accessible (common if the project is under `/root` with `0700` permissions):
+   - `/var/lib/asterisk/sounds/ai-generated` is bind-mounted to `./asterisk_media/ai-generated`
+   - The bind mount is **persisted in `/etc/fstab`** (systemd-friendly, best-effort) so it survives host reboots.
+
+Quick verification on the host:
+
+```bash
+ls -la /var/lib/asterisk/sounds/ai-generated
+mountpoint /var/lib/asterisk/sounds/ai-generated || true
+```
+
+If you use **external/shared storage** for media (common on FreePBX), you may have `./asterisk_media` as a symlink to something like `/mnt/asterisk_media`. In that case, you must also ensure the **external mount itself** is persisted across reboots (e.g., via `/etc/fstab` or a systemd mount unit). If the mount doesn’t come up after a reboot, the Admin UI will report a Host Directory error and you should:
+
+```bash
+sudo ./preflight.sh --apply-fixes
+```
+
+Tip: `--persist-media-mount` is available as a troubleshooting/verification helper when bind-mount mode is used:
+
+```bash
+sudo ./preflight.sh --apply-fixes --persist-media-mount
+```
 
 If preflight reports warnings or failures, resolve them first, then re-run preflight until it returns clean:
 - Troubleshooting: `docs/TROUBLESHOOTING_GUIDE.md`
@@ -141,16 +182,13 @@ See [Admin UI Setup Guide](../admin_ui/UI_Setup_Guide.md) for detailed instructi
 git clone https://github.com/hkjarral/Asterisk-AI-Voice-Agent.git
 cd Asterisk-AI-Voice-Agent
 
-	# Run installer
-	./install.sh
-
-	# Run CLI wizard
-	agent setup
-	```
+./install.sh
+agent setup
+```
 
 **Best for:** Headless servers, scripted deployments, CLI preference
 
-	> Note: `agent quickstart` and `agent init` are still available for backward compatibility, but `agent setup` is the recommended CLI wizard for v5.1.4.
+> Note: `agent quickstart` and `agent init` are still available for backward compatibility, but `agent setup` is the recommended CLI wizard for v5.1.6.
 
 ---
 
@@ -447,7 +485,7 @@ Add to `/etc/asterisk/extensions_custom.conf`:
 
 ```asterisk
 [from-ai-agent]
-exten => s,1,NoOp(Asterisk AI Voice Agent v5.1.4)
+exten => s,1,NoOp(Asterisk AI Voice Agent v5.1.6)
  same => n,Stasis(asterisk-ai-voice-agent)
  same => n,Hangup()
 ```

@@ -36,6 +36,7 @@ DISK_BLOCK_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB (hard stop for downloads)
 
 
 def _format_bytes(num_bytes: int) -> str:
+    """Format bytes into a human-readable string."""
     if num_bytes < 0:
         return "unknown"
     units = ["B", "KB", "MB", "GB", "TB"]
@@ -149,6 +150,7 @@ echo "models permissions fixed"
 
 
 def _ensure_models_dir_ready(path: str) -> None:
+    """Ensure a models directory exists and is writable (best-effort auto-remediation)."""
     def _is_writable_dir(dir_path: str) -> bool:
         if not os.path.isdir(dir_path):
             return False
@@ -197,6 +199,7 @@ def _ensure_models_dir_ready(path: str) -> None:
 
 
 def _url_content_length(url: str) -> Optional[int]:
+    """Return Content-Length for `url` (best-effort), or None when unavailable."""
     try:
         req = urllib.request.Request(url, method="HEAD")
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -209,6 +212,7 @@ def _url_content_length(url: str) -> Optional[int]:
 
 
 def _sha256_file(path: str) -> str:
+    """Compute SHA256 of a file."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
@@ -217,10 +221,12 @@ def _sha256_file(path: str) -> str:
 
 
 def _write_sha256_sidecar(path: str, sha256_hex: str) -> None:
+    """Write a `.sha256` sidecar for a downloaded artifact."""
     atomic_write_text(f"{path}.sha256", f"{sha256_hex}  {os.path.basename(path)}\n")
 
 
 def _is_within_directory(base_dir: str, candidate_path: str) -> bool:
+    """Return True when `candidate_path` resolves under `base_dir`."""
     base = os.path.abspath(base_dir)
     cand = os.path.abspath(candidate_path)
     return cand == base or cand.startswith(base + os.sep)
@@ -341,6 +347,7 @@ _latest_download_job_id: Optional[str] = None
 
 
 def _create_download_job(kind: str, *, current_file: str = "") -> DownloadJob:
+    """Create and register a new in-memory download job."""
     global _latest_download_job_id
     job_id = str(uuid.uuid4())
     job = DownloadJob(id=job_id, kind=kind)
@@ -357,6 +364,7 @@ def _create_download_job(kind: str, *, current_file: str = "") -> DownloadJob:
 
 
 def _get_download_job(job_id: Optional[str]) -> Optional[DownloadJob]:
+    """Return the requested job, or the most recent job if `job_id` is None."""
     with _download_jobs_lock:
         if job_id:
             return _download_jobs.get(job_id)
@@ -366,6 +374,7 @@ def _get_download_job(job_id: Optional[str]) -> Optional[DownloadJob]:
 
 
 def _job_output(job_id: str, line: str) -> None:
+    """Append a log line to a download job (trims to a fixed buffer)."""
     with _download_jobs_lock:
         job = _download_jobs.get(job_id)
         if not job:
@@ -376,6 +385,7 @@ def _job_output(job_id: str, line: str) -> None:
 
 
 def _job_set_progress(job_id: str, **updates: Any) -> None:
+    """Update progress fields for an in-flight download job."""
     with _download_jobs_lock:
         job = _download_jobs.get(job_id)
         if not job:
@@ -384,6 +394,7 @@ def _job_set_progress(job_id: str, **updates: Any) -> None:
 
 
 def _job_finish(job_id: str, *, completed: bool, error: Optional[str] = None) -> None:
+    """Mark a download job as finished (success or error)."""
     with _download_jobs_lock:
         job = _download_jobs.get(job_id)
         if not job:
@@ -1369,6 +1380,8 @@ class ModelSelection(BaseModel):
     kokoro_mode: Optional[str] = "local"
     kokoro_api_base_url: Optional[str] = None
     kokoro_api_key: Optional[str] = None
+    # Local Hybrid support: download/apply only STT/TTS (skip LLM model download/config)
+    skip_llm_download: Optional[bool] = False
     # New fields for exact model selection
     stt_model_id: Optional[str] = None  # exact model id (e.g., "vosk_en_us_small")
     tts_model_id: Optional[str] = None  # exact model id (e.g., "piper_en_us_lessac_medium")
@@ -1438,11 +1451,12 @@ async def download_selected_models(selection: ModelSelection):
     
     # Get model info from catalog - prefer exact model_id if provided
     stt_model = find_stt_model(selection.stt, selection.language, selection.stt_model_id)
-    llm_model = next((m for m in catalog["llm"] if m.get("id") == selection.llm), None)
+    skip_llm_download = bool(selection.skip_llm_download)
+    llm_model = None if skip_llm_download else next((m for m in catalog["llm"] if m.get("id") == selection.llm), None)
     tts_model = find_tts_model(selection.tts, selection.language, selection.tts_model_id)
 
     # Support custom GGUF LLM downloads (Wizard advanced path)
-    if selection.llm == "custom_gguf_url":
+    if not skip_llm_download and selection.llm == "custom_gguf_url":
         url = (selection.llm_download_url or "").strip()
         if not url:
             return {"status": "error", "message": "Custom LLM selected but llm_download_url is empty"}
@@ -1462,7 +1476,7 @@ async def download_selected_models(selection: ModelSelection):
 
     if not stt_model:
         return {"status": "error", "message": f"Unknown STT model: {selection.stt}"}
-    if not llm_model:
+    if not skip_llm_download and not llm_model:
         return {"status": "error", "message": f"Unknown LLM model: {selection.llm}"}
     if not tts_model:
         return {"status": "error", "message": f"Unknown TTS model: {selection.tts}"}
@@ -1478,7 +1492,7 @@ async def download_selected_models(selection: ModelSelection):
     if stt_model.get("download_url"):
         stt_url = stt_model["download_url"]
         urls.append((stt_url, any(x in stt_url.lower() for x in (".zip", ".tar", ".tgz"))))
-    if llm_model.get("download_url"):
+    if not skip_llm_download and llm_model and llm_model.get("download_url"):
         llm_url = llm_model["download_url"]
         urls.append((llm_url, False))
     if not skip_kokoro_download and tts_model.get("download_url"):
@@ -1501,6 +1515,8 @@ async def download_selected_models(selection: ModelSelection):
 
     job = _create_download_job("selected", current_file="models")
     _job_output(job.id, f"🌍 Selected language: {selection.language}")
+    if skip_llm_download:
+        _job_output(job.id, "ℹ️ Skipping LLM download (Local Hybrid mode)")
 
     def download_file(url: str, dest_path: str, label: str, expected_sha256: Optional[str] = None):
         """Download a file with progress reporting and write a sha256 sidecar."""
@@ -1653,15 +1669,16 @@ async def download_selected_models(selection: ModelSelection):
             else:
                 _job_output(job.id, f"ℹ️ STT: {stt_model['name']} (no download needed)")
             
-            # Download LLM model
-            if llm_model.get("download_url"):
-                llm_dir = os.path.join(models_dir, "llm")
-                os.makedirs(llm_dir, exist_ok=True)
-                dest = os.path.join(llm_dir, llm_model["model_path"])
-                if not download_file(llm_model["download_url"], dest, "LLM Model", llm_model.get("sha256")):
-                    success = False
-            else:
-                _job_output(job.id, f"ℹ️ LLM: {llm_model['name']} (no download needed)")
+            # Download LLM model (optional for Local Hybrid mode)
+            if not skip_llm_download and llm_model:
+                if llm_model.get("download_url"):
+                    llm_dir = os.path.join(models_dir, "llm")
+                    os.makedirs(llm_dir, exist_ok=True)
+                    dest = os.path.join(llm_dir, llm_model["model_path"])
+                    if not download_file(llm_model["download_url"], dest, "LLM Model", llm_model.get("sha256")):
+                        success = False
+                else:
+                    _job_output(job.id, f"ℹ️ LLM: {llm_model['name']} (no download needed)")
             
             # Download TTS model
             if skip_kokoro_download:
@@ -1715,6 +1732,10 @@ async def download_selected_models(selection: ModelSelection):
             # Persist backend selections (even if no download needed)
             env_updates.append(f"LOCAL_STT_BACKEND={stt_model.get('backend') or selection.stt}")
             env_updates.append(f"LOCAL_TTS_BACKEND={tts_model.get('backend') or selection.tts}")
+            if skip_llm_download:
+                env_updates.append("LOCAL_AI_MODE=minimal")
+            else:
+                env_updates.append("LOCAL_AI_MODE=full")
 
             # Kroko toggle (embedded vs cloud)
             if (stt_model.get("backend") or selection.stt) == "kroko":
@@ -1729,7 +1750,7 @@ async def download_selected_models(selection: ModelSelection):
                 else:
                     env_updates.append(f"LOCAL_STT_MODEL_PATH={stt_path}")
             
-            if llm_model.get("model_path") and llm_model.get("download_url"):
+            if not skip_llm_download and llm_model and llm_model.get("model_path") and llm_model.get("download_url"):
                 llm_path = os.path.join("/app/models/llm", llm_model["model_path"])
                 env_updates.append(f"LOCAL_LLM_MODEL_PATH={llm_path}")
             
@@ -1787,7 +1808,7 @@ async def download_selected_models(selection: ModelSelection):
     
     total_mb = (
         stt_model.get("size_mb", 0)
-        + llm_model.get("size_mb", 0)
+        + (0 if skip_llm_download or not llm_model else llm_model.get("size_mb", 0))
         + (0 if skip_kokoro_download else tts_model.get("size_mb", 0))
     )
     
@@ -1796,7 +1817,7 @@ async def download_selected_models(selection: ModelSelection):
         "message": f"Downloading {total_mb} MB of models...",
         "models": {
             "stt": stt_model["name"],
-            "llm": llm_model["name"],
+            "llm": None if skip_llm_download or not llm_model else llm_model["name"],
             "tts": tts_model["name"]
         },
         "job_id": job.id,
@@ -2507,6 +2528,7 @@ class SetupConfig(BaseModel):
 
 @router.post("/save")
 async def save_setup_config(config: SetupConfig):
+    """Persist wizard configuration into `.env` and baseline config files."""
     # Validation: Check for required keys based on provider
     if config.provider == "openai_realtime" and not config.openai_key:
             raise HTTPException(status_code=400, detail="OpenAI API Key is required for OpenAI Realtime provider")

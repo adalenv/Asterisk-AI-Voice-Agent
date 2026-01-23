@@ -1296,8 +1296,10 @@ async def get_directory_health():
     """
     project_root = os.getenv("PROJECT_ROOT", "/app/project")
     ast_media_dir = os.getenv("AST_MEDIA_DIR", "")
+    in_docker = bool(os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER", ""))
     
     # Expected paths
+    host_media_root = os.path.join(project_root, "asterisk_media")
     host_media_dir = os.path.join(project_root, "asterisk_media", "ai-generated")
     asterisk_sounds_link = "/var/lib/asterisk/sounds/ai-generated"
     container_media_dir = "/mnt/asterisk_media/ai-generated"
@@ -1311,7 +1313,12 @@ async def get_directory_health():
         },
         "host_directory": {
             "status": "unknown",
-            "path": host_media_dir,
+            "path": container_media_dir if in_docker else host_media_dir,
+            "media_root": host_media_root,
+            "media_root_is_symlink": False,
+            "media_root_symlink_target": None,
+            "media_root_resolved": None,
+            "paths_checked": [host_media_dir, container_media_dir],
             "exists": False,
             "writable": False,
             "message": ""
@@ -1340,23 +1347,59 @@ async def get_directory_health():
     
     # Check 2: Host directory exists and is writable
     try:
-        if os.path.exists(host_media_dir):
+        broken_media_root = False
+        if os.path.islink(host_media_root):
+            checks["host_directory"]["media_root_is_symlink"] = True
+            try:
+                checks["host_directory"]["media_root_symlink_target"] = os.readlink(host_media_root)
+            except OSError:
+                checks["host_directory"]["media_root_symlink_target"] = None
+            checks["host_directory"]["media_root_resolved"] = os.path.realpath(host_media_root)
+
+            # If the symlink target is missing, report an actionable error.
+            if not os.path.exists(checks["host_directory"]["media_root_resolved"] or ""):
+                # In Docker, the symlink may point to a host path that is not present inside the container,
+                # even though the actual media volume is mounted at /mnt/asterisk_media.
+                if in_docker and os.path.exists("/mnt/asterisk_media"):
+                    checks["host_directory"]["status"] = "warning"
+                    checks["host_directory"]["message"] = (
+                        "asterisk_media is a symlink but the container cannot verify its target path. "
+                        "This can be normal when Docker mounts the resolved host directory at /mnt/asterisk_media. "
+                        "If you see missing audio directories after a reboot, verify the host mount persists and restart containers."
+                    )
+                else:
+                    checks["host_directory"]["status"] = "error"
+                    checks["host_directory"]["message"] = (
+                        "asterisk_media is a symlink but its target is missing. "
+                        "This commonly happens after a reboot when the external media mount did not come up. "
+                        "Ensure the mount is persisted on the host (e.g., /etc/fstab or a systemd mount unit), "
+                        "then restart containers (or rerun preflight.sh on the host)."
+                    )
+                    broken_media_root = True
+
+        # Prefer checking the mounted media volume path from inside containers.
+        path_to_check = container_media_dir if in_docker else host_media_dir
+        if not broken_media_root and os.path.exists(path_to_check):
             checks["host_directory"]["exists"] = True
             # Test write permission
-            test_file = os.path.join(host_media_dir, ".write_test")
+            test_file = os.path.join(path_to_check, ".write_test")
             try:
                 with open(test_file, "w") as f:
                     f.write("test")
                 os.remove(test_file)
                 checks["host_directory"]["writable"] = True
-                checks["host_directory"]["status"] = "ok"
-                checks["host_directory"]["message"] = "Directory exists and is writable"
+                if checks["host_directory"]["status"] != "warning":
+                    checks["host_directory"]["status"] = "ok"
+                    checks["host_directory"]["message"] = "Directory exists and is writable"
             except PermissionError:
                 checks["host_directory"]["status"] = "error"
                 checks["host_directory"]["message"] = "Directory exists but not writable"
-        else:
+        elif not broken_media_root:
             checks["host_directory"]["status"] = "error"
-            checks["host_directory"]["message"] = "Directory does not exist"
+            if in_docker:
+                checks["host_directory"]["message"] = f"Directory does not exist (checked: {path_to_check})"
+            else:
+                checks["host_directory"]["message"] = "Directory does not exist"
     except Exception as e:
         checks["host_directory"]["status"] = "error"
         checks["host_directory"]["message"] = f"Error checking directory: {str(e)}"
@@ -1366,8 +1409,6 @@ async def get_directory_health():
     # /var/lib/asterisk/sounds is on the host and not mounted into the container.
     # If the other checks pass, assume symlink is OK (user can verify with test call).
     try:
-        in_docker = os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER", "")
-        
         if os.path.islink(asterisk_sounds_link):
             checks["asterisk_symlink"]["exists"] = True
             target = os.readlink(asterisk_sounds_link)
@@ -1383,8 +1424,14 @@ async def get_directory_health():
                 checks["asterisk_symlink"]["message"] = f"Symlink points to {target}, expected {host_media_dir}"
         elif os.path.exists(asterisk_sounds_link):
             checks["asterisk_symlink"]["exists"] = True
-            checks["asterisk_symlink"]["status"] = "warning"
-            checks["asterisk_symlink"]["message"] = "Path exists but is not a symlink"
+            # If running on host and it's a mount point, treat as OK (bind mount mode).
+            if not in_docker and os.path.ismount(asterisk_sounds_link):
+                checks["asterisk_symlink"]["status"] = "ok"
+                checks["asterisk_symlink"]["valid"] = True
+                checks["asterisk_symlink"]["message"] = "Bind mount present (Asterisk can read generated audio)"
+            else:
+                checks["asterisk_symlink"]["status"] = "warning"
+                checks["asterisk_symlink"]["message"] = "Path exists but is not a symlink"
         elif in_docker:
             # Running in Docker - can't verify symlink but if other checks pass, assume OK
             checks["asterisk_symlink"]["status"] = "ok"
@@ -1421,29 +1468,103 @@ async def fix_directory_issues():
     import subprocess
     
     project_root = os.getenv("PROJECT_ROOT", "/app/project")
+    host_media_root = os.path.join(project_root, "asterisk_media")
     host_media_dir = os.path.join(project_root, "asterisk_media", "ai-generated")
     asterisk_sounds_link = "/var/lib/asterisk/sounds/ai-generated"
-    in_docker = os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER", "")
+    in_docker = bool(os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER", ""))
     
     fixes_applied = []
     errors = []
     manual_steps = []
+
+    desired_gid = 995
+    try:
+        env_gid = (_dotenv_value("ASTERISK_GID") or "").strip()
+        if env_gid.isdigit():
+            desired_gid = int(env_gid)
+    except Exception:
+        desired_gid = 995
+    desired_uid = 1000
+
+    path_to_fix = "/mnt/asterisk_media/ai-generated" if in_docker else host_media_dir
+    
+    # If asterisk_media is a symlink to a missing target (common after reboot with external mounts),
+    # auto-fix inside the container cannot repair it.
+    try:
+        if os.path.islink(host_media_root):
+            resolved = os.path.realpath(host_media_root)
+            if not os.path.exists(resolved):
+                # Inside Docker, the symlink may point to a host path that isn't present in the container.
+                # If the media volume is mounted at /mnt/asterisk_media, don't hard-fail on this probe.
+                if in_docker and os.path.exists("/mnt/asterisk_media"):
+                    logger.debug(
+                        "asterisk_media symlink target not visible inside container; ignoring (resolved=%s)",
+                        resolved,
+                    )
+                else:
+                    errors.append(
+                        f"asterisk_media points to missing target: {host_media_root} -> {resolved}"
+                    )
+                    manual_steps.append(
+                        "Ensure your external media mount persists across reboots (e.g., /etc/fstab or systemd mount unit), then restart containers."
+                    )
+                    manual_steps.append("Run on host: sudo ./preflight.sh --apply-fixes")
+                    return {
+                        "success": False,
+                        "fixes_applied": fixes_applied,
+                        "errors": errors,
+                        "manual_steps": manual_steps,
+                        "restart_required": False,
+                    }
+    except Exception:
+        logger.debug("Failed to inspect asterisk_media symlink target", exc_info=True)
+
+    # Prefer applying permission fixes on the host via Docker when running inside a container.
+    # This avoids discrepancies between container-visible paths and host bind-mount resolution.
+    if in_docker:
+        try:
+            client = docker.from_env()
+            container = client.containers.get("admin_ui")
+            mounts = container.attrs.get("Mounts", []) or []
+            host_project_path = None
+            for m in mounts:
+                if m.get("Destination") == "/app/project":
+                    host_project_path = m.get("Source")
+                    break
+
+            if host_project_path:
+                script = f"""
+set -eu
+mkdir -p /project/asterisk_media/ai-generated
+chown {desired_uid}:{desired_gid} /project/asterisk_media /project/asterisk_media/ai-generated || true
+chmod 2750 /project/asterisk_media /project/asterisk_media/ai-generated || true
+echo "media permissions fixed"
+"""
+                output = client.containers.run(
+                    "alpine:latest",
+                    command=["sh", "-c", script],
+                    volumes={host_project_path: {"bind": "/project", "mode": "rw"}},
+                    remove=True,
+                )
+                msg = (output.decode().strip() if output else "").strip()
+                if msg:
+                    fixes_applied.append(msg)
+            else:
+                manual_steps.append("Could not detect host project path for /app/project mount (admin_ui)")
+        except Exception:
+            logger.debug("Failed to apply host-side media permission fix via Docker", exc_info=True)
+            manual_steps.append("Run on host: sudo ./preflight.sh --apply-fixes")
     
     # Fix 1: Create directory if missing
     try:
-        os.makedirs(host_media_dir, mode=0o777, exist_ok=True)
-        fixes_applied.append(f"Created directory: {host_media_dir}")
+        os.makedirs(path_to_fix, exist_ok=True)
+        fixes_applied.append(f"Ensured directory exists: {path_to_fix}")
     except Exception as e:
         errors.append(f"Failed to create directory: {str(e)}")
     
-    # Fix 2: Set permissions
-    try:
-        os.chmod(host_media_dir, 0o777)
-        parent_dir = os.path.dirname(host_media_dir)
-        os.chmod(parent_dir, 0o777)
-        fixes_applied.append(f"Set permissions 777 on {host_media_dir}")
-    except Exception as e:
-        errors.append(f"Failed to set permissions: {str(e)}")
+    # Fix 2: Permissions are best applied on the host via preflight/install to keep
+    # Asterisk + containers aligned. Avoid chmod here (CodeQL flags group/world bits).
+    manual_steps.append("For permission alignment, run on host: sudo ./preflight.sh --apply-fixes")
     
     # Fix 3: Symlink - can only be done from host, not container
     if in_docker:
@@ -1830,88 +1951,105 @@ def _detect_compose():
         "status": "error",
         "message": "Docker Compose not detected"
     }
-    
-    # Method 1: Try docker compose (v2 plugin) via subprocess
-    try:
-        result = subprocess.run(
-            ["docker", "compose", "version", "--short"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            version = result.stdout.strip().lstrip("v")
-            compose_info["installed"] = True
-            compose_info["version"] = version
-            compose_info["type"] = "plugin"
-            compose_info["status"] = "ok"
-            compose_info["message"] = None
-            
-            # Check version - v2.x.x format
-            try:
-                parts = version.split(".")
-                major = int(parts[0])
-                minor = int(parts[1]) if len(parts) > 1 else 0
-                if major >= 2:
-                    if minor < 20:
-                        compose_info["status"] = "warning"
-                        compose_info["message"] = "Upgrade to Compose 2.20+ recommended"
-                    # v2.20+ is good
-                elif major == 1:
-                    compose_info["status"] = "error"
-                    compose_info["message"] = "Compose v1 is EOL and unsupported"
-            except:
-                pass
-            
-            return compose_info
-    except Exception as e:
-        # Docker CLI not available in container
-        pass
-    
-    # Method 2: Infer from Docker SDK - if we're running in compose, it's v2
-    try:
-        client = docker.from_env()
-        # Check if any containers are managed by compose
-        for container in client.containers.list():
-            labels = container.labels
-            if "com.docker.compose.version" in labels:
-                version = labels.get("com.docker.compose.version", "")
-                compose_info["installed"] = True
-                compose_info["version"] = version
-                compose_info["type"] = "plugin"
-                compose_info["status"] = "ok"
-                compose_info["message"] = None
-                
-                # Check version
-                try:
-                    parts = version.split(".")
-                    major = int(parts[0])
-                    minor = int(parts[1]) if len(parts) > 1 else 0
-                    if major >= 2:
-                        if minor < 20:
-                            compose_info["status"] = "warning"
-                            compose_info["message"] = "Upgrade to Compose 2.20+ recommended"
-                    elif major == 1:
-                        compose_info["status"] = "error"
-                        compose_info["message"] = "Compose v1 is EOL and unsupported"
-                except:
-                    pass
-                
-                return compose_info
-    except:
-        pass
-    
-    # Method 3: Try docker-compose (v1 standalone) - last resort
-    try:
-        result = subprocess.run(
-            ["docker-compose", "version", "--short"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            compose_info["installed"] = True
-            compose_info["version"] = result.stdout.strip().lstrip("v")
-            compose_info["type"] = "standalone_v1"
+
+    def _parse_version(text: str) -> str:
+        import re
+
+        if not text:
+            return ""
+        text = text.strip()
+        # Common outputs:
+        # - "v2.24.6"
+        # - "2.24.6"
+        # - "Docker Compose version v2.24.6"
+        m = re.search(r"\bv?(\d+\.\d+\.\d+)\b", text)
+        return m.group(1) if m else ""
+
+    def _classify_version(version: str) -> None:
+        # version is normalized to "X.Y.Z"
+        try:
+            parts = version.split(".")
+            major = int(parts[0])
+            minor = int(parts[1]) if len(parts) > 1 else 0
+        except Exception:
+            return
+
+        if major > 2:
+            # Compose may report major versions >2 depending on packaging; treat as modern.
+            return
+        if major == 2:
+            if minor < 20:
+                compose_info["status"] = "warning"
+                compose_info["message"] = "Upgrade to Compose 2.20+ recommended"
+        elif major == 1:
             compose_info["status"] = "error"
             compose_info["message"] = "Compose v1 is EOL and unsupported"
-    except:
+
+    # Method 1 (preferred): Infer host Compose version from Docker container labels.
+    # Compose is client-side; the most reliable way to learn the *host* Compose version
+    # (when running Admin UI inside a container) is the version label attached to
+    # containers created by Compose on the host.
+    #
+    # Note: this reflects the Compose version used to create/recreate the current stack.
+    try:
+        client = docker.from_env()
+        versions = []
+        for container in client.containers.list():
+            labels = container.labels or {}
+            v = (labels.get("com.docker.compose.version") or "").strip().lstrip("v")
+            if v:
+                versions.append(v)
+
+        if versions:
+            # If multiple versions exist, pick the most common.
+            from collections import Counter
+
+            version = Counter(versions).most_common(1)[0][0]
+            compose_info["installed"] = True
+            compose_info["version"] = version
+            compose_info["type"] = "host_label"
+            compose_info["status"] = "ok"
+            compose_info["message"] = None
+            _classify_version(version)
+            return compose_info
+    except Exception:
+        pass
+
+    # Method 2: Use the same compose command resolution we use for operations (container CLI).
+    try:
+        compose_cmd = get_docker_compose_cmd()
+        # First try `version --short` (supported by docker compose and docker-compose v2)
+        result = subprocess.run(
+            compose_cmd + ["version", "--short"],
+            capture_output=True, text=True, timeout=5
+        )
+        out = (result.stdout or "").strip()
+        if result.returncode != 0 or not out:
+            # Fall back to full `version` output and parse.
+            result = subprocess.run(
+                compose_cmd + ["version"],
+                capture_output=True, text=True, timeout=5
+            )
+            out = (result.stdout or "") + "\n" + (result.stderr or "")
+
+        version = _parse_version(out)
+        if version:
+            compose_info["installed"] = True
+            compose_info["version"] = version
+            compose_info["status"] = "ok"
+            compose_info["message"] = None
+
+            # Type
+            if len(compose_cmd) >= 2 and compose_cmd[-1] == "compose":
+                compose_info["type"] = "plugin"
+            else:
+                # docker-compose binary can be v1 or v2
+                compose_info["type"] = "standalone"
+
+            _classify_version(version)
+            return compose_info
+    except Exception:
+        # Compose CLI not available inside container (or docker not in PATH).
         pass
     
     return compose_info

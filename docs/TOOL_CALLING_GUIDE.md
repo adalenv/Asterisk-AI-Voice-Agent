@@ -1,8 +1,8 @@
 # Tool Calling Guide
 
-**Version**: 4.1  
+**Version**: 4.2  
 **Status**: Production Ready  
-**Last Updated**: November 2025
+**Last Updated**: January 2026
 
 Complete guide to AI tool calling in Asterisk AI Voice Agent—enabling AI agents to perform actions like call transfers and email management.
 
@@ -13,6 +13,8 @@ Complete guide to AI tool calling in Asterisk AI Voice Agent—enabling AI agent
 - [Overview](#overview)
 - [Supported Providers](#supported-providers)
 - [Available Tools](#available-tools)
+- [Pre-Call Tools (HTTP Lookups)](#pre-call-tools-http-lookups)
+- [Post-Call Tools (Webhooks)](#post-call-tools-webhooks)
 - [Configuration](#configuration)
 - [Dialplan Setup](#dialplan-setup)
 - [Testing](#testing)
@@ -265,6 +267,316 @@ AI: Hello! Thanks for calling. How can I help you today?
 Caller: I need help with my account
 AI: I'd be happy to help. Let me transfer you to support.
 ...
+```
+
+---
+
+## Pre-Call Tools (HTTP Lookups)
+
+**New in v4.2** — Pre-call tools run after call answer but before AI speaks, enabling CRM enrichment and caller data lookup.
+
+### Pre-Call Overview
+
+Pre-call tools fetch external data (e.g., CRM contact info, account status) and inject it into AI prompts via output variables. This allows the AI to greet callers by name, reference their account, or provide personalized service.
+
+### Generic HTTP Lookup Tool
+
+The `generic_http_lookup` tool makes HTTP requests to external APIs and maps response fields to prompt variables.
+
+**Configuration Example (GoHighLevel)**:
+
+```yaml
+tools:
+  http_lookups:
+    ghl_contact_lookup:
+      kind: generic_http_lookup
+      phase: pre_call
+      enabled: true
+      timeout_ms: 2000
+      hold_audio_file: "custom/please-wait"  # Optional MOH during lookup
+      hold_audio_threshold_ms: 500           # Play if lookup takes >500ms
+      url: "https://rest.gohighlevel.com/v1/contacts/lookup"
+      method: GET
+      headers:
+        Authorization: "Bearer ${GHL_API_KEY}"
+      query_params:
+        phone: "{caller_number}"
+      output_variables:
+        customer_name: "contacts[0].firstName"
+        customer_email: "contacts[0].email"
+        account_type: "contacts[0].customFields.account_type"
+```
+
+**Variable Substitution**:
+
+| Variable | Description |
+|----------|-------------|
+| `{caller_number}` | Caller's phone number (ANI) |
+| `{called_number}` | DID that was called |
+| `{caller_name}` | Caller ID name |
+| `{context_name}` | AI_CONTEXT from dialplan |
+| `{call_id}` | Unique call identifier |
+| `{campaign_id}` | Outbound campaign ID |
+| `{lead_id}` | Outbound lead ID |
+| `${ENV_VAR}` | Environment variable |
+
+**Response Path Extraction**:
+
+- Simple fields: `"firstName"` → `response["firstName"]`
+- Nested fields: `"contact.email"` → `response["contact"]["email"]`
+- Array access: `"contacts[0].name"` → `response["contacts"][0]["name"]`
+
+**Using Output Variables in Prompts**:
+
+```yaml
+contexts:
+  support:
+    prompt: |
+      You are a helpful support agent.
+      The caller's name is {customer_name}.
+      Their account type is {account_type}.
+      Greet them by name and offer personalized assistance.
+    tools:
+      - hangup_call
+      - transfer
+```
+
+### Pre-Call Example Configurations
+
+**HubSpot Contact Lookup**:
+
+```yaml
+tools:
+  http_lookups:
+    hubspot_lookup:
+      kind: generic_http_lookup
+      enabled: true
+      timeout_ms: 3000
+      url: "https://api.hubapi.com/crm/v3/objects/contacts/search"
+      method: POST
+      headers:
+        Authorization: "Bearer ${HUBSPOT_API_KEY}"
+        Content-Type: "application/json"
+      body_template: |
+        {
+          "filterGroups": [{
+            "filters": [{
+              "propertyName": "phone",
+              "operator": "EQ",
+              "value": "{caller_number}"
+            }]
+          }]
+        }
+      output_variables:
+        customer_name: "results[0].properties.firstname"
+        customer_company: "results[0].properties.company"
+```
+
+**Custom CRM API**:
+
+```yaml
+tools:
+  http_lookups:
+    custom_crm:
+      kind: generic_http_lookup
+      enabled: true
+      url: "https://api.yourcrm.com/v1/lookup"
+      method: GET
+      headers:
+        X-API-Key: "${CRM_API_KEY}"
+      query_params:
+        phone: "{caller_number}"
+        context: "{context_name}"
+      output_variables:
+        customer_name: "data.full_name"
+        customer_status: "data.status"
+        last_interaction: "data.last_call_date"
+```
+
+---
+
+## Post-Call Tools (Webhooks)
+
+**New in v4.2** — Post-call tools run after call ends, enabling webhook notifications to external systems.
+
+### Post-Call Overview
+
+Post-call tools are fire-and-forget—they execute after cleanup and don't block the call flow. Use them to:
+
+- Send call data to CRMs (GoHighLevel, HubSpot)
+- Trigger automation workflows (n8n, Make, Zapier)
+- Update external databases
+- Generate AI-powered call summaries
+
+### Generic Webhook Tool
+
+The `generic_webhook` tool sends HTTP requests with call data to external endpoints.
+
+**Configuration Example (n8n Webhook)**:
+
+```yaml
+tools:
+  http_webhooks:
+    n8n_call_completed:
+      kind: generic_webhook
+      phase: post_call
+      enabled: true
+      is_global: true              # Run for ALL calls
+      timeout_ms: 10000
+      url: "https://n8n.yourserver.com/webhook/call-completed"
+      method: POST
+      headers:
+        Authorization: "Bearer ${N8N_WEBHOOK_TOKEN}"
+        Content-Type: "application/json"
+      payload_template: |
+        {
+          "call_id": "{call_id}",
+          "caller_number": "{caller_number}",
+          "called_number": "{called_number}",
+          "caller_name": "{caller_name}",
+          "context": "{context_name}",
+          "provider": "{provider}",
+          "duration_seconds": {call_duration},
+          "outcome": "{call_outcome}",
+          "start_time": "{call_start_time}",
+          "end_time": "{call_end_time}",
+          "transcript": {transcript_json},
+          "summary": "{summary}"
+        }
+```
+
+**AI-Powered Summary Generation**:
+
+```yaml
+tools:
+  http_webhooks:
+    crm_update:
+      kind: generic_webhook
+      enabled: true
+      is_global: true
+      url: "https://api.crm.com/calls"
+      generate_summary: true        # Generate AI summary using OpenAI
+      summary_max_words: 100        # Limit summary length
+      payload_template: |
+        {
+          "phone": "{caller_number}",
+          "summary": "{summary}",
+          "transcript": {transcript_json}
+        }
+```
+
+When `generate_summary: true`, the tool uses OpenAI to create a concise summary of the conversation before sending the webhook.
+
+**Payload Variables**:
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `{call_id}` | string | Unique call identifier |
+| `{caller_number}` | string | Caller's phone number |
+| `{called_number}` | string | DID that was called |
+| `{caller_name}` | string | Caller ID name |
+| `{context_name}` | string | AI context used |
+| `{provider}` | string | AI provider (deepgram, openai_realtime, etc.) |
+| `{call_direction}` | string | "inbound" or "outbound" |
+| `{call_duration}` | number | Duration in seconds |
+| `{call_outcome}` | string | Outcome (completed, transferred, etc.) |
+| `{call_start_time}` | string | ISO timestamp |
+| `{call_end_time}` | string | ISO timestamp |
+| `{transcript_json}` | JSON | Full conversation as JSON array |
+| `{summary}` | string | AI-generated summary (if enabled) |
+| `{campaign_id}` | string | Outbound campaign ID |
+| `{lead_id}` | string | Outbound lead ID |
+
+**Note**: `{transcript_json}` is inserted as raw JSON (not quoted), so place it directly in the template without quotes.
+
+### Post-Call Example Configurations
+
+**GoHighLevel Contact Update**:
+
+```yaml
+tools:
+  http_webhooks:
+    ghl_update:
+      kind: generic_webhook
+      enabled: true
+      is_global: true
+      url: "https://rest.gohighlevel.com/v1/contacts/{lead_id}/notes"
+      method: POST
+      headers:
+        Authorization: "Bearer ${GHL_API_KEY}"
+        Content-Type: "application/json"
+      generate_summary: true
+      payload_template: |
+        {
+          "body": "AI Call Summary:\n{summary}\n\nDuration: {call_duration}s"
+        }
+```
+
+**Make (Integromat) Webhook**:
+
+```yaml
+tools:
+  http_webhooks:
+    make_webhook:
+      kind: generic_webhook
+      enabled: true
+      is_global: true
+      url: "https://hook.us1.make.com/xxxxxxxxxxxxx"
+      method: POST
+      payload_template: |
+        {
+          "event": "call_completed",
+          "data": {
+            "call_id": "{call_id}",
+            "phone": "{caller_number}",
+            "duration": {call_duration},
+            "transcript": {transcript_json}
+          }
+        }
+```
+
+**Zapier Webhook**:
+
+```yaml
+tools:
+  http_webhooks:
+    zapier_trigger:
+      kind: generic_webhook
+      enabled: true
+      is_global: true
+      url: "https://hooks.zapier.com/hooks/catch/xxxxx/yyyyy/"
+      method: POST
+      generate_summary: true
+      payload_template: |
+        {
+          "caller_phone": "{caller_number}",
+          "call_summary": "{summary}",
+          "call_duration": {call_duration},
+          "timestamp": "{call_end_time}"
+        }
+```
+
+### Context-Specific Webhooks
+
+Run webhooks only for specific contexts:
+
+```yaml
+tools:
+  http_webhooks:
+    sales_webhook:
+      kind: generic_webhook
+      enabled: true
+      is_global: false              # Not global
+      url: "https://sales.example.com/webhook"
+      payload_template: |
+        {"call_id": "{call_id}", "outcome": "{call_outcome}"}
+
+contexts:
+  sales:
+    tools:
+      - transfer
+      - hangup_call
+      - sales_webhook              # Only runs for sales context
 ```
 
 ---
@@ -852,6 +1164,11 @@ request_transcript:
 - `src/tools/business/request_transcript.py` (475 lines) - Transcript request tool
 - `src/tools/business/email_summary.py` (347 lines) - Email summary tool
 
+**HTTP Tools (v4.2+)**:
+- `src/tools/http/generic_lookup.py` - Pre-call HTTP lookup tool
+- `src/tools/http/generic_webhook.py` - Post-call webhook tool
+- `src/tools/context.py` - PreCallContext, PostCallContext dataclasses
+
 **Integration**:
 - `src/engine.py` (lines 433-440) - Tool registry initialization
 - `src/providers/deepgram.py` (lines 807-857, 1137-1151) - Deepgram tool integration
@@ -896,6 +1213,6 @@ Tools written once, work with any provider.
 
 ---
 
-**Last Updated**: November 10, 2025  
-**Version**: 4.1.0  
+**Last Updated**: January 2026  
+**Version**: 4.2.0  
 **Status**: ✅ Production Ready

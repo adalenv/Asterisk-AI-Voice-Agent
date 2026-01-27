@@ -858,24 +858,25 @@ contexts:
 - Fix: Changed to f-string format in `generic_webhook.py` and `generic_lookup.py`
 - Commit: 09a8d89
 
-### Phase 5 — Admin UI (1 week) — DEFERRED
+### Phase 5 — Admin UI (1 week) ✅ COMPLETE (Jan 26, 2026)
 
 **Tools Page Enhancements**:
-- Three-tab layout (Pre-Call, In-Call, Post-Call)
-- Tool configuration modals with HTTP settings
-- Output variable mapping UI
-- Test connection button
+- ✅ Three-tab layout (Pre-Call, In-Call, Post-Call)
+- ✅ HTTPToolForm component for webhook/lookup configuration
+- ✅ URL, headers, payload template, output variable mapping UI
+- ✅ Add/edit/delete HTTP tools with modal dialogs
 
 **Context Page Enhancements**:
-- Three collapsible tool sections per context
-- Global tool indicators (🔒 icon) with per-context opt-out
-- Checkbox enable/disable for per-context tools
-- Available variables hint in prompt editor
+- ✅ Three collapsible tool sections per context (Pre-Call, In-Call, Post-Call)
+- ✅ Global tool indicators (🔒 icon)
+- ✅ Checkbox enable/disable for per-context pre_call_tools and post_call_tools
+- ✅ Pass httpTools from config to ContextForm
 
-**Files to modify**:
-- `admin_ui/frontend/src/pages/ToolsPage.tsx`
-- `admin_ui/frontend/src/components/config/ToolsConfig.tsx`
-- `admin_ui/frontend/src/pages/ContextsPage.tsx` (or equivalent)
+**Files modified**:
+- `admin_ui/frontend/src/pages/ToolsPage.tsx` — Phase tabs + HTTPToolForm integration
+- `admin_ui/frontend/src/components/config/HTTPToolForm.tsx` — NEW: HTTP tool config UI
+- `admin_ui/frontend/src/components/config/ContextForm.tsx` — Phase-based tool sections
+- `admin_ui/frontend/src/pages/ContextsPage.tsx` — Pass httpTools prop
 
 ### Phase 6 — Testing & Documentation (0.5 week)
 

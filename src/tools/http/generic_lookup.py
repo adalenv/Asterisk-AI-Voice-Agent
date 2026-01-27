@@ -102,11 +102,11 @@ class GenericHTTPLookupTool(PreCallTool):
         results: Dict[str, str] = {var: "" for var in self.config.output_variables.keys()}
         
         if not self.config.enabled:
-            logger.debug("HTTP lookup tool disabled", tool=self.config.name)
+            logger.debug(f"HTTP lookup tool disabled: {self.config.name}")
             return results
         
         if not self.config.url:
-            logger.warning("HTTP lookup tool has no URL configured", tool=self.config.name)
+            logger.warning(f"HTTP lookup tool has no URL configured: {self.config.name}")
             return results
         
         try:
@@ -125,10 +125,7 @@ class GenericHTTPLookupTool(PreCallTool):
             if self.config.body_template:
                 body = self._substitute_variables(self.config.body_template, context)
             
-            logger.info("Executing HTTP lookup",
-                       tool=self.config.name,
-                       url=self._redact_url(url),
-                       method=self.config.method)
+            logger.info(f"Executing HTTP lookup: {self.config.name} {self.config.method} {self._redact_url(url)}")
             
             # Make request
             timeout = aiohttp.ClientTimeout(total=self.config.timeout_ms / 1000.0)
@@ -143,44 +140,29 @@ class GenericHTTPLookupTool(PreCallTool):
                     # Check response size
                     content_length = response.headers.get('Content-Length')
                     if content_length and int(content_length) > self.config.max_response_size_bytes:
-                        logger.warning("Response too large, skipping",
-                                      tool=self.config.name,
-                                      size=content_length,
-                                      max_size=self.config.max_response_size_bytes)
+                        logger.warning(f"Response too large, skipping: {self.config.name} size={content_length} max={self.config.max_response_size_bytes}")
                         return results
                     
                     if response.status != 200:
-                        logger.warning("HTTP lookup returned non-200",
-                                      tool=self.config.name,
-                                      status=response.status)
+                        logger.warning(f"HTTP lookup returned non-200: {self.config.name} status={response.status}")
                         return results
                     
                     # Parse JSON response
                     try:
                         data = await response.json()
                     except Exception as e:
-                        logger.warning("Failed to parse JSON response",
-                                      tool=self.config.name,
-                                      error=str(e))
+                        logger.warning(f"Failed to parse JSON response: {self.config.name} error={e}")
                         return results
                     
                     # Extract output variables
                     results = self._extract_output_variables(data)
                     
-                    logger.info("HTTP lookup completed",
-                               tool=self.config.name,
-                               status=response.status,
-                               output_keys=list(results.keys()))
+                    logger.info(f"HTTP lookup completed: {self.config.name} status={response.status} keys={list(results.keys())}")
         
         except aiohttp.ClientError as e:
-            logger.warning("HTTP lookup request failed",
-                          tool=self.config.name,
-                          error=str(e))
+            logger.warning(f"HTTP lookup request failed: {self.config.name} error={e}")
         except Exception as e:
-            logger.error("HTTP lookup unexpected error",
-                        tool=self.config.name,
-                        error=str(e),
-                        exc_info=True)
+            logger.error(f"HTTP lookup unexpected error: {self.config.name} error={e}", exc_info=True)
         
         return results
     

@@ -103,11 +103,11 @@ class GenericWebhookTool(PostCallTool):
             context: PostCallContext with comprehensive call data
         """
         if not self.config.enabled:
-            logger.debug("Webhook tool disabled", tool=self.config.name)
+            logger.debug(f"Webhook tool disabled: {self.config.name}")
             return
         
         if not self.config.url:
-            logger.warning("Webhook tool has no URL configured", tool=self.config.name)
+            logger.warning(f"Webhook tool has no URL configured: {self.config.name}")
             return
         
         try:
@@ -130,10 +130,7 @@ class GenericWebhookTool(PostCallTool):
                 # Default payload using context's to_payload_dict
                 payload = json.dumps(context.to_payload_dict())
             
-            logger.info("Sending webhook",
-                       tool=self.config.name,
-                       url=self._redact_url(url),
-                       method=self.config.method)
+            logger.info(f"Sending webhook: {self.config.name} {self.config.method} {self._redact_url(url)}")
             
             # Make request (fire-and-forget)
             timeout = aiohttp.ClientTimeout(total=self.config.timeout_ms / 1000.0)
@@ -147,9 +144,7 @@ class GenericWebhookTool(PostCallTool):
                     status = response.status
                     
                     if 200 <= status < 300:
-                        logger.info("Webhook sent successfully",
-                                   tool=self.config.name,
-                                   status=status)
+                        logger.info(f"Webhook sent successfully: {self.config.name} status={status}")
                     else:
                         # Log but don't fail (fire-and-forget)
                         body_preview = ""
@@ -158,20 +153,12 @@ class GenericWebhookTool(PostCallTool):
                             body_preview = body[:200] if body else ""
                         except Exception:
                             pass
-                        logger.warning("Webhook returned non-2xx",
-                                      tool=self.config.name,
-                                      status=status,
-                                      body_preview=body_preview)
+                        logger.warning(f"Webhook returned non-2xx: {self.config.name} status={status} body={body_preview}")
         
         except aiohttp.ClientError as e:
-            logger.warning("Webhook request failed",
-                          tool=self.config.name,
-                          error=str(e))
+            logger.warning(f"Webhook request failed: {self.config.name} error={e}")
         except Exception as e:
-            logger.error("Webhook unexpected error",
-                        tool=self.config.name,
-                        error=str(e),
-                        exc_info=True)
+            logger.error(f"Webhook unexpected error: {self.config.name} error={e}", exc_info=True)
     
     def _build_payload(self, context: PostCallContext) -> str:
         """

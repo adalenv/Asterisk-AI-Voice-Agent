@@ -1,0 +1,121 @@
+# GoHighLevel Integration Example
+# ================================
+# Pre-call CRM lookup + Post-call contact note update
+#
+# Required Environment Variables:
+#   GHL_API_KEY - GoHighLevel API key (Location Access Token)
+#   GHL_LOCATION_ID - GoHighLevel Location ID (optional, for some endpoints)
+#
+# Documentation: https://highlevel.stoplight.io/docs/integrations
+
+tools:
+  # ============================================================================
+  # PRE-CALL: Lookup contact by phone number
+  # ============================================================================
+  http_lookups:
+    ghl_contact_lookup:
+      kind: generic_http_lookup
+      phase: pre_call
+      enabled: true
+      timeout_ms: 2000
+      hold_audio_file: "custom/please-wait"  # Play MOH if lookup takes >500ms
+      hold_audio_threshold_ms: 500
+      
+      # GHL Contact Lookup API
+      url: "https://rest.gohighlevel.com/v1/contacts/lookup"
+      method: GET
+      headers:
+        Authorization: "Bearer ${GHL_API_KEY}"
+      query_params:
+        phone: "{caller_number}"
+      
+      # Map GHL response fields to prompt variables
+      output_variables:
+        customer_name: "contacts[0].firstName"
+        customer_last_name: "contacts[0].lastName"
+        customer_email: "contacts[0].email"
+        customer_company: "contacts[0].companyName"
+        customer_tags: "contacts[0].tags[0]"
+        ghl_contact_id: "contacts[0].id"
+
+  # ============================================================================
+  # POST-CALL: Add call note to contact
+  # ============================================================================
+  http_webhooks:
+    ghl_add_note:
+      kind: generic_webhook
+      phase: post_call
+      enabled: true
+      is_global: true  # Run for all calls
+      timeout_ms: 5000
+      
+      # GHL Add Note API (requires contact ID from pre-call lookup)
+      url: "https://rest.gohighlevel.com/v1/contacts/${ghl_contact_id}/notes"
+      method: POST
+      headers:
+        Authorization: "Bearer ${GHL_API_KEY}"
+        Content-Type: "application/json"
+      
+      # Generate AI summary for the note
+      generate_summary: true
+      summary_max_words: 150
+      
+      payload_template: |
+        {
+          "body": "📞 AI Voice Agent Call Summary\n\nDuration: {call_duration}s\nOutcome: {call_outcome}\nDate: {call_end_time}\n\n{summary}"
+        }
+
+    # Optional: Create task for follow-up
+    ghl_create_task:
+      kind: generic_webhook
+      phase: post_call
+      enabled: false  # Enable if you want automatic follow-up tasks
+      is_global: true
+      timeout_ms: 5000
+      
+      url: "https://rest.gohighlevel.com/v1/contacts/${ghl_contact_id}/tasks"
+      method: POST
+      headers:
+        Authorization: "Bearer ${GHL_API_KEY}"
+        Content-Type: "application/json"
+      
+      payload_template: |
+        {
+          "title": "Follow up: AI call on {call_end_time}",
+          "body": "Caller discussed: {summary}",
+          "dueDate": "{call_end_time}",
+          "completed": false
+        }
+
+# ============================================================================
+# CONTEXT: Use customer data in AI prompt
+# ============================================================================
+contexts:
+  ghl_support:
+    provider: deepgram  # or openai_realtime, google_live
+    prompt: |
+      You are a helpful customer support agent.
+      
+      Customer Information:
+      - Name: {customer_name} {customer_last_name}
+      - Company: {customer_company}
+      - Email: {customer_email}
+      
+      Greet the customer by name and provide personalized assistance.
+      If the customer_name is empty, ask for their name politely.
+      
+      You can transfer calls to human agents if needed.
+    
+    tools:
+      - transfer
+      - hangup_call
+      - request_transcript
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# 1. Get your GHL API key from: Settings > Business Profile > API Key
+# 2. The contact lookup returns the first matching contact
+# 3. If no contact found, output_variables will be empty strings
+# 4. The AI prompt gracefully handles missing customer data
+# 5. Contact notes appear in the GHL contact timeline

@@ -1,0 +1,157 @@
+# Make (formerly Integromat) Integration Example
+# ==============================================
+# Post-call webhook to trigger Make scenarios
+#
+# Required Environment Variables:
+#   MAKE_WEBHOOK_URL - Your Make webhook URL
+#
+# Make Setup:
+#   1. Create a new scenario in Make
+#   2. Add a "Webhooks" > "Custom webhook" module
+#   3. Click "Add" to create a new webhook and copy the URL
+#   4. Run once to capture the data structure
+#   5. Add processing modules (CRM, Email, Sheets, etc.)
+#
+# Documentation: https://www.make.com/en/help/tools/webhooks
+
+tools:
+  # ============================================================================
+  # POST-CALL: Send call data to Make scenario
+  # ============================================================================
+  http_webhooks:
+    make_call_completed:
+      kind: generic_webhook
+      phase: post_call
+      enabled: true
+      is_global: true  # Trigger for ALL calls
+      timeout_ms: 10000
+      
+      # Make Webhook URL (from your Make scenario)
+      url: "${MAKE_WEBHOOK_URL}"
+      method: POST
+      headers:
+        Content-Type: "application/json"
+      
+      # Generate AI summary
+      generate_summary: true
+      summary_max_words: 100
+      
+      # Structured payload for Make
+      payload_template: |
+        {
+          "event_type": "call_completed",
+          "call_id": "{call_id}",
+          "caller_phone": "{caller_number}",
+          "caller_name": "{caller_name}",
+          "called_number": "{called_number}",
+          "context": "{context_name}",
+          "provider": "{provider}",
+          "direction": "{call_direction}",
+          "duration_seconds": {call_duration},
+          "outcome": "{call_outcome}",
+          "start_time": "{call_start_time}",
+          "end_time": "{call_end_time}",
+          "ai_summary": "{summary}",
+          "transcript": {transcript_json},
+          "campaign_id": "{campaign_id}",
+          "lead_id": "{lead_id}"
+        }
+
+    # Separate webhook for transfers only
+    make_transfer_notification:
+      kind: generic_webhook
+      phase: post_call
+      enabled: false  # Enable for transfer-specific workflow
+      is_global: false  # Only for specific contexts
+      timeout_ms: 5000
+      
+      url: "${MAKE_TRANSFER_WEBHOOK_URL}"
+      method: POST
+      headers:
+        Content-Type: "application/json"
+      
+      payload_template: |
+        {
+          "event_type": "call_transferred",
+          "call_id": "{call_id}",
+          "caller_phone": "{caller_number}",
+          "transferred_to": "{call_outcome}",
+          "duration_before_transfer": {call_duration},
+          "ai_summary": "{summary}"
+        }
+
+# ============================================================================
+# EXAMPLE MAKE SCENARIOS
+# ============================================================================
+#
+# Scenario 1: CRM Update + Slack Notification
+# -------------------------------------------
+# [Webhook] → [Router]
+#              ├─ Path A (outcome = "completed") → [HubSpot: Create Note] → [Slack: Send Message]
+#              └─ Path B (outcome = "transferred") → [Slack: Send Channel Message]
+#
+# Scenario 2: Google Sheets Logging
+# ---------------------------------
+# [Webhook] → [Google Sheets: Add Row]
+#              └─ Columns: Call ID | Phone | Duration | Summary | Outcome | Timestamp
+#
+# Scenario 3: Email Digest
+# ------------------------
+# [Webhook] → [Data Store: Add Record]
+# [Scheduled Trigger (Daily)] → [Data Store: Search Records] → [Iterator] → [Text Aggregator] → [Email: Send]
+#
+# ============================================================================
+
+# ============================================================================
+# MAKE MODULE FIELD MAPPINGS
+# ============================================================================
+#
+# Use these in your Make scenario modules:
+#
+# HubSpot "Create Note" module:
+#   - Contact ID: {{lead_id}} (if using HubSpot contact IDs)
+#   - Body: Call on {{end_time}}: {{ai_summary}}
+#
+# Slack "Send Message" module:
+#   - Text: 📞 *New Call*\n• From: {{caller_phone}}\n• Duration: {{duration_seconds}}s\n• Summary: {{ai_summary}}
+#
+# Google Sheets "Add Row" module:
+#   - Column A: {{call_id}}
+#   - Column B: {{caller_phone}}
+#   - Column C: {{duration_seconds}}
+#   - Column D: {{ai_summary}}
+#   - Column E: {{outcome}}
+#   - Column F: {{end_time}}
+#
+# Email "Send" module:
+#   - Subject: Call Summary - {{caller_phone}}
+#   - Body: {{ai_summary}}\n\nFull Transcript:\n{{transcript}}
+#
+# ============================================================================
+
+# ============================================================================
+# CONTEXT: Standard context with Make integration
+# ============================================================================
+contexts:
+  make_support:
+    provider: openai_realtime
+    prompt: |
+      You are a helpful AI phone assistant.
+      Be professional and courteous.
+      Offer to transfer to a human agent if needed.
+    
+    tools:
+      - transfer
+      - hangup_call
+      - request_transcript
+      - make_call_completed  # Enable webhook for this context
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# 1. Make webhooks have a 30-second timeout by default
+# 2. Use the "Immediately as data arrives" option for real-time processing
+# 3. Test with "Run once" to see the data structure before building
+# 4. Use Filters between modules to route based on outcome/context
+# 5. Make's "Data Store" module is useful for aggregating calls for reports
+# 6. Consider using Make's "Error Handler" for failed API calls

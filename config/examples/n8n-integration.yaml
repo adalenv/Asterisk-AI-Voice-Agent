@@ -1,0 +1,145 @@
+# n8n Workflow Automation Integration Example
+# ============================================
+# Post-call webhook to trigger n8n workflows
+#
+# Required Environment Variables:
+#   N8N_WEBHOOK_URL - Your n8n webhook URL
+#   N8N_WEBHOOK_TOKEN - Optional authentication token
+#
+# n8n Setup:
+#   1. Create a new workflow in n8n
+#   2. Add a "Webhook" trigger node
+#   3. Set method to POST and copy the webhook URL
+#   4. Add processing nodes (e.g., Google Sheets, Slack, Email)
+#
+# Documentation: https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.webhook/
+
+tools:
+  # ============================================================================
+  # POST-CALL: Send complete call data to n8n
+  # ============================================================================
+  http_webhooks:
+    n8n_call_completed:
+      kind: generic_webhook
+      phase: post_call
+      enabled: true
+      is_global: true  # Trigger for ALL calls
+      timeout_ms: 10000
+      
+      # n8n Webhook URL (from your n8n workflow)
+      url: "${N8N_WEBHOOK_URL}"
+      method: POST
+      headers:
+        Content-Type: "application/json"
+        # Optional: Add authentication header
+        # Authorization: "Bearer ${N8N_WEBHOOK_TOKEN}"
+      
+      # Generate AI summary for the payload
+      generate_summary: true
+      summary_max_words: 100
+      
+      # Complete call data payload
+      payload_template: |
+        {
+          "event": "call_completed",
+          "timestamp": "{call_end_time}",
+          "call": {
+            "id": "{call_id}",
+            "direction": "{call_direction}",
+            "duration_seconds": {call_duration},
+            "outcome": "{call_outcome}",
+            "start_time": "{call_start_time}",
+            "end_time": "{call_end_time}"
+          },
+          "caller": {
+            "number": "{caller_number}",
+            "name": "{caller_name}"
+          },
+          "destination": {
+            "number": "{called_number}",
+            "context": "{context_name}"
+          },
+          "ai": {
+            "provider": "{provider}",
+            "summary": "{summary}"
+          },
+          "transcript": {transcript_json},
+          "campaign": {
+            "id": "{campaign_id}",
+            "lead_id": "{lead_id}"
+          }
+        }
+
+    # Alternative: Minimal webhook (smaller payload)
+    n8n_call_minimal:
+      kind: generic_webhook
+      phase: post_call
+      enabled: false  # Enable this instead for smaller payloads
+      is_global: true
+      timeout_ms: 5000
+      
+      url: "${N8N_WEBHOOK_URL}"
+      method: POST
+      headers:
+        Content-Type: "application/json"
+      
+      generate_summary: true
+      summary_max_words: 50
+      
+      payload_template: |
+        {
+          "call_id": "{call_id}",
+          "phone": "{caller_number}",
+          "duration": {call_duration},
+          "summary": "{summary}",
+          "outcome": "{call_outcome}"
+        }
+
+# ============================================================================
+# EXAMPLE n8n WORKFLOW NODES
+# ============================================================================
+# 
+# Webhook Trigger → IF (check outcome)
+#                      ├─ "transferred" → Slack notification
+#                      ├─ "completed" → Google Sheets log
+#                      └─ default → Email summary
+#
+# Node Configuration Examples:
+#
+# 1. Slack Notification:
+#    - Message: "📞 Call from {{$json.caller.number}}: {{$json.ai.summary}}"
+#
+# 2. Google Sheets:
+#    - Columns: Call ID, Phone, Duration, Summary, Timestamp
+#    - Values: {{$json.call.id}}, {{$json.caller.number}}, etc.
+#
+# 3. Email:
+#    - Subject: "Call Summary - {{$json.caller.number}}"
+#    - Body: Use {{$json.ai.summary}} and {{$json.transcript}}
+#
+# ============================================================================
+
+# ============================================================================
+# CONTEXT: Standard support context
+# ============================================================================
+contexts:
+  n8n_support:
+    provider: deepgram
+    prompt: |
+      You are a helpful AI assistant.
+      Be friendly and professional.
+      Transfer to a human agent if the caller requests it.
+    
+    tools:
+      - transfer
+      - hangup_call
+      - request_transcript
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# 1. n8n webhooks are synchronous by default; set timeout appropriately
+# 2. Use n8n's "Respond to Webhook" node if you need to process the response
+# 3. For high volume, consider using n8n's queue mode
+# 4. Test webhooks using n8n's "Test Workflow" feature first
+# 5. The transcript_json field contains the full conversation array

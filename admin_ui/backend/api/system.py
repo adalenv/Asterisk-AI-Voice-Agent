@@ -512,7 +512,7 @@ async def _start_via_compose(container_id: str, service_map: dict):
             return {"status": "success", "method": "docker-compose", "output": (out or '').strip() or "Container started"}
         raise HTTPException(status_code=500, detail=f"Failed to start via compose: {(out or '').strip()[:800]}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 async def _recreate_via_compose(service_name: str, health_check: bool = True):
@@ -625,7 +625,7 @@ async def _recreate_via_compose(service_name: str, health_check: bool = True):
     except Exception as e:
         if isinstance(e, HTTPException):
             raise
-        raise HTTPException(status_code=500, detail="Failed to recreate service")
+        raise HTTPException(status_code=500, detail="Failed to recreate service") from e
 
 
 async def _poll_health(url: str, timeout_seconds: int = 30, service_name: str = "service") -> str:
@@ -2740,6 +2740,20 @@ _UPDATER_IMAGE_REPO = "asterisk-ai-voice-agent-updater"
 _UPDATER_IMAGE_LOCK = None
 _UPDATES_STATUS_CACHE: dict = {"checked_at": 0.0, "data": None}
 _UPDATES_STATUS_CACHE_TTL_SEC = 600  # 10 minutes
+_UPDATES_STATUS_CACHE_LOCK = None
+
+
+def _updater_remote_image_repo() -> str:
+    """
+    Return the remote registry/repo for the updater image.
+
+    Default matches our GHCR naming convention for other published images.
+    """
+    explicit = (os.getenv("AAVA_UPDATER_IMAGE_REMOTE") or "").strip()
+    if explicit:
+        return explicit
+    owner = (os.getenv("AAVA_GHCR_OWNER") or "hkjarral").strip().lower()
+    return f"ghcr.io/{owner}/{_UPDATER_IMAGE_REPO}"
 
 
 def _updater_lock():
@@ -2748,6 +2762,96 @@ def _updater_lock():
         import threading
         _UPDATER_IMAGE_LOCK = threading.Lock()
     return _UPDATER_IMAGE_LOCK
+
+
+def _updates_status_cache_lock():
+    global _UPDATES_STATUS_CACHE_LOCK
+    if _UPDATES_STATUS_CACHE_LOCK is None:
+        import threading
+        _UPDATES_STATUS_CACHE_LOCK = threading.Lock()
+    return _UPDATES_STATUS_CACHE_LOCK
+
+
+# Allow an optional registry host with port prefix (e.g. "registry.example.com:5000/...").
+_DOCKER_IMAGE_REF_RE = re.compile(
+    r"^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*:[0-9]+/)?"
+    r"[a-z0-9]+(?:[._-][a-z0-9]+)*"
+    r"(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*"
+    r"(?::[A-Za-z0-9][A-Za-z0-9._-]{0,127})?$"
+)
+
+
+def _validate_docker_image_ref(ref: str) -> str:
+    r = (ref or "").strip()
+    if not r or r.startswith("-") or any(c.isspace() for c in r) or "\x00" in r:
+        raise ValueError("invalid docker image ref")
+    if not _DOCKER_IMAGE_REF_RE.fullmatch(r):
+        raise ValueError("invalid docker image ref")
+    return r
+
+
+def _run_docker(args: list[str], *, cwd: Optional[str] = None, timeout_sec: int = 60) -> tuple[int, str]:
+    """
+    Run Docker CLI and return (exit_code, combined_output).
+    """
+    if not args or any((not isinstance(a, str) or a == "" or "\x00" in a or any(c.isspace() for c in a)) for a in args):
+        raise ValueError("invalid docker args")
+    try:
+        proc = subprocess.run(
+            ["docker", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            env=os.environ.copy(),
+        )
+        out = (proc.stdout or "") + (proc.stderr or "")
+        return int(proc.returncode), out
+    except subprocess.TimeoutExpired as e:
+        out = (getattr(e, "stdout", "") or "") + (getattr(e, "stderr", "") or "")
+        return 124, out or "timeout"
+    except Exception as e:
+        return 1, str(e)
+
+
+def _is_semver_tag(ref: str) -> bool:
+    r = (ref or "").strip()
+    if not r:
+        return False
+    if r.startswith("v"):
+        r = r[1:]
+    return bool(re.match(r"^[0-9]+\.[0-9]+\.[0-9]+$", r))
+
+
+def _updater_pull_tags_for_ref(ref: str) -> list[str]:
+    """
+    Return candidate remote tags for pulling a prebuilt updater image.
+
+    Release workflows publish both vX.Y.Z and X.Y.Z tags; try both plus latest.
+    """
+    r = (ref or "").strip()
+    if not r:
+        return ["latest"]
+    # For non-version selectors, don't try to synthesize `v<ref>` variants.
+    if r in {"latest", "main"}:
+        return [r]
+
+    tags: list[str] = [r]
+    if _is_semver_tag(r):
+        if r.startswith("v"):
+            tags.append(r[1:])
+        else:
+            tags.append("v" + r)
+    tags.append("latest")
+    # preserve order while de-duping
+    seen = set()
+    uniq: list[str] = []
+    for t in tags:
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        uniq.append(t)
+    return uniq
 
 
 def _project_host_root_from_admin_ui_container() -> str:
@@ -2929,8 +3033,7 @@ def _ensure_updater_image_for_sha(host_project_root: str, tag: str) -> None:
     with lock:
         try:
             # `host_project_root` is used for bind mounts when *running* updater containers, but for
-            # building the updater image we must use a path that exists inside this container
-            # (docker-py builds by tarring local files and sending them to the daemon).
+            # building the updater image we must use a path that exists inside this container.
             if not host_project_root:
                 raise HTTPException(
                     status_code=500,
@@ -2945,21 +3048,85 @@ def _ensure_updater_image_for_sha(host_project_root: str, tag: str) -> None:
                 pass
 
             build_root = os.getenv("PROJECT_ROOT", "/app/project")
-            logger.info("Building updater image: %s (context=%s)", tag, build_root)
-            client.images.build(
-                path=build_root,
-                dockerfile="updater/Dockerfile",
-                tag=tag,
-                rm=True,
+            # Avoid docker-py image build streaming decode issues by using Docker CLI.
+            # Always use host networking to avoid restricted bridge DNS/egress environments.
+            logger.info(
+                "Building updater image: %s (context=%s, network=host)",
+                _sanitize_for_log(tag),
+                _sanitize_for_log(build_root),
             )
+            safe_tag = _validate_docker_image_ref(tag)
+            code, out = _run_docker(
+                ["build", "--network=host", "-f", "updater/Dockerfile", "-t", safe_tag, "."],
+                cwd=build_root,
+                timeout_sec=1800,
+            )
+            if code != 0:
+                tail = "\n".join((out or "").splitlines()[-40:]).strip()
+                hint = (
+                    "If this fails due to DNS/egress restrictions, try on the host:\n"
+                    "  cd /root/Asterisk-AI-Voice-Agent\n"
+                    "  docker buildx build --network=host --progress=plain -f updater/Dockerfile .\n"
+                    "Or update via CLI:\n"
+                    "  agent update"
+                )
+                if tail:
+                    logger.error("Updater build failed (tail):\n%s", tail)
+                    raise HTTPException(status_code=500, detail=f"Failed to build updater image:\n{tail}\n\n{hint}")
+                raise HTTPException(status_code=500, detail=f"Failed to build updater image.\n\n{hint}")
         except HTTPException:
             raise
         except Exception as e:
-            logger.exception("Failed to build updater image: %s", e)
-            raise HTTPException(status_code=500, detail="Failed to build updater image")
+            logger.exception("Failed to build updater image")
+            raise HTTPException(status_code=500, detail="Failed to build updater image") from e
 
 
-def _run_updater_ephemeral(host_project_root: str, *, env: dict, command: Optional[str] = None, timeout_sec: int = 30, capture_stderr: bool = True) -> tuple[int, str]:
+def _ensure_updater_image_for_ref(host_project_root: str, local_tag: str, *, prefer_pull_ref: Optional[str], allow_build: bool) -> None:
+    """
+    Ensure the updater image exists locally under `local_tag`.
+
+    For stable release tag updates, prefer pulling a published updater image from GHCR,
+    and retag it to the local tag used by updater jobs.
+    """
+    client = docker.from_env()
+    try:
+        client.images.get(local_tag)
+        return
+    except Exception:
+        pass
+
+    # Best-effort: pull a published updater image (preferred for most installs).
+    if prefer_pull_ref:
+        remote_repo = _updater_remote_image_repo()
+        for t in _updater_pull_tags_for_ref(prefer_pull_ref):
+            remote_ref = _validate_docker_image_ref(f"{remote_repo}:{t}")
+            code, out = _run_docker(["pull", remote_ref], timeout_sec=900)
+            if code == 0:
+                _run_docker(["tag", remote_ref, _validate_docker_image_ref(local_tag)], timeout_sec=60)
+                logger.info("Pulled updater image: %s -> %s", _sanitize_for_log(remote_ref), _sanitize_for_log(local_tag))
+                return
+            logger.warning(
+                "Failed to pull updater image %s: %s",
+                _sanitize_for_log(remote_ref),
+                _sanitize_for_log((out or "").strip().splitlines()[-1:][0] if (out or "").strip().splitlines() else ""),
+            )
+
+    if not allow_build:
+        raise HTTPException(status_code=500, detail="Updater image missing and local build is disabled")
+
+    _ensure_updater_image_for_sha(host_project_root, local_tag)
+
+
+def _run_updater_ephemeral(
+    host_project_root: str,
+    *,
+    env: dict,
+    command: Optional[str] = None,
+    timeout_sec: int = 30,
+    capture_stderr: bool = True,
+    prefer_pull_ref: Optional[str] = None,
+    allow_build: bool = True,
+) -> tuple[int, str]:
     """
     Run the updater image as a short-lived container and return (exit_code, stdout/stderr).
 
@@ -2969,7 +3136,7 @@ def _run_updater_ephemeral(host_project_root: str, *, env: dict, command: Option
 
     sha = _current_project_head_sha()
     tag = _updater_image_tag_for_sha(sha)
-    _ensure_updater_image_for_sha(host_project_root, tag)
+    _ensure_updater_image_for_ref(host_project_root, tag, prefer_pull_ref=prefer_pull_ref, allow_build=allow_build)
 
     client = docker.from_env()
     name = f"aava-update-ephemeral-{uuid.uuid4().hex[:10]}"
@@ -3082,7 +3249,39 @@ class UpdateStatusResponse(BaseModel):
     local: dict
     remote: Optional[dict] = None
     update_available: Optional[bool] = None
+    changelog_latest: Optional[str] = None
     error: Optional[str] = None
+
+
+def _extract_changelog_section(changelog_md: str, version: str) -> Optional[str]:
+    """
+    Extract the Keep-a-Changelog section for a given version (e.g., "5.2.4").
+    Returns markdown (including the header) or None if not found.
+    """
+    if not changelog_md:
+        return None
+    v = (version or "").strip()
+    if v.startswith("v"):
+        v = v[1:]
+    if not v:
+        return None
+
+    lines = changelog_md.splitlines()
+    start_idx = None
+    pat = f"## [{v}]"
+    for i, line in enumerate(lines):
+        if line.strip().startswith(pat):
+            start_idx = i
+            break
+    if start_idx is None:
+        return None
+    end_idx = None
+    for j in range(start_idx + 1, len(lines)):
+        if lines[j].startswith("## ["):
+            end_idx = j
+            break
+    block = "\n".join(lines[start_idx:end_idx]).strip()
+    return block or None
 
 
 @router.get("/updates/status", response_model=UpdateStatusResponse)
@@ -3092,9 +3291,8 @@ async def updates_status(check_remote: bool = False, build_updater: bool = False
 
     IMPORTANT:
     - By default, this endpoint does NOT build the updater image and does NOT contact the remote.
-    - The Updates page explicitly opts in by setting `build_updater=true` and `check_remote=true`.
+    - The Updates page opts in by setting `check_remote=true` (and optionally `build_updater=true`).
     """
-    # If caller didn't explicitly request a real check, keep this cheap and side-effect free.
     if not build_updater and not check_remote:
         project_root = os.getenv("PROJECT_ROOT", "/app/project")
 
@@ -3106,8 +3304,6 @@ async def updates_status(check_remote: bool = False, build_updater: bool = False
                 return None
 
         def _current_branch(root: str) -> Optional[str]:
-            import os
-
             gitpath = os.path.join(root, ".git")
             gitdir = gitpath
             if os.path.isfile(gitpath):
@@ -3139,25 +3335,27 @@ async def updates_status(check_remote: bool = False, build_updater: bool = False
             local={"branch": branch, "head_sha": head_sha, "describe": describe},
             remote=None,
             update_available=None,
+            changelog_latest=None,
             error="Not checked",
         )
 
-    # Check-mode: allow a short-lived cache unless caller forces refresh.
+    # Cache (best-effort)
     try:
         import time
 
         now = time.time()
-        cached = _UPDATES_STATUS_CACHE.get("data")
-        checked_at = float(_UPDATES_STATUS_CACHE.get("checked_at") or 0.0)
+        with _updates_status_cache_lock():
+            cached = _UPDATES_STATUS_CACHE.get("data")
+            checked_at = float(_UPDATES_STATUS_CACHE.get("checked_at") or 0.0)
         if not force and cached and (now - checked_at) < _UPDATES_STATUS_CACHE_TTL_SEC:
             return UpdateStatusResponse(**cached)
     except Exception:
-        pass
+        logger.debug("Failed to read updates status cache", exc_info=True)
 
     host_root = _project_host_root_from_admin_ui_container()
 
+    # Local info (via updater container; admin_ui may not include git)
     try:
-        # Gather local info
         code, out = _run_updater_ephemeral(
             host_root,
             env={"PROJECT_ROOT": host_root},
@@ -3166,111 +3364,134 @@ async def updates_status(check_remote: bool = False, build_updater: bool = False
                 "cd \"$PROJECT_ROOT\"; "
                 "git -c safe.directory=\"$PROJECT_ROOT\" rev-parse --abbrev-ref HEAD; "
                 "git -c safe.directory=\"$PROJECT_ROOT\" rev-parse HEAD; "
-                "git -c safe.directory=\"$PROJECT_ROOT\" describe --tags --always --dirty"
+                "git -c safe.directory=\"$PROJECT_ROOT\" describe --tags --always --dirty; "
+                "git -c safe.directory=\"$PROJECT_ROOT\" describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true"
             ),
             timeout_sec=30,
+            prefer_pull_ref="latest",
+            allow_build=bool(build_updater),
         )
-        if code != 0:
-            return UpdateStatusResponse(
-                local={"branch": "unknown", "head_sha": "unknown", "describe": "unknown"},
-                remote=None,
-                update_available=None,
-                error="Local status unavailable (updater image not ready)",
-            )
-
-        lines = [l.strip() for l in out.splitlines() if l.strip()]
-        if len(lines) < 3:
-            return UpdateStatusResponse(
-                local={"branch": "unknown", "head_sha": "unknown", "describe": "unknown"},
-                remote=None,
-                update_available=None,
-                error="Local status unavailable (unexpected git output)",
-            )
-        branch = lines[0]
-        head_sha = lines[1]
-        describe = lines[2]
-        if branch == "HEAD":
-            branch = "detached"
+    except HTTPException as e:
+        return UpdateStatusResponse(
+            local={"branch": "unknown", "head_sha": "unknown", "describe": "unknown"},
+            remote=None,
+            update_available=None,
+            changelog_latest=None,
+            error=(str(getattr(e, "detail", None) or "Local status unavailable"))[:400],
+        )
     except Exception:
         return UpdateStatusResponse(
             local={"branch": "unknown", "head_sha": "unknown", "describe": "unknown"},
             remote=None,
             update_available=None,
-            error="Local status unavailable (updater not built yet)",
+            changelog_latest=None,
+            error="Local status unavailable",
         )
+
+    if code != 0:
+        return UpdateStatusResponse(
+            local={"branch": "unknown", "head_sha": "unknown", "describe": "unknown"},
+            remote=None,
+            update_available=None,
+            changelog_latest=None,
+            error="Local status unavailable (updater image not ready)",
+        )
+
+    lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
+    if len(lines) < 3:
+        return UpdateStatusResponse(
+            local={"branch": "unknown", "head_sha": "unknown", "describe": "unknown"},
+            remote=None,
+            update_available=None,
+            changelog_latest=None,
+            error="Local status unavailable (unexpected git output)",
+        )
+
+    branch = lines[0]
+    head_sha = lines[1]
+    describe = lines[2]
+    deployed_tag = lines[3] if len(lines) >= 4 and lines[3] else None
+    if branch == "HEAD":
+        branch = "detached"
 
     if not check_remote:
         payload = {
-            "local": {"branch": branch, "head_sha": head_sha, "describe": describe},
+            "local": {"branch": branch, "head_sha": head_sha, "describe": describe, "deployed_tag": deployed_tag},
             "remote": None,
             "update_available": None,
+            "changelog_latest": None,
             "error": None,
         }
         try:
             import time
 
-            _UPDATES_STATUS_CACHE["checked_at"] = time.time()
-            _UPDATES_STATUS_CACHE["data"] = payload
+            with _updates_status_cache_lock():
+                _UPDATES_STATUS_CACHE["checked_at"] = time.time()
+                _UPDATES_STATUS_CACHE["data"] = payload
         except Exception:
-            pass
+            logger.debug("Failed to write updates status cache", exc_info=True)
         return UpdateStatusResponse(**payload)
 
-    # Remote info (best-effort; offline returns unknown)
-    code2, out2 = _run_updater_ephemeral(
-        host_root,
-        env={"PROJECT_ROOT": host_root},
-        command=(
-            "set -euo pipefail; "
-            "cd \"$PROJECT_ROOT\"; "
-            "git -c safe.directory=\"$PROJECT_ROOT\" ls-remote --tags origin 'refs/tags/v*'"
-        ),
-        timeout_sec=15,
-    )
+    # Remote v* tags
+    try:
+        code2, out2 = _run_updater_ephemeral(
+            host_root,
+            env={"PROJECT_ROOT": host_root},
+            command=(
+                "set -euo pipefail; "
+                "cd \"$PROJECT_ROOT\"; "
+                "git -c safe.directory=\"$PROJECT_ROOT\" ls-remote --tags origin 'refs/tags/v*'"
+            ),
+            timeout_sec=15,
+            prefer_pull_ref="latest",
+            allow_build=bool(build_updater),
+        )
+    except HTTPException:
+        code2, out2 = 1, ""
     if code2 != 0:
         payload = {
-            "local": {"branch": branch, "head_sha": head_sha, "describe": describe},
+            "local": {"branch": branch, "head_sha": head_sha, "describe": describe, "deployed_tag": deployed_tag},
             "remote": None,
             "update_available": None,
+            "changelog_latest": None,
             "error": "Remote unavailable (offline or blocked)",
         }
         try:
             import time
 
-            _UPDATES_STATUS_CACHE["checked_at"] = time.time()
-            _UPDATES_STATUS_CACHE["data"] = payload
+            with _updates_status_cache_lock():
+                _UPDATES_STATUS_CACHE["checked_at"] = time.time()
+                _UPDATES_STATUS_CACHE["data"] = payload
         except Exception:
-            pass
+            logger.debug("Failed to write updates status cache", exc_info=True)
         return UpdateStatusResponse(**payload)
 
-    latest = _select_latest_v_tag(out2)
+    latest = _select_latest_v_tag(out2 or "")
     if not latest:
         payload = {
-            "local": {"branch": branch, "head_sha": head_sha, "describe": describe},
+            "local": {"branch": branch, "head_sha": head_sha, "describe": describe, "deployed_tag": deployed_tag},
             "remote": None,
             "update_available": None,
+            "changelog_latest": None,
             "error": "No v* tags found on remote",
         }
         try:
             import time
 
-            _UPDATES_STATUS_CACHE["checked_at"] = time.time()
-            _UPDATES_STATUS_CACHE["data"] = payload
+            with _updates_status_cache_lock():
+                _UPDATES_STATUS_CACHE["checked_at"] = time.time()
+                _UPDATES_STATUS_CACHE["data"] = payload
         except Exception:
-            pass
+            logger.debug("Failed to write updates status cache", exc_info=True)
         return UpdateStatusResponse(**payload)
 
-    # Determine update availability using commit ancestry (handles "local ahead" cleanly).
-    # Note: we intentionally avoid relying on SHA inequality alone because it incorrectly
-    # reports updates when running a newer (ahead) local branch.
     tag = latest["tag"]
     tag_sha = latest["sha"]
 
     rel_cmd = (
         "cd \"$PROJECT_ROOT\"; "
-        # Best-effort: fetch the tag object so merge-base comparisons work even if the tag wasn't present locally.
         f"git -c safe.directory=\"$PROJECT_ROOT\" fetch -q origin refs/tags/{tag}:refs/tags/{tag} >/dev/null 2>&1 || true; "
         f"head='{head_sha.strip()}'; target='{tag_sha.strip()}'; "
-        # If we can't resolve the target commit locally, degrade gracefully to unknown.
         "git -c safe.directory=\"$PROJECT_ROOT\" cat-file -e \"$target^{commit}\" >/dev/null 2>&1 || { echo unknown; exit 0; }; "
         "if [ \"$head\" = \"$target\" ]; then echo equal; exit 0; fi; "
         "git -c safe.directory=\"$PROJECT_ROOT\" merge-base --is-ancestor \"$head\" \"$target\" >/dev/null 2>&1 && { echo behind; exit 0; }; "
@@ -3278,12 +3499,17 @@ async def updates_status(check_remote: bool = False, build_updater: bool = False
         "echo diverged; exit 0"
     )
 
-    code3, out3 = _run_updater_ephemeral(
-        host_root,
-        env={"PROJECT_ROOT": host_root},
-        command=rel_cmd,
-        timeout_sec=20,
-    )
+    try:
+        code3, out3 = _run_updater_ephemeral(
+            host_root,
+            env={"PROJECT_ROOT": host_root},
+            command=rel_cmd,
+            timeout_sec=20,
+            prefer_pull_ref="latest",
+            allow_build=bool(build_updater),
+        )
+    except HTTPException:
+        code3, out3 = 1, ""
     relation = (out3 or "").strip().splitlines()[-1].strip() if code3 == 0 and (out3 or "").strip() else "unknown"
 
     if relation == "equal":
@@ -3302,19 +3528,41 @@ async def updates_status(check_remote: bool = False, build_updater: bool = False
         update_available = None
         error = "Unable to compare local version to remote (offline or missing objects)"
 
+    changelog_latest = None
+    try:
+        code4, out4 = _run_updater_ephemeral(
+            host_root,
+            env={"PROJECT_ROOT": host_root},
+            command=(
+                "set -euo pipefail; "
+                "cd \"$PROJECT_ROOT\"; "
+                f"git -c safe.directory=\"$PROJECT_ROOT\" fetch -q origin refs/tags/{tag}:refs/tags/{tag} >/dev/null 2>&1 || true; "
+                f"git -c safe.directory=\"$PROJECT_ROOT\" show {tag}:CHANGELOG.md 2>/dev/null || true"
+            ),
+            timeout_sec=20,
+            prefer_pull_ref="latest",
+            allow_build=bool(build_updater),
+        )
+        if code4 == 0 and (out4 or "").strip():
+            changelog_latest = _extract_changelog_section(out4, tag)
+    except Exception:
+        changelog_latest = None
+
     payload = {
-        "local": {"branch": branch, "head_sha": head_sha, "describe": describe},
+        "local": {"branch": branch, "head_sha": head_sha, "describe": describe, "deployed_tag": deployed_tag},
         "remote": {"latest_tag": tag, "latest_tag_sha": tag_sha},
         "update_available": update_available,
+        "changelog_latest": changelog_latest,
         "error": error,
     }
     try:
         import time
 
-        _UPDATES_STATUS_CACHE["checked_at"] = time.time()
-        _UPDATES_STATUS_CACHE["data"] = payload
+        with _updates_status_cache_lock():
+            _UPDATES_STATUS_CACHE["checked_at"] = time.time()
+            _UPDATES_STATUS_CACHE["data"] = payload
     except Exception:
-        pass
+        logger.debug("Failed to write updates status cache", exc_info=True)
     return UpdateStatusResponse(**payload)
 
 
@@ -3328,22 +3576,27 @@ class UpdateBranchesResponse(BaseModel):
 
 
 @router.get("/updates/branches", response_model=UpdateBranchesResponse)
-async def updates_branches():
+async def updates_branches(build_updater: bool = False):
     """
     Return the list of remote branches on origin for the Updates UI dropdown.
     """
     host_root = _project_host_root_from_admin_ui_container()
 
-    code, out = _run_updater_ephemeral(
-        host_root,
-        env={"PROJECT_ROOT": host_root},
-        command=(
-            "set -euo pipefail; "
-            "cd \"$PROJECT_ROOT\"; "
-            "git -c safe.directory=\"$PROJECT_ROOT\" ls-remote --heads origin"
-        ),
-        timeout_sec=20,
-    )
+    try:
+        code, out = _run_updater_ephemeral(
+            host_root,
+            env={"PROJECT_ROOT": host_root},
+            command=(
+                "set -euo pipefail; "
+                "cd \"$PROJECT_ROOT\"; "
+                "git -c safe.directory=\"$PROJECT_ROOT\" ls-remote --heads origin"
+            ),
+            timeout_sec=20,
+            prefer_pull_ref="latest",
+            allow_build=bool(build_updater),
+        )
+    except HTTPException:
+        code, out = 1, ""
     if code != 0:
         return UpdateBranchesResponse(branches=[], error="Remote branches unavailable (offline or blocked)")
 
@@ -3384,7 +3637,14 @@ async def updates_plan(ref: str = "main", include_ui: bool = False, checkout: bo
         "AAVA_UPDATE_CHECKOUT": "true" if checkout else "false",
     }
     # Capture stdout only so JSON output isn't polluted by installer/self-update hints on stderr.
-    code, out = _run_updater_ephemeral(host_root, env=env, timeout_sec=120, capture_stderr=False)
+    code, out = _run_updater_ephemeral(
+        host_root,
+        env=env,
+        timeout_sec=120,
+        capture_stderr=False,
+        prefer_pull_ref="latest",
+        allow_build=True,
+    )
     if code != 0:
         raise HTTPException(status_code=500, detail=f"Failed to compute update plan: {out.strip()[:400]}")
 
@@ -3414,7 +3674,11 @@ async def updates_run(body: UpdateRunRequest):
     host_docker_sock = _docker_sock_host_path_from_admin_ui_container()
     sha = _current_project_head_sha()
     tag = _updater_image_tag_for_sha(sha)
-    _ensure_updater_image_for_sha(host_root, tag)
+    ref = _validate_git_ref(body.ref or "main")
+    # Prefer pulling a published updater image. For stable version updates (vX.Y.Z),
+    # try to pull the matching updater tag; otherwise fall back to pulling :latest.
+    prefer_pull = ref if _is_semver_tag(ref) else "latest"
+    _ensure_updater_image_for_ref(host_root, tag, prefer_pull_ref=prefer_pull, allow_build=True)
 
     job_id = uuid.uuid4().hex
 
@@ -3455,7 +3719,7 @@ async def updates_run(body: UpdateRunRequest):
         host_root: {"bind": host_root, "mode": "rw"},
         host_docker_sock: {"bind": "/var/run/docker.sock", "mode": "rw"},
     }
-    ref = _validate_git_ref(body.ref or "main")
+    # Use the already validated ref.
     env = {
         "PROJECT_ROOT": host_root,
         "AAVA_UPDATE_MODE": "run",
@@ -3505,7 +3769,7 @@ async def updates_rollback(body: UpdateRollbackRequest):
     host_docker_sock = _docker_sock_host_path_from_admin_ui_container()
     sha = _current_project_head_sha()
     tag = _updater_image_tag_for_sha(sha)
-    _ensure_updater_image_for_sha(host_root, tag)
+    _ensure_updater_image_for_ref(host_root, tag, prefer_pull_ref="latest", allow_build=True)
 
     from_job_id_raw = (body.from_job_id or "").strip()
     if not from_job_id_raw:

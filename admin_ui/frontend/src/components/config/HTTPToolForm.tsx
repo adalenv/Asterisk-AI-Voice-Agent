@@ -519,12 +519,12 @@ const HTTPToolForm = ({ config, onChange, phase }: HTTPToolFormProps) => {
                                     Test Values (for variable substitution)
                                 </button>
                                 {showTestValues && (
-                                    <div className="mt-3 grid grid-cols-2 gap-2">
+                                    <div className="mt-3 grid grid-cols-2 gap-3">
                                         {Object.entries(testValues).map(([key, value]) => (
-                                            <div key={key} className="flex items-center gap-1">
-                                                <span className="text-xs text-muted-foreground w-28 truncate">{`{${key}}`}</span>
+                                            <div key={key} className="flex flex-col gap-1">
+                                                <label className="text-xs text-muted-foreground font-mono">{`{${key}}`}</label>
                                                 <input
-                                                    className="flex-1 px-2 py-1 text-xs border rounded bg-background"
+                                                    className="w-full px-2 py-1 text-xs border rounded bg-background"
                                                     value={value}
                                                     onChange={(e) => setTestValues({ ...testValues, [key]: e.target.value })}
                                                 />

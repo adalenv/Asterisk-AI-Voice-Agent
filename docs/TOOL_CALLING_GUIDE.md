@@ -829,8 +829,14 @@ exten => s,1,NoOp(AI Agent - Sales Line)
 |----------|-------------|---------|
 | `AI_CONTEXT` | Select custom greeting/persona | `support`, `sales`, `billing` |
 | `AI_PROVIDER` | Override provider for this call | `openai_realtime`, `deepgram` |
+| `DIALED_NUMBER` | Called number (internal calls) | `3000` |
 | `CALLERID(name)` | Caller's name (auto-available to AI) | Any string |
 | `CALLERID(num)` | Caller's number (auto-available to AI) | Phone number |
+
+**Called Number Capture**: The AI engine automatically captures the "called number" (the DID or extension that was dialed) and makes it available as `{called_number}` in tools and prompts:
+- **External calls**: Captured from `__FROM_DID` (set by FreePBX for inbound DID routes)
+- **Internal calls**: Set `DIALED_NUMBER` in dialplan before Stasis (e.g., `Set(DIALED_NUMBER=3000)`)
+- **Fallback**: If neither is available, defaults to `"unknown"`
 
 See [FreePBX Integration Guide](FreePBX-Integration-Guide.md) for complete dialplan documentation.
 
@@ -842,6 +848,7 @@ Context prompts support template variables for call-specific data. This is espec
 |----------|-------------|---------|
 | `{caller_name}` | Caller ID name | `"there"` |
 | `{caller_number}` | Caller phone number (ANI) | `"unknown"` |
+| `{called_number}` | DID or extension that was dialed | `"unknown"` |
 | `{caller_id}` | Alias for `{caller_number}` | `"unknown"` |
 | `{call_id}` | Unique call identifier | (always set) |
 | `{context_name}` | AI_CONTEXT from dialplan | `""` |

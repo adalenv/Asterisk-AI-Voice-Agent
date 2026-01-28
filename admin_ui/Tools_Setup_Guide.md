@@ -210,7 +210,7 @@ Use these in lookup URLs, query params, and headers:
 | Variable | Description | Example Value |
 |----------|-------------|---------------|
 | `{caller_number}` | Caller's phone number | `+15551234567` |
-| `{called_number}` | DID that was called | `+18005551234` |
+| `{called_number}` | DID or extension that was dialed | `+18005551234` or `3000` |
 | `{caller_name}` | Caller ID name | `John Smith` |
 | `{caller_id}` | Alias for `{caller_number}` (best for prompt/greeting templates) | `+15551234567` |
 | `{call_id}` | Unique call identifier | `1763582071.6214` |
@@ -219,7 +219,9 @@ Use these in lookup URLs, query params, and headers:
 | `{lead_id}` | Outbound lead ID | `lead_xyz789` |
 | `${ENV_VAR}` | Environment variable | (from .env file) |
 
-> Note: `{caller_id}` is primarily intended for **prompt/greeting templates**. For lookup URL/query/body templates, use `{caller_number}`.
+> **Note**: `{caller_id}` is primarily intended for **prompt/greeting templates**. For lookup URL/query/body templates, use `{caller_number}`.
+
+> **Called Number**: `{called_number}` is automatically captured from `__FROM_DID` (external calls) or `DIALED_NUMBER` dialplan variable (internal calls). For internal extensions, set `DIALED_NUMBER` in dialplan before Stasis (e.g., `Set(DIALED_NUMBER=3000)`).
 
 ### Post-Call Variables (Output)
 

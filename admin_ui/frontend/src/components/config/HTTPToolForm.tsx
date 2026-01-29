@@ -8,7 +8,14 @@ import { Modal } from '../ui/Modal';
 interface HTTPToolFormProps {
     config: any;
     onChange: (newConfig: any) => void;
-    phase: 'pre_call' | 'post_call';
+    phase: 'pre_call' | 'in_call' | 'post_call';
+}
+
+interface ToolParameter {
+    name: string;
+    type: string;
+    description: string;
+    required: boolean;
 }
 
 interface HTTPToolConfig {
@@ -28,6 +35,11 @@ interface HTTPToolConfig {
     hold_audio_threshold_ms?: number;
     generate_summary?: boolean;
     summary_max_words?: number;
+    // In-call specific fields
+    description?: string;
+    parameters?: ToolParameter[];
+    return_raw_json?: boolean;
+    error_message?: string;
 }
 
 const DEFAULT_WEBHOOK_PAYLOAD = `{
@@ -100,7 +112,12 @@ const HTTPToolForm = ({ config, onChange, phase }: HTTPToolFormProps) => {
     const httpTools = getHTTPTools();
 
     const handleAddTool = () => {
-        const kind = phase === 'pre_call' ? 'generic_http_lookup' : 'generic_webhook';
+        const kindMap: Record<string, string> = {
+            'pre_call': 'generic_http_lookup',
+            'in_call': 'in_call_http_lookup',
+            'post_call': 'generic_webhook',
+        };
+        const kind = kindMap[phase];
         setEditingTool('new_tool');
         setToolForm({
             key: '',
@@ -115,6 +132,11 @@ const HTTPToolForm = ({ config, onChange, phase }: HTTPToolFormProps) => {
             query_params: {},
             output_variables: {},
             payload_template: phase === 'post_call' ? DEFAULT_WEBHOOK_PAYLOAD : undefined,
+            // In-call specific fields
+            description: phase === 'in_call' ? '' : undefined,
+            parameters: phase === 'in_call' ? [] : undefined,
+            return_raw_json: phase === 'in_call' ? false : undefined,
+            error_message: phase === 'in_call' ? "I'm sorry, I couldn't retrieve that information right now." : undefined,
         });
     };
 
@@ -314,11 +336,13 @@ const HTTPToolForm = ({ config, onChange, phase }: HTTPToolFormProps) => {
             <Modal
                 isOpen={!!editingTool}
                 onClose={() => setEditingTool(null)}
-                title={editingTool === 'new_tool' ? `Add ${phase === 'pre_call' ? 'HTTP Lookup' : 'Webhook'}` : `Edit ${toolForm.key}`}
+                title={editingTool === 'new_tool' 
+                    ? `Add ${phase === 'pre_call' ? 'HTTP Lookup' : phase === 'in_call' ? 'In-Call HTTP Tool' : 'Webhook'}` 
+                    : `Edit ${toolForm.key}`}
                 footer={
                     <>
                         <button onClick={() => setEditingTool(null)} className="px-4 py-2 border rounded hover:bg-accent">Cancel</button>
-                        {phase === 'pre_call' && (
+                        {(phase === 'pre_call' || phase === 'in_call') && (
                             <button 
                                 onClick={handleTestTool} 
                                 disabled={testing || !toolForm.url}
@@ -637,6 +661,263 @@ const HTTPToolForm = ({ config, onChange, phase }: HTTPToolFormProps) => {
                                     )}
                                 </div>
                             )}
+                        </>
+                    )}
+
+                    {/* In-call specific: Description, Parameters, Query Params, Body, Output Variables */}
+                    {phase === 'in_call' && (
+                        <>
+                            {/* Tool Description for AI */}
+                            <div className="space-y-2">
+                                <FormLabel tooltip="Description shown to the AI so it knows when to use this tool">
+                                    Tool Description
+                                </FormLabel>
+                                <textarea
+                                    className="w-full p-3 rounded-md border border-input bg-transparent text-sm min-h-[80px] focus:outline-none focus:ring-1 focus:ring-ring"
+                                    value={toolForm.description || ''}
+                                    onChange={(e) => setToolForm({ ...toolForm, description: e.target.value })}
+                                    placeholder="Describe what this tool does and when the AI should use it. E.g., 'Check if an appointment slot is available for the given date and time.'"
+                                />
+                            </div>
+
+                            {/* AI-Provided Parameters */}
+                            <div className="space-y-2">
+                                <FormLabel tooltip="Parameters the AI will provide when calling this tool. These become variables in your URL, headers, and body template.">
+                                    AI Parameters
+                                </FormLabel>
+                                <div className="space-y-2">
+                                    {(toolForm.parameters || []).map((param: ToolParameter, idx: number) => (
+                                        <div key={idx} className="flex items-start gap-2 p-2 bg-accent/30 rounded border">
+                                            <div className="flex-1 grid grid-cols-4 gap-2">
+                                                <input
+                                                    className="px-2 py-1 text-xs border rounded"
+                                                    placeholder="Name"
+                                                    value={param.name}
+                                                    onChange={(e) => {
+                                                        const params = [...(toolForm.parameters || [])];
+                                                        params[idx] = { ...params[idx], name: e.target.value };
+                                                        setToolForm({ ...toolForm, parameters: params });
+                                                    }}
+                                                />
+                                                <select
+                                                    className="px-2 py-1 text-xs border rounded bg-background"
+                                                    value={param.type}
+                                                    onChange={(e) => {
+                                                        const params = [...(toolForm.parameters || [])];
+                                                        params[idx] = { ...params[idx], type: e.target.value };
+                                                        setToolForm({ ...toolForm, parameters: params });
+                                                    }}
+                                                >
+                                                    <option value="string">string</option>
+                                                    <option value="number">number</option>
+                                                    <option value="boolean">boolean</option>
+                                                </select>
+                                                <input
+                                                    className="px-2 py-1 text-xs border rounded col-span-2"
+                                                    placeholder="Description for AI"
+                                                    value={param.description}
+                                                    onChange={(e) => {
+                                                        const params = [...(toolForm.parameters || [])];
+                                                        params[idx] = { ...params[idx], description: e.target.value };
+                                                        setToolForm({ ...toolForm, parameters: params });
+                                                    }}
+                                                />
+                                            </div>
+                                            <label className="flex items-center gap-1 text-xs">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={param.required}
+                                                    onChange={(e) => {
+                                                        const params = [...(toolForm.parameters || [])];
+                                                        params[idx] = { ...params[idx], required: e.target.checked };
+                                                        setToolForm({ ...toolForm, parameters: params });
+                                                    }}
+                                                />
+                                                Required
+                                            </label>
+                                            <button
+                                                onClick={() => {
+                                                    const params = (toolForm.parameters || []).filter((_: any, i: number) => i !== idx);
+                                                    setToolForm({ ...toolForm, parameters: params });
+                                                }}
+                                                className="p-1 text-destructive hover:text-destructive/80"
+                                            >
+                                                <Trash2 className="w-3 h-3" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const params = [...(toolForm.parameters || []), { name: '', type: 'string', description: '', required: false }];
+                                        setToolForm({ ...toolForm, parameters: params });
+                                    }}
+                                    className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                                >
+                                    <Plus className="w-3 h-3" /> Add Parameter
+                                </button>
+                            </div>
+
+                            {/* Query Parameters */}
+                            <div className="space-y-2">
+                                <FormLabel tooltip="URL query parameters. Use {param_name} for AI-provided params, {caller_number}, {call_id}, etc. for context vars.">
+                                    Query Parameters
+                                </FormLabel>
+                                <div className="space-y-1">
+                                    {Object.entries(toolForm.query_params || {}).map(([k, v]) => (
+                                        <div key={k} className="flex items-center gap-2 text-xs bg-accent/50 px-2 py-1 rounded">
+                                            <span className="font-mono">{k}={String(v)}</span>
+                                            <button onClick={() => removeQueryParam(k)} className="ml-auto text-destructive hover:text-destructive/80">
+                                                <Trash2 className="w-3 h-3" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="flex gap-2">
+                                    <input
+                                        className="flex-1 px-2 py-1 text-sm border rounded"
+                                        placeholder="Parameter name"
+                                        value={queryParamKey}
+                                        onChange={(e) => setQueryParamKey(e.target.value)}
+                                    />
+                                    <input
+                                        className="flex-1 px-2 py-1 text-sm border rounded"
+                                        placeholder="Value (e.g., {date})"
+                                        value={queryParamValue}
+                                        onChange={(e) => setQueryParamValue(e.target.value)}
+                                    />
+                                    <button onClick={addQueryParam} className="px-2 py-1 bg-secondary rounded text-xs hover:bg-secondary/80">
+                                        <Plus className="w-3 h-3" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Body Template */}
+                            {(toolForm.method === 'POST' || toolForm.method === 'PUT' || toolForm.method === 'PATCH') && (
+                                <div className="space-y-2">
+                                    <FormLabel tooltip="JSON body template. Use {param_name} for AI params, {caller_number}, {call_id}, etc. for context vars.">
+                                        Body Template
+                                    </FormLabel>
+                                    <textarea
+                                        className="w-full p-3 rounded-md border border-input bg-transparent text-sm font-mono min-h-[120px] focus:outline-none focus:ring-1 focus:ring-ring"
+                                        value={toolForm.body_template || ''}
+                                        onChange={(e) => setToolForm({ ...toolForm, body_template: e.target.value })}
+                                        placeholder='{"caller": "{caller_number}", "date": "{date}", "time": "{time}"}'
+                                    />
+                                </div>
+                            )}
+
+                            {/* Response Handling */}
+                            <div className="border border-border rounded-lg p-3 bg-card/30 space-y-3">
+                                <FormSwitch
+                                    label="Return Raw JSON to AI"
+                                    description="If enabled, the full JSON response is passed to AI. Otherwise, only selected output variables are returned."
+                                    checked={toolForm.return_raw_json ?? false}
+                                    onChange={(e) => setToolForm({ ...toolForm, return_raw_json: e.target.checked })}
+                                />
+                            </div>
+
+                            {/* Output Variables (when not returning raw JSON) */}
+                            {!toolForm.return_raw_json && (
+                                <div className="space-y-2">
+                                    <FormLabel tooltip="Map JSON response paths to variables returned to the AI. Use dot notation like 'available' or 'slot.time'">
+                                        Output Variables
+                                    </FormLabel>
+                                    <div className="space-y-1">
+                                        {Object.entries(toolForm.output_variables || {}).map(([k, v]) => (
+                                            <div key={k} className="flex items-center gap-2 text-xs bg-accent/50 px-2 py-1 rounded">
+                                                <span className="font-mono">{k} ← {String(v)}</span>
+                                                <button onClick={() => removeOutputVariable(k)} className="ml-auto text-destructive hover:text-destructive/80">
+                                                    <Trash2 className="w-3 h-3" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <input
+                                            className="flex-1 px-2 py-1 text-sm border rounded"
+                                            placeholder="Variable name (e.g., available)"
+                                            value={outputVarKey}
+                                            onChange={(e) => setOutputVarKey(e.target.value)}
+                                        />
+                                        <input
+                                            className="flex-1 px-2 py-1 text-sm border rounded"
+                                            placeholder="JSON path (e.g., data.available)"
+                                            value={outputVarPath}
+                                            onChange={(e) => setOutputVarPath(e.target.value)}
+                                        />
+                                        <button onClick={addOutputVariable} className="px-2 py-1 bg-secondary rounded text-xs hover:bg-secondary/80">
+                                            <Plus className="w-3 h-3" />
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Error Message */}
+                            <FormInput
+                                label="Error Message"
+                                value={toolForm.error_message || ''}
+                                onChange={(e) => setToolForm({ ...toolForm, error_message: e.target.value })}
+                                placeholder="I'm sorry, I couldn't retrieve that information right now."
+                                tooltip="Message the AI will receive if the HTTP request fails"
+                            />
+
+                            {/* Hold Audio Settings */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <FormInput
+                                    label="Hold Audio File (optional)"
+                                    value={toolForm.hold_audio_file || ''}
+                                    onChange={(e) => setToolForm({ ...toolForm, hold_audio_file: e.target.value })}
+                                    placeholder="custom/please-wait"
+                                    tooltip="Asterisk sound file to play while waiting for response"
+                                />
+                                <FormInput
+                                    label="Hold Audio Threshold (ms)"
+                                    type="number"
+                                    value={toolForm.hold_audio_threshold_ms || 500}
+                                    onChange={(e) => setToolForm({ ...toolForm, hold_audio_threshold_ms: parseInt(e.target.value) })}
+                                    tooltip="Play hold audio if request takes longer than this threshold"
+                                />
+                            </div>
+
+                            {/* Test Values Configuration */}
+                            <div className="border border-border rounded-lg p-3 bg-card/30">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowTestValues(!showTestValues)}
+                                    className="flex items-center gap-2 text-sm font-medium w-full"
+                                >
+                                    {showTestValues ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                    Test Values (for variable substitution)
+                                </button>
+                                {showTestValues && (
+                                    <div className="mt-3 grid grid-cols-2 gap-3">
+                                        {Object.entries(testValues).map(([key, value]) => (
+                                            <div key={key} className="flex flex-col gap-1">
+                                                <label className="text-xs text-muted-foreground font-mono">{`{${key}}`}</label>
+                                                <input
+                                                    className="w-full px-2 py-1 text-xs border rounded bg-background"
+                                                    value={value}
+                                                    onChange={(e) => setTestValues({ ...testValues, [key]: e.target.value })}
+                                                />
+                                            </div>
+                                        ))}
+                                        {/* Add AI parameter test values */}
+                                        {(toolForm.parameters || []).map((param: ToolParameter) => (
+                                            <div key={`param_${param.name}`} className="flex flex-col gap-1">
+                                                <label className="text-xs text-muted-foreground font-mono">{`{${param.name}}`} <span className="text-blue-500">(AI param)</span></label>
+                                                <input
+                                                    className="w-full px-2 py-1 text-xs border rounded bg-background"
+                                                    value={testValues[param.name] || ''}
+                                                    onChange={(e) => setTestValues({ ...testValues, [param.name]: e.target.value })}
+                                                    placeholder={`Test value for ${param.name}`}
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         </>
                     )}
 

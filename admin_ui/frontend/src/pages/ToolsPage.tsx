@@ -207,16 +207,30 @@ const ToolsPage = () => {
                 </ConfigSection>
             )}
 
-            {/* In-Call Phase (existing tools) */}
+            {/* In-Call Phase (existing tools + HTTP tools) */}
             {activePhase === 'in_call' && (
-                <ConfigSection title="In-Call Tools" description="Tools available during the conversation (transfer, hangup, email, etc.)">
-                    <ConfigCard>
-                        <ToolForm
-                            config={{ ...(config.tools || {}), farewell_hangup_delay_sec: config.farewell_hangup_delay_sec }}
-                            onChange={updateToolsConfig}
-                        />
-                    </ConfigCard>
-                </ConfigSection>
+                <>
+                    <ConfigSection title="Built-in Tools" description="Core tools available during the conversation (transfer, hangup, email, etc.)">
+                        <ConfigCard>
+                            <ToolForm
+                                config={{ ...(config.tools || {}), farewell_hangup_delay_sec: config.farewell_hangup_delay_sec }}
+                                onChange={updateToolsConfig}
+                            />
+                        </ConfigCard>
+                    </ConfigSection>
+                    <ConfigSection 
+                        title="In-Call HTTP Tools" 
+                        description="HTTP lookup tools the AI can invoke during conversation to fetch data (e.g., check availability, lookup order status)."
+                    >
+                        <ConfigCard>
+                            <HTTPToolForm
+                                config={config.in_call_tools || {}}
+                                onChange={(newTools) => setConfig({ ...config, in_call_tools: newTools })}
+                                phase="in_call"
+                            />
+                        </ConfigCard>
+                    </ConfigSection>
+                </>
             )}
 
             {/* Post-Call Phase */}

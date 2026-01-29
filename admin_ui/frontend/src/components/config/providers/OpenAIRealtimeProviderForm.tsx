@@ -104,6 +104,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                             value={config.temperature || 0.8}
                             onChange={(e) => handleChange('temperature', parseFloat(e.target.value))}
                         />
+                        <p className="text-xs text-muted-foreground">
+                            Controls randomness (0.0-2.0). Lower = more focused, higher = more creative.
+                        </p>
                     </div>
                     <div className="space-y-2">
                         <label className="text-sm font-medium">Max Response Tokens</label>
@@ -113,6 +116,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                             value={config.max_response_output_tokens || 4096}
                             onChange={(e) => handleChange('max_response_output_tokens', parseInt(e.target.value))}
                         />
+                        <p className="text-xs text-muted-foreground">
+                            Maximum tokens in response. Higher allows longer answers but increases latency.
+                        </p>
                     </div>
                 </div>
 
@@ -139,6 +145,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 <option value="server_vad">Server VAD</option>
                                 <option value="none">None (Push to Talk)</option>
                             </select>
+                            <p className="text-xs text-muted-foreground">
+                                Server VAD auto-detects speech turns. None requires manual control.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Threshold (0.0 - 1.0)</label>
@@ -149,6 +158,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 value={config.turn_detection?.threshold || 0.6}
                                 onChange={(e) => handleNestedChange('turn_detection', 'threshold', parseFloat(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Voice activity sensitivity. Lower = more sensitive to speech.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Silence Duration (ms)</label>
@@ -158,6 +170,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 value={config.turn_detection?.silence_duration_ms || 1000}
                                 onChange={(e) => handleNestedChange('turn_detection', 'silence_duration_ms', parseInt(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Silence needed to end a turn. Higher = waits longer for user to finish.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Prefix Padding (ms)</label>
@@ -167,6 +182,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 value={config.turn_detection?.prefix_padding_ms || 300}
                                 onChange={(e) => handleNestedChange('turn_detection', 'prefix_padding_ms', parseInt(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Audio included before detected speech start. Prevents clipping.
+                            </p>
                         </div>
                         <div className="flex items-center space-x-2">
                             <input
@@ -195,6 +213,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 <option value="pcm16">PCM16</option>
                                 <option value="linear16">Linear16</option>
                             </select>
+                            <p className="text-xs text-muted-foreground">
+                                Audio format from Asterisk. Use μ-law for standard telephony.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Input Sample Rate (Hz)</label>
@@ -204,6 +225,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 value={config.input_sample_rate_hz || 8000}
                                 onChange={(e) => handleChange('input_sample_rate_hz', parseInt(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Sample rate from Asterisk. Standard telephony uses 8000 Hz.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Output Encoding</label>
@@ -216,6 +240,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 <option value="pcm16">PCM16</option>
                                 <option value="ulaw">μ-law</option>
                             </select>
+                            <p className="text-xs text-muted-foreground">
+                                Audio format from OpenAI. Linear16 provides best quality.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Output Sample Rate (Hz)</label>
@@ -225,6 +252,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 value={config.output_sample_rate_hz || 24000}
                                 onChange={(e) => handleChange('output_sample_rate_hz', parseInt(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Sample rate from OpenAI. 24000 Hz is native for Realtime API.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Target Encoding</label>
@@ -238,6 +268,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 <option value="pcm16">PCM16</option>
                                 <option value="linear16">Linear16</option>
                             </select>
+                            <p className="text-xs text-muted-foreground">
+                                Final format for playback to caller. Match your Asterisk codec.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Target Sample Rate (Hz)</label>
@@ -247,6 +280,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 value={config.target_sample_rate_hz || 8000}
                                 onChange={(e) => handleChange('target_sample_rate_hz', parseInt(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Final sample rate for playback. 8000 Hz for standard telephony.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Provider Input Encoding</label>
@@ -258,6 +294,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 <option value="linear16">Linear16</option>
                                 <option value="pcm16">PCM16</option>
                             </select>
+                            <p className="text-xs text-muted-foreground">
+                                Format sent to OpenAI. Linear16 required for Realtime API.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Provider Input Sample Rate (Hz)</label>
@@ -267,6 +306,9 @@ const OpenAIRealtimeProviderForm: React.FC<OpenAIRealtimeProviderFormProps> = ({
                                 value={config.provider_input_sample_rate_hz || 24000}
                                 onChange={(e) => handleChange('provider_input_sample_rate_hz', parseInt(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Sample rate for OpenAI input. 24000 Hz required for Realtime API.
+                            </p>
                         </div>
                     </div>
                 </div>

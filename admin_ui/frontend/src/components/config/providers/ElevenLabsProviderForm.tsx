@@ -178,6 +178,9 @@ const ElevenLabsProviderForm: React.FC<ElevenLabsProviderFormProps> = ({ config,
                                 value={config.stability || 0.5}
                                 onChange={(e) => handleChange('stability', parseFloat(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Voice consistency. Higher = more stable, lower = more expressive/variable.
+                            </p>
                         </div>
 
                         <div className="space-y-2">
@@ -191,6 +194,9 @@ const ElevenLabsProviderForm: React.FC<ElevenLabsProviderFormProps> = ({ config,
                                 value={config.similarity_boost || 0.75}
                                 onChange={(e) => handleChange('similarity_boost', parseFloat(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Voice clarity vs. creativity. Higher = closer to original voice.
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -215,6 +221,9 @@ const ElevenLabsProviderForm: React.FC<ElevenLabsProviderFormProps> = ({ config,
                         value={config.input_sample_rate || 16000}
                         onChange={(e) => handleChange('input_sample_rate', parseInt(e.target.value))}
                     />
+                    <p className="text-xs text-muted-foreground">
+                        Audio sample rate for input. 16000 Hz recommended.
+                    </p>
                 </div>
                 <div className="space-y-2">
                     <label className="text-sm font-medium">Output Sample Rate (Hz)</label>
@@ -224,6 +233,9 @@ const ElevenLabsProviderForm: React.FC<ElevenLabsProviderFormProps> = ({ config,
                         value={config.output_sample_rate || 16000}
                         onChange={(e) => handleChange('output_sample_rate', parseInt(e.target.value))}
                     />
+                    <p className="text-xs text-muted-foreground">
+                        TTS output sample rate. 16000 Hz or 22050 Hz typical.
+                    </p>
                 </div>
             </div>
 

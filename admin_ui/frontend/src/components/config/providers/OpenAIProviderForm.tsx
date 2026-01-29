@@ -109,6 +109,9 @@ const OpenAIProviderForm: React.FC<OpenAIProviderFormProps> = ({ config, onChang
                                 value={config.response_timeout_sec || 5}
                                 onChange={(e) => handleChange('response_timeout_sec', parseFloat(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Max wait time for LLM response. Increase for complex prompts.
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -159,6 +162,9 @@ const OpenAIProviderForm: React.FC<OpenAIProviderFormProps> = ({ config, onChang
                                 <option value="pcm16">PCM16</option>
                                 <option value="ulaw">μ-law</option>
                             </select>
+                            <p className="text-xs text-muted-foreground">
+                                Audio format for STT. Linear16 recommended for Whisper.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Input Sample Rate (Hz)</label>
@@ -168,6 +174,9 @@ const OpenAIProviderForm: React.FC<OpenAIProviderFormProps> = ({ config, onChang
                                 value={config.input_sample_rate_hz || 16000}
                                 onChange={(e) => handleChange('input_sample_rate_hz', parseInt(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Sample rate for STT. 16000 Hz optimal for Whisper models.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Chunk Size (ms)</label>
@@ -177,6 +186,9 @@ const OpenAIProviderForm: React.FC<OpenAIProviderFormProps> = ({ config, onChang
                                 value={config.chunk_size_ms || 20}
                                 onChange={(e) => handleChange('chunk_size_ms', parseInt(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Audio chunk duration. 20ms is standard for real-time.
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -249,6 +261,9 @@ const OpenAIProviderForm: React.FC<OpenAIProviderFormProps> = ({ config, onChang
                                 <option value="pcm16">PCM16</option>
                                 <option value="linear16">Linear16</option>
                             </select>
+                            <p className="text-xs text-muted-foreground">
+                                Final format for playback. Match your Asterisk codec.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Target Sample Rate (Hz)</label>
@@ -258,6 +273,9 @@ const OpenAIProviderForm: React.FC<OpenAIProviderFormProps> = ({ config, onChang
                                 value={config.target_sample_rate_hz || 8000}
                                 onChange={(e) => handleChange('target_sample_rate_hz', parseInt(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Final sample rate. 8000 Hz for standard telephony.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Chunk Size (ms)</label>
@@ -267,6 +285,9 @@ const OpenAIProviderForm: React.FC<OpenAIProviderFormProps> = ({ config, onChang
                                 value={config.chunk_size_ms || 20}
                                 onChange={(e) => handleChange('chunk_size_ms', parseInt(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Audio chunk duration. 20ms is standard for real-time.
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium">Response Timeout (sec)</label>
@@ -276,6 +297,9 @@ const OpenAIProviderForm: React.FC<OpenAIProviderFormProps> = ({ config, onChang
                                 value={config.response_timeout_sec || 5}
                                 onChange={(e) => handleChange('response_timeout_sec', parseFloat(e.target.value))}
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Max wait time for TTS response. Increase for longer text.
+                            </p>
                         </div>
                     </div>
                 </div>

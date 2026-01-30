@@ -243,17 +243,12 @@ class StreamingPlaybackManager:
             self.greeting_min_start_ms = int(self.streaming_config.get('greeting_min_start_ms', 0))
         except Exception:
             self.greeting_min_start_ms = 0
-        # ExternalMedia greeting: give Asterisk a short window to start sending inbound RTP
-        # (needed to learn the remote endpoint). After this window, we defer fallback until greeting completes.
+        # ExternalMedia greeting: safety net timeout for RTP endpoint establishment.
+        # With RTP kick fix, RTP establishes in ~40-50ms. This is just a fallback if kick fails.
         try:
-            self.greeting_rtp_wait_ms = int(self.streaming_config.get('greeting_rtp_wait_ms', 250))
+            self.greeting_rtp_wait_ms = int(self.streaming_config.get('greeting_rtp_wait_ms', 1000))
         except Exception:
-            self.greeting_rtp_wait_ms = 250
-        # Max wait for greeting to complete before triggering fallback (collects all audio)
-        try:
-            self.greeting_max_wait_ms = int(self.streaming_config.get('greeting_max_wait_ms', 15000))
-        except Exception:
-            self.greeting_max_wait_ms = 15000
+            self.greeting_rtp_wait_ms = 1000
         self.greeting_min_start_chunks = (
             max(1, int(math.ceil(self.greeting_min_start_ms / max(1, self.chunk_size_ms))))
             if self.greeting_min_start_ms > 0 else self.min_start_chunks
@@ -1337,9 +1332,10 @@ class StreamingPlaybackManager:
                     and hasattr(self.rtp_server, "has_remote_endpoint")
                     and not self.rtp_server.has_remote_endpoint(call_id)
                 ):
-                    wait_ms = int(getattr(self, "greeting_rtp_wait_ms", 0) or 0)
-                    # Max wait for greeting to complete before fallback (default 15 seconds)
-                    max_greeting_wait_ms = int(getattr(self, "greeting_max_wait_ms", 15000) or 15000)
+                    # Simple safety-net timeout for RTP endpoint establishment.
+                    # With RTP kick fix, RTP establishes in ~40-50ms. This fallback should
+                    # rarely trigger - it's just a safety net if kick fails for some reason.
+                    wait_ms = int(getattr(self, "greeting_rtp_wait_ms", 1000) or 1000)
                     if wait_ms > 0:
                         now = time.time()
                         start_ts = float(info.get("rtp_wait_started_ts") or 0.0) or now
@@ -1347,40 +1343,17 @@ class StreamingPlaybackManager:
                         waited_ms = (now - start_ts) * 1000.0
                         self.active_streams[call_id] = info
                         
-                        # Phase 1: Wait for RTP endpoint (greeting_rtp_wait_ms)
                         if waited_ms < float(wait_ms):
                             return "wait"
                         
-                        # Phase 2: RTP wait expired - give provider a grace period to finish
-                        # Use a shorter deferred timeout (3 seconds) since we can't reliably detect
-                        # greeting completion when RTP is unavailable (sentinel_seen won't be set)
-                        deferred_grace_ms = 3000  # 3 second grace after initial wait
-                        total_wait_threshold = float(wait_ms) + deferred_grace_ms
-                        
-                        if waited_ms < total_wait_threshold:
-                            # Mark that we're deferring fallback to collect more greeting audio
-                            if not info.get('greeting_fallback_deferred'):
-                                info['greeting_fallback_deferred'] = True
-                                info['deferred_start_ms'] = waited_ms
-                                self.active_streams[call_id] = info
-                                logger.info(
-                                    "🔄 GREETING FALLBACK DEFERRED - Collecting audio for fallback",
-                                    call_id=call_id,
-                                    waited_ms=round(waited_ms),
-                                    grace_ms=deferred_grace_ms,
-                                    will_trigger_at_ms=round(total_wait_threshold),
-                                )
-                            return "wait"
-                        
-                        # Phase 3: Grace period expired - trigger fallback with collected audio
-                        info["end_reason"] = "rtp-greeting-deferred-timeout"
+                        # Timeout expired - trigger fallback to file playback
+                        info["end_reason"] = "rtp-remote-endpoint-timeout"
                         self.active_streams[call_id] = info
-                        logger.info(
-                            "🎵 GREETING FALLBACK TRIGGERED - Collecting all buffered audio",
+                        logger.warning(
+                            "🎵 GREETING FALLBACK - RTP endpoint not established (RTP kick may have failed)",
                             call_id=call_id,
                             waited_ms=round(waited_ms),
-                            grace_ms=deferred_grace_ms,
-                            reason=info.get('end_reason'),
+                            timeout_ms=wait_ms,
                         )
             except Exception:
                 logger.debug("Greeting fallback check failed", call_id=call_id, exc_info=True)

@@ -270,8 +270,7 @@ class Engine:
                 'low_watermark_ms': config.streaming.low_watermark_ms,
                 'provider_grace_ms': config.streaming.provider_grace_ms,
                 'logging_level': config.streaming.logging_level,
-                'greeting_rtp_wait_ms': int(getattr(config.streaming, 'greeting_rtp_wait_ms', 250)),
-                'greeting_max_wait_ms': int(getattr(config.streaming, 'greeting_max_wait_ms', 15000)),
+                'greeting_rtp_wait_ms': int(getattr(config.streaming, 'greeting_rtp_wait_ms', 1000)),
                 'egress_swap_mode': getattr(config.streaming, 'egress_swap_mode', 'auto'),
                 'egress_force_mulaw': self._should_force_mulaw(
                     getattr(config.streaming, 'egress_force_mulaw', False),

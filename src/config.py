@@ -466,14 +466,9 @@ class StreamingConfig(BaseModel):
     logging_level: str = Field(default="info")
     # Smaller warm-up only for the initial greeting to get first audio out sooner
     greeting_min_start_ms: int = Field(default=0)
-    # ExternalMedia-specific: how long to wait (ms) for inbound RTP to establish the remote endpoint
-    # before we start deferring fallback for the greeting. Total timeout = this + 3s grace period.
-    # With RTP kick enabled, this should trigger quickly; fallback is a safety net.
+    # ExternalMedia-specific: safety net timeout (ms) for RTP endpoint establishment.
+    # With RTP kick fix, RTP establishes in ~40-50ms. This fallback rarely triggers.
     greeting_rtp_wait_ms: int = Field(default=1000)
-    # ExternalMedia-specific: maximum time (ms) to wait for greeting to complete before triggering
-    # fallback. This allows full greeting audio to be collected even when RTP endpoint is slow.
-    # After greeting_rtp_wait_ms expires, we continue buffering until AgentAudioDone or this timeout.
-    greeting_max_wait_ms: int = Field(default=15000)
     # Egress endianness control for PCM16 slin16 over AudioSocket: 'auto'|'force_true'|'force_false'
     # - auto: derive from inbound probe (current behavior)
     # - force_true: always byteswap outbound PCM16

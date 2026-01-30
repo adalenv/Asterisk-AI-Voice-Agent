@@ -8482,15 +8482,26 @@ class Engine:
                 )
                 prompt_source = "error"
 
-            # Inject context tools allowlist into pipeline LLM options.
-            # Contexts are the single source of truth for tool allowlisting.
+                # Inject context tools allowlist into pipeline LLM options.
+            # Contexts are the single source of truth for allowlisting, but global tools can be
+            # enabled by default and selectively disabled per context (Milestone 24).
             try:
                 context_name = getattr(session, "context_name", None)
                 allowed_tools: List[str] = []
                 if context_name:
                     context_config = self.transport_orchestrator.get_context_config(context_name)
-                    if context_config and hasattr(context_config, "tools"):
-                        allowed_tools = list(getattr(context_config, "tools") or [])
+                    if context_config:
+                        from src.tools.base import ToolPhase
+                        from src.tools.registry import tool_registry
+
+                        context_tools = list(getattr(context_config, "tools") or [])
+                        disabled_global = list(getattr(context_config, "disable_global_in_call_tools") or [])
+                        tools = tool_registry.get_tools_for_context(
+                            ToolPhase.IN_CALL,
+                            context_tool_names=context_tools,
+                            disabled_global_tools=disabled_global,
+                        )
+                        allowed_tools = [t.definition.name for t in tools]
                 # Defense-in-depth: never expose pre-call/post-call tools as in-call tools (YAML edits).
                 if allowed_tools:
                     try:
@@ -11224,25 +11235,26 @@ class Engine:
                             except Exception as e:
                                 logger.warning(f"Failed to register context in-call HTTP tools: {e}", call_id=call_id)
                         
-                        # Contexts are the source of truth for tool allowlisting, but never expose
-                        # pre-call/post-call phase tools as in-call tools (defense-in-depth for YAML edits).
+                        # Context tool allowlisting:
+                        # - Combine global tools with context-specific tools (Milestone 24),
+                        #   respecting context opt-outs.
+                        # - Also include per-context in-call HTTP tool wrappers.
                         allowed = list(getattr(context_config, "tools", None) or [])
-                        # Also include any in-call HTTP tools defined in this context
                         if in_call_http_tools_cfg:
                             allowed.extend(list(in_call_http_tools_cfg.keys()))
                         try:
                             from src.tools.base import ToolPhase
                             from src.tools.registry import tool_registry
 
-                            filtered: List[str] = []
-                            for name in allowed:
-                                t = tool_registry.get(name) if tool_registry else None
-                                if t and getattr(t.definition, "phase", ToolPhase.IN_CALL) == ToolPhase.IN_CALL:
-                                    filtered.append(t.definition.name)
-                            allowed = filtered
+                            disabled_global = list(getattr(context_config, "disable_global_in_call_tools") or [])
+                            tools = tool_registry.get_tools_for_context(
+                                ToolPhase.IN_CALL,
+                                context_tool_names=allowed,
+                                disabled_global_tools=disabled_global,
+                            )
+                            provider_context["tools"] = [t.definition.name for t in tools]
                         except Exception:
-                            pass
-                        provider_context["tools"] = allowed
+                            provider_context["tools"] = allowed
                         try:
                             # Persist tool allowlist on session so provider-agnostic tools (e.g., hangup_call)
                             # can decide whether follow-up tools like request_transcript are actually available.

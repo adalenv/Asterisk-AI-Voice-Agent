@@ -213,6 +213,28 @@ AI: "Thank you for calling. Goodbye!"
 [Call ends]
 ```
 
+#### 5. Check Extension Status (Availability)
+
+**Purpose**: Check whether an internal extension is available (e.g., `NOT_INUSE`) during the call so the AI can decide whether to transfer or continue the conversation.
+
+**How it works**:
+- Queries ARI device states (`GET /ari/deviceStates/{deviceStateName}`), typically using `<TECH>/<EXT>`:
+  - `PJSIP/2765`
+  - `SIP/6000`
+
+**Configuration (optional but recommended)**:
+```yaml
+tools:
+  extensions:
+    internal:
+      "2765":
+        dial_string: "PJSIP/2765"
+        device_state_tech: "PJSIP"  # auto | PJSIP | SIP | IAX2 | DAHDI
+```
+
+**Tool output**:
+- Returns `device_state` and `available` (boolean).
+
 ### Business Tools
 
 #### 5. Request Transcript (Caller-Initiated)
@@ -851,7 +873,9 @@ tools:
 
 ### Enable Tools per Context / Pipeline (Allowlisting)
 
-Tools are allowlisted per **context** (and optionally per **pipeline**). If a tool is not allowlisted, the provider will not expose it to the model.
+Tools are allowlisted per **context** (and optionally per **pipeline**).
+
+Additionally, some tools can be marked **global** (enabled by default) and then selectively disabled per context using `disable_global_in_call_tools`.
 
 **Context example**:
 ```yaml
@@ -863,6 +887,8 @@ contexts:
       - cancel_transfer
       - hangup_call
       - request_transcript
+    disable_global_in_call_tools:
+      - check_extension_status   # optional: disable global availability checks in this context
 ```
 
 **Recommendation**: for deterministic transfer behavior, enable either `transfer` or `attended_transfer` in a given context/pipeline (not both), unless your prompt explicitly distinguishes when to use each.

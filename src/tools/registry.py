@@ -423,6 +423,12 @@ After outputting a tool call, provide a brief spoken response.
             self.register(VoicemailTool)
         except ImportError as e:
             logger.warning(f"Could not import VoicemailTool: {e}")
+
+        try:
+            from src.tools.telephony.check_extension_status import CheckExtensionStatusTool
+            self.register(CheckExtensionStatusTool)
+        except ImportError as e:
+            logger.warning(f"Could not import CheckExtensionStatusTool: {e}")
         
         # Business tools
         try:

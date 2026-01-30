@@ -350,7 +350,7 @@ const ToolForm = ({ config, onChange }: ToolFormProps) => {
                             onClick={() => {
                                 const key = `ext_${Object.keys(config.extensions?.internal || {}).length + 1}`;
                                 const existing = config.extensions?.internal || {};
-                                updateNestedConfig('extensions', 'internal', { ...existing, [key]: { name: '', description: '', dial_string: '', transfer: true } });
+                                updateNestedConfig('extensions', 'internal', { ...existing, [key]: { name: '', description: '', dial_string: '', transfer: true, device_state_tech: 'auto' } });
                             }}
                             className="text-xs flex items-center bg-secondary px-2 py-1 rounded hover:bg-secondary/80 transition-colors"
                         >
@@ -360,7 +360,7 @@ const ToolForm = ({ config, onChange }: ToolFormProps) => {
                     <div className="space-y-2">
                         {Object.entries(config.extensions?.internal || {}).map(([key, ext]: [string, any]) => (
                             <div key={key} className="grid grid-cols-1 md:grid-cols-12 gap-2 p-3 border rounded bg-background/50 items-center">
-                                <div className="md:col-span-2">
+                                <div className="md:col-span-1">
                                     <input
                                         className="w-full border rounded px-2 py-1 text-sm bg-muted"
                                         placeholder="Key"
@@ -395,7 +395,25 @@ const ToolForm = ({ config, onChange }: ToolFormProps) => {
                                         title="PJSIP/..."
                                     />
                                 </div>
-                                <div className="md:col-span-3">
+                                <div className="md:col-span-2">
+                                    <select
+                                        className="w-full border rounded px-2 py-1 text-sm bg-background"
+                                        value={ext.device_state_tech || 'auto'}
+                                        onChange={(e) => {
+                                            const updated = { ...(config.extensions?.internal || {}) };
+                                            updated[key] = { ...ext, device_state_tech: e.target.value };
+                                            updateNestedConfig('extensions', 'internal', updated);
+                                        }}
+                                        title="Device state technology for availability checks"
+                                    >
+                                        <option value="auto">Device Tech: auto</option>
+                                        <option value="PJSIP">PJSIP</option>
+                                        <option value="SIP">SIP</option>
+                                        <option value="IAX2">IAX2</option>
+                                        <option value="DAHDI">DAHDI</option>
+                                    </select>
+                                </div>
+                                <div className="md:col-span-2">
                                     <input
                                         className="w-full border rounded px-2 py-1 text-sm"
                                         placeholder="Description"

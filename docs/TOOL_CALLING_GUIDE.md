@@ -435,7 +435,7 @@ Unlike pre-call tools (automatic, before AI speaks) and post-call webhooks (afte
 ### In-Call HTTP Tool Configuration
 
 ```yaml
-in_call_http_tools:
+in_call_tools:
   check_availability:
     kind: in_call_http_lookup
     enabled: true
@@ -468,6 +468,22 @@ in_call_http_tools:
     error_message: "I'm sorry, I couldn't check availability right now."
 ```
 
+### Enable In-Call HTTP Tools per Context
+
+In-call HTTP tools are allowlisted per context (same as other in-call tools). In the Admin UI, you enable these under **Contexts → In-Call Tools**.
+
+**Example**:
+```yaml
+contexts:
+  support:
+    tools:
+      - hangup_call
+      - attended_transfer
+    in_call_http_tools:
+      - check_availability
+      - order_status
+```
+
 ### Variable Substitution (Precedence)
 
 In-call HTTP tools have access to three types of variables:
@@ -492,7 +508,7 @@ This means you can use data fetched by pre-call tools in your in-call tool reque
 **Order Status Lookup**:
 
 ```yaml
-in_call_http_tools:
+in_call_tools:
   order_status:
     kind: in_call_http_lookup
     enabled: true
@@ -517,7 +533,7 @@ in_call_http_tools:
 **Appointment Booking**:
 
 ```yaml
-in_call_http_tools:
+in_call_tools:
   book_appointment:
     kind: in_call_http_lookup
     enabled: true

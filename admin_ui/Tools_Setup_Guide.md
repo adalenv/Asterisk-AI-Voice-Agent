@@ -26,6 +26,15 @@ This guide explains how to set up **Pre-Call HTTP Lookups**, **In-Call HTTP Tool
 2. API keys for your integration platform (GoHighLevel, n8n, Make)
 3. Webhook URLs from your automation platform
 
+### Security Note (HTTP Tool Testing)
+
+The Admin UI **Test** button makes real outbound HTTP requests.
+
+- Run the Admin UI only on a **trusted network** (LAN/VPN) and avoid exposing it publicly.
+- By default, the test endpoint blocks requests to localhost/private targets to reduce SSRF risk.
+  - To allow private/localhost testing (trusted network only), set `AAVA_HTTP_TOOL_TEST_ALLOW_PRIVATE=1`.
+  - To allow specific hostnames, set `AAVA_HTTP_TOOL_TEST_ALLOW_HOSTS=host1,host2`.
+
 ---
 
 ## Part 1: Pre-Call HTTP Lookups

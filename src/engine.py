@@ -11220,7 +11220,9 @@ class Engine:
                     if context_config:
                         # Register per-context in-call HTTP tools if defined
                         in_call_http_tools_cfg = getattr(context_config, "in_call_http_tools", None)
-                        if in_call_http_tools_cfg:
+                        allowed_in_call_http_tool_names: list[str] = []
+
+                        if isinstance(in_call_http_tools_cfg, dict) and in_call_http_tools_cfg:
                             try:
                                 from src.tools.registry import tool_registry
                                 tool_registry.initialize_in_call_http_tools_from_config(in_call_http_tools_cfg)
@@ -11230,16 +11232,19 @@ class Engine:
                                     context=session.context_name,
                                     tool_count=len(in_call_http_tools_cfg),
                                 )
+                                allowed_in_call_http_tool_names = list(in_call_http_tools_cfg.keys())
                             except Exception as e:
                                 logger.warning(f"Failed to register context in-call HTTP tools: {e}", call_id=call_id)
+                        elif isinstance(in_call_http_tools_cfg, (list, tuple)) and in_call_http_tools_cfg:
+                            allowed_in_call_http_tool_names = [str(x) for x in in_call_http_tools_cfg if str(x).strip()]
                         
                         # Context tool allowlisting:
                         # - Combine global tools with context-specific tools (Milestone 24),
                         #   respecting context opt-outs.
                         # - Also include per-context in-call HTTP tool wrappers.
                         allowed = list(getattr(context_config, "tools", None) or [])
-                        if in_call_http_tools_cfg:
-                            allowed.extend(list(in_call_http_tools_cfg.keys()))
+                        if allowed_in_call_http_tool_names:
+                            allowed.extend(allowed_in_call_http_tool_names)
                         try:
                             from src.tools.base import ToolPhase
                             from src.tools.registry import tool_registry
@@ -11520,11 +11525,38 @@ class Engine:
             # Determine allowlisted tools for this call (contexts are the source of truth).
             allowed_tools: list[str] = []
             try:
-                if getattr(session, "context_name", None):
-                    ctx_cfg = self.transport_orchestrator.get_context_config(session.context_name)
-                    allowed_tools = list(getattr(ctx_cfg, "tools", None) or []) if ctx_cfg else []
+                # Prefer persisted allowlist (computed when provider session starts).
+                allowed_tools = list(getattr(session, "allowed_tools", None) or [])
             except Exception:
-                logger.debug("Failed resolving context tool allowlist", call_id=call_id, exc_info=True)
+                allowed_tools = []
+
+            if not allowed_tools:
+                try:
+                    if getattr(session, "context_name", None):
+                        ctx_cfg = self.transport_orchestrator.get_context_config(session.context_name)
+                        if ctx_cfg:
+                            allowed = list(getattr(ctx_cfg, "tools", None) or [])
+                            in_call_http_tools_cfg = getattr(ctx_cfg, "in_call_http_tools", None)
+                            if isinstance(in_call_http_tools_cfg, dict):
+                                allowed.extend(list(in_call_http_tools_cfg.keys()))
+                            elif isinstance(in_call_http_tools_cfg, (list, tuple)):
+                                allowed.extend([str(x) for x in in_call_http_tools_cfg if str(x).strip()])
+
+                            # Resolve global tools + opt-outs (Milestone 24)
+                            try:
+                                from src.tools.base import ToolPhase
+
+                                disabled_global = list(getattr(ctx_cfg, "disable_global_in_call_tools") or [])
+                                tools = tool_registry.get_tools_for_context(
+                                    ToolPhase.IN_CALL,
+                                    context_tool_names=allowed,
+                                    disabled_global_tools=disabled_global,
+                                )
+                                allowed_tools = [t.definition.name for t in tools]
+                            except Exception:
+                                allowed_tools = allowed
+                except Exception:
+                    logger.debug("Failed resolving context tool allowlist", call_id=call_id, exc_info=True)
 
             if function_name not in allowed_tools:
                 result = {"status": "error", "message": f"Tool '{function_name}' not allowed for this call"}

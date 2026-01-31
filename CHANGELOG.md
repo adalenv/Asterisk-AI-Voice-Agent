@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Deepgram Language Configuration**: Voice Agent language is now configurable via Admin UI and YAML (`agent_language` field). Supports 30+ languages including English variants, Spanish, French, German, Japanese, Chinese, and more.
+- **Phase Tools (Milestone 24)**: Pre-call HTTP lookups (enrichment), in-call HTTP tools (AI-invoked during conversation), and post-call webhooks (fire-and-forget automation).
+- **Extension Availability Tool (AAVA-53)**: New `check_extension_status` tool to query Asterisk device state (e.g., `PJSIP/2765`) so the AI can decide whether to transfer or continue.
+- **Hangup Policy Controls**: `hangup_call` now supports a configurable policy (markers and guardrails) via `tools.hangup_call.policy`.
+- **Admin UI YAML Error Recovery**: YAML parse errors now show a banner with line/column and the Raw YAML page can still load content for quick fixes.
+- **Agent CLI RCA Enhancements**: `agent rca [call_id]` support, optional `--llm` forcing, and tool call extraction to improve post-call debugging.
 
 ### Fixed
 
@@ -24,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Admin UI Setup Wizard (AAVA-164)**: ElevenLabs Agent ID field now auto-populates from `.env` file when re-running the wizard.
 - **Admin UI Log Export (AAVA-162)**: Exported debug logs now redact email addresses (`[EMAIL_REDACTED]`) to protect user privacy.
 - **Admin UI Environment Changes (AAVA-161)**: "Apply Changes" after modifying `.env` variables now uses `docker compose --force-recreate` instead of container restart, ensuring environment variable changes are actually applied (e.g., `LOG_TO_FILE`, `LOG_FILE_PATH`).
+- **In-Call HTTP Tools Config Wiring**: Align tool schema across engine/Admin UI/docs and support context allowlisting of in-call HTTP tools.
+- **Google Live Transcription Stability**: Reduce duplicate transcript fragments and improve output PCM rate detection from provider mimeType.
+
+### Security
+
+- Admin UI HTTP tool **Test** now blocks localhost/private targets by default (SSRF mitigation); can be overridden for trusted networks via environment variables.
 
 ## [5.2.5] - 2026-01-28
 

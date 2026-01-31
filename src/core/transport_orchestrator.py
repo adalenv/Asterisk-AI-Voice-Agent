@@ -18,7 +18,7 @@ The orchestrator produces a TransportProfile that specifies:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from structlog import get_logger
 
 from ..providers.base import ProviderCapabilities
@@ -53,7 +53,9 @@ class ContextConfig:
     post_call_tools: Optional[List[str]] = None  # Tool names to run after call ends
     
     # In-call HTTP tool configurations (defined inline in context)
-    in_call_http_tools: Optional[Dict[str, Any]] = None  # In-call HTTP tool configs (name -> config)
+    # NOTE: Admin UI stores `contexts.<name>.in_call_http_tools` as a list of enabled tool names.
+    # Inline per-context tool definitions may also be supported as a dict (name -> config).
+    in_call_http_tools: Optional[Union[List[str], Dict[str, Any]]] = None  # names or {name: config}
     
     # Global tool opt-out per context (Milestone 24)
     disable_global_pre_call_tools: Optional[List[str]] = None  # Global pre-call tools to disable
@@ -156,7 +158,10 @@ class TransportOrchestrator:
                     # In-call HTTP tool configurations
                     in_call_http_tools=context_dict.get('in_call_http_tools'),
                     disable_global_pre_call_tools=context_dict.get('disable_global_pre_call_tools'),
-                    disable_global_in_call_tools=context_dict.get('disable_global_in_call_tools'),
+                    disable_global_in_call_tools=(
+                        context_dict.get('disable_global_in_call_tools')
+                        or context_dict.get('disable_global_in_call_http_tools')  # legacy Admin UI key
+                    ),
                     disable_global_post_call_tools=context_dict.get('disable_global_post_call_tools'),
                 )
                 logger.debug("Loaded context mapping", name=name, context=contexts[name])

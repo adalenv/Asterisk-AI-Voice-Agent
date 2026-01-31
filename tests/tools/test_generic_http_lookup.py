@@ -6,6 +6,7 @@ Tests the HTTP lookup tool used for CRM enrichment during pre-call phase.
 
 import pytest
 import os
+import json
 from unittest.mock import AsyncMock, patch, MagicMock
 import aiohttp
 
@@ -63,6 +64,18 @@ class TestHTTPLookupConfig:
 
 class TestGenericHTTPLookupTool:
     """Tests for GenericHTTPLookupTool."""
+
+    @staticmethod
+    def _make_content(chunks):
+        class _Content:
+            def __init__(self, parts):
+                self._parts = list(parts)
+
+            async def iter_chunked(self, _size):
+                for part in self._parts:
+                    yield part
+
+        return _Content(chunks)
     
     @pytest.fixture
     def lookup_config(self):
@@ -141,11 +154,13 @@ class TestGenericHTTPLookupTool:
         mock_response = AsyncMock()
         mock_response.status = 200
         mock_response.headers = {"Content-Length": "100"}
-        mock_response.json = AsyncMock(return_value={
+        payload = {
             "firstName": "John",
             "lastName": "Doe",
             "email": "john@example.com",
-        })
+        }
+        mock_response.content = self._make_content([json.dumps(payload).encode("utf-8")])
+        mock_response.charset = "utf-8"
         
         # Create proper async context manager for request
         mock_request_cm = AsyncMock()
@@ -165,6 +180,62 @@ class TestGenericHTTPLookupTool:
         
         assert result["customer_name"] == "John"
         assert result["customer_email"] == "john@example.com"
+
+    @pytest.mark.asyncio
+    async def test_missing_content_length_enforces_max_size(self, lookup_config, precall_context):
+        """Missing Content-Length must still enforce max_response_size_bytes."""
+        lookup_config.max_response_size_bytes = 10  # smaller than payload below
+        tool = GenericHTTPLookupTool(lookup_config)
+
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.headers = {}
+        mock_response.content = self._make_content([b'{"firstName":"John","email":"john@example.com"}'])
+        mock_response.charset = "utf-8"
+
+        mock_request_cm = AsyncMock()
+        mock_request_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_request_cm.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = AsyncMock()
+        mock_session.request = MagicMock(return_value=mock_request_cm)
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session_cm):
+            result = await tool.execute(precall_context)
+
+        assert result == {"customer_name": "", "customer_email": ""}
+
+    @pytest.mark.asyncio
+    async def test_content_length_smaller_than_body_still_enforces_max_size(self, lookup_config, precall_context):
+        """Lying Content-Length must not bypass max_response_size_bytes."""
+        lookup_config.max_response_size_bytes = 10  # smaller than payload below
+        tool = GenericHTTPLookupTool(lookup_config)
+
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.headers = {"Content-Length": "1"}  # misleading/smaller than actual
+        mock_response.content = self._make_content([b'{"firstName":"John","email":"john@example.com"}'])
+        mock_response.charset = "utf-8"
+
+        mock_request_cm = AsyncMock()
+        mock_request_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_request_cm.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = AsyncMock()
+        mock_session.request = MagicMock(return_value=mock_request_cm)
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session_cm):
+            result = await tool.execute(precall_context)
+
+        assert result == {"customer_name": "", "customer_email": ""}
     
     @pytest.mark.asyncio
     async def test_non_200_returns_empty(self, lookup_config, precall_context):

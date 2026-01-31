@@ -7,6 +7,7 @@ and returns output variables for prompt injection.
 
 import os
 import re
+import json
 import logging
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
@@ -137,21 +138,59 @@ class GenericHTTPLookupTool(PreCallTool):
                     params=params,
                     data=body,
                 ) as response:
-                    # Check response size
-                    content_length = response.headers.get('Content-Length')
-                    if content_length and int(content_length) > self.config.max_response_size_bytes:
-                        logger.warning(f"Response too large, skipping: {self.config.name} size={content_length} max={self.config.max_response_size_bytes}")
-                        return results
-                    
                     if response.status != 200:
                         logger.warning(f"HTTP lookup returned non-200: {self.config.name} status={response.status}")
                         return results
-                    
-                    # Parse JSON response
+
+                    # Check declared response size (best-effort) but always enforce actual size below.
+                    content_length = response.headers.get('Content-Length')
+                    if content_length:
+                        try:
+                            if int(content_length) > self.config.max_response_size_bytes:
+                                logger.warning(
+                                    "Response too large, skipping: %s size=%s max=%s",
+                                    self.config.name,
+                                    content_length,
+                                    self.config.max_response_size_bytes,
+                                )
+                                return results
+                        except Exception:
+                            pass
+
+                    # Read body with enforced size limit (do not trust Content-Length header).
                     try:
-                        data = await response.json()
-                    except Exception as e:
+                        max_bytes = int(self.config.max_response_size_bytes or 0)
+                        if max_bytes <= 0:
+                            logger.warning(
+                                "Invalid max_response_size_bytes for %s: %s",
+                                self.config.name,
+                                self.config.max_response_size_bytes,
+                            )
+                            return results
+
+                        total = 0
+                        chunks: list[bytes] = []
+                        async for chunk in response.content.iter_chunked(8192):
+                            if not chunk:
+                                continue
+                            total += len(chunk)
+                            if total > max_bytes:
+                                logger.warning(
+                                    "Response too large, skipping: %s max=%s",
+                                    self.config.name,
+                                    max_bytes,
+                                )
+                                return results
+                            chunks.append(chunk)
+
+                        body_bytes = b"".join(chunks)
+                        charset = getattr(response, "charset", None) or "utf-8"
+                        data = json.loads(body_bytes.decode(charset, errors="replace"))
+                    except json.JSONDecodeError as e:
                         logger.warning(f"Failed to parse JSON response: {self.config.name} error={e}")
+                        return results
+                    except Exception as e:
+                        logger.warning(f"Failed to read response: {self.config.name} error={e}")
                         return results
                     
                     # Extract output variables

@@ -7,11 +7,24 @@ Tests the coordination between tool registry, contexts, and execution.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import os
+import json
 
 from src.tools.base import ToolPhase, ToolCategory, ToolDefinition, PreCallTool, PostCallTool
 from src.tools.context import PreCallContext, PostCallContext
 from src.tools.http.generic_lookup import GenericHTTPLookupTool, HTTPLookupConfig, create_http_lookup_tool
 from src.tools.http.generic_webhook import GenericWebhookTool, WebhookConfig, create_webhook_tool
+
+
+def _make_content(chunks):
+    class _Content:
+        def __init__(self, parts):
+            self._parts = list(parts)
+
+        async def iter_chunked(self, _size):
+            for part in self._parts:
+                yield part
+
+    return _Content(chunks)
 
 
 # --- Pre-Call Tool Execution Integration ---
@@ -36,12 +49,14 @@ class TestPreCallToolExecution:
         mock_response = AsyncMock()
         mock_response.status = 200
         mock_response.headers = {"Content-Length": "100"}
-        mock_response.json = AsyncMock(return_value={
+        payload = {
             "firstName": "John",
             "lastName": "Doe",
             "email": "john@test.com",
             "company": "Test Corp",
-        })
+        }
+        mock_response.content = _make_content([json.dumps(payload).encode("utf-8")])
+        mock_response.charset = "utf-8"
         return mock_response
     
     @pytest.mark.asyncio
@@ -325,7 +340,9 @@ class TestVariableInjectionIntegration:
         mock_response = AsyncMock()
         mock_response.status = 200
         mock_response.headers = {}
-        mock_response.json = AsyncMock(return_value={"firstName": "John"})
+        payload = {"firstName": "John"}
+        mock_response.content = _make_content([json.dumps(payload).encode("utf-8")])
+        mock_response.charset = "utf-8"
         
         mock_request_cm = AsyncMock()
         mock_request_cm.__aenter__ = AsyncMock(return_value=mock_response)

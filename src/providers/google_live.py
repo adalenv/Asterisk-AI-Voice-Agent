@@ -183,6 +183,62 @@ class GoogleLiveProvider(AIProviderInterface):
         self._session_gauge_incremented: bool = False
         self._ws_unavailable_logged: bool = False
         self._ws_send_close_logged: bool = False
+        # Diagnostics: keep a small ring buffer of outbound message summaries
+        # to help explain server-initiated closes (e.g., 1008 policy violations).
+        self._outbound_summaries: deque[Dict[str, Any]] = deque(maxlen=12)
+
+    def _summarize_outbound(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a compact, PII-safe summary of an outbound message.
+
+        Never include raw text content or tool response payloads; only include
+        message type, key presence, and basic sizing/shape.
+        """
+        try:
+            top_keys = list(message.keys()) if isinstance(message, dict) else []
+            msg_type = top_keys[0] if top_keys else "unknown"
+            summary: Dict[str, Any] = {"type": msg_type, "keys": top_keys}
+
+            if msg_type == "setup":
+                setup = message.get("setup") or {}
+                summary["setup_keys"] = list((setup or {}).keys())[:24]
+                summary["model"] = (setup or {}).get("model")
+                summary["has_tools"] = bool((setup or {}).get("tools"))
+                summary["has_input_transcription"] = "inputAudioTranscription" in (setup or {})
+                summary["has_output_transcription"] = "outputAudioTranscription" in (setup or {})
+            elif msg_type == "realtimeInput":
+                rt = message.get("realtimeInput") or {}
+                audio = (rt or {}).get("audio") or {}
+                # data is base64; include only length.
+                summary["mimeType"] = audio.get("mimeType")
+                data = audio.get("data")
+                if isinstance(data, str):
+                    summary["data_len"] = len(data)
+            elif msg_type == "clientContent":
+                cc = message.get("clientContent") or {}
+                summary["turnComplete"] = bool(cc.get("turnComplete"))
+                turns = cc.get("turns") or []
+                if isinstance(turns, list) and turns:
+                    first = turns[0] if isinstance(turns[0], dict) else {}
+                    summary["role"] = first.get("role")
+                    # Only include the number of parts; do not include text.
+                    parts = first.get("parts") or []
+                    if isinstance(parts, list):
+                        summary["parts"] = len(parts)
+            elif msg_type == "toolResponse":
+                tr = message.get("toolResponse") or {}
+                fr = tr.get("functionResponses") or []
+                summary["functionResponses"] = len(fr) if isinstance(fr, list) else 0
+                if isinstance(fr, list) and fr:
+                    names = []
+                    for item in fr[:4]:
+                        if isinstance(item, dict) and item.get("name"):
+                            names.append(str(item.get("name")))
+                    if names:
+                        summary["functions"] = names
+            return summary
+        except Exception:
+            return {"type": "unknown"}
 
     def _mark_ws_disconnected(self) -> None:
         self._setup_complete = False
@@ -672,11 +728,21 @@ class GoogleLiveProvider(AIProviderInterface):
 
     async def _send_message(self, message: Dict[str, Any]) -> None:
         """Send a message to Google Live API."""
+        summary = self._summarize_outbound(message)
+        try:
+            summary_with_ts = dict(summary)
+            summary_with_ts["ts_monotonic"] = round(time.monotonic(), 3)
+            self._outbound_summaries.append(summary_with_ts)
+        except Exception:
+            pass
+
         if not self._ws_is_open():
             if not self._ws_unavailable_logged:
                 logger.warning(
                     "Google Live websocket not open; dropping outbound message",
                     call_id=self._call_id,
+                    message_type=summary.get("type"),
+                    message_keys=summary.get("keys"),
                 )
                 self._ws_unavailable_logged = True
             return
@@ -695,6 +761,7 @@ class GoogleLiveProvider(AIProviderInterface):
                             call_id=self._call_id,
                             code=close_code,
                             reason=close_reason,
+                            last_outbound=summary,
                         )
                         self._ws_send_close_logged = True
                     self._mark_ws_disconnected()
@@ -703,6 +770,7 @@ class GoogleLiveProvider(AIProviderInterface):
                     "Failed to send message to Google Live",
                     call_id=self._call_id,
                     error=str(e),
+                    last_outbound=summary,
                 )
                 # Prevent log storms when the socket is already closed.
                 if not self._ws_is_open():
@@ -910,6 +978,7 @@ class GoogleLiveProvider(AIProviderInterface):
                 code=close_code,
                 meaning=close_meaning,
                 reason=close_reason,
+                outbound_tail=list(self._outbound_summaries),
             )
             
             # Specific guidance for common errors
@@ -923,6 +992,7 @@ class GoogleLiveProvider(AIProviderInterface):
                     "Policy violation (1008)",
                     call_id=self._call_id,
                     hint=hint,
+                    outbound_tail=list(self._outbound_summaries),
                 )
             self._mark_ws_disconnected()
         except Exception as e:

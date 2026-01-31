@@ -152,7 +152,11 @@ class DeepgramToolAdapter:
         # Execute tool
         try:
             result = await tool.execute(parameters, exec_context)
-            logger.info(f"✅ Tool {function_name} executed: {result.get('status')}", function_call_id=function_call_id)
+            logger.info(
+                f"✅ Tool {function_name} executed: {result.get('status')}",
+                function_call_id=function_call_id,
+                message=result.get("message"),
+            )
             result['function_call_id'] = function_call_id
             result['function_name'] = function_name  # Pass function name for response
             return result

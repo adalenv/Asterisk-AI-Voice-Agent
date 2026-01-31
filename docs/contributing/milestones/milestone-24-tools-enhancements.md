@@ -1,6 +1,6 @@
 # Milestone 24: Tool System Enhancements (Pre-Call, In-Call, Post-Call)
 
-**Status**: � In Progress  
+**Status**: In Progress  
 **Priority**: High  
 **Estimated Effort**: 3–4 weeks (MVP)  
 **Branch**: `develop`  
@@ -869,7 +869,7 @@ Unlike pre-call tools (which run before AI speaks) and post-call webhooks (which
 **Configuration Example**:
 
 ```yaml
-in_call_http_tools:
+in_call_tools:
   check_availability:
     kind: in_call_http_lookup
     enabled: true

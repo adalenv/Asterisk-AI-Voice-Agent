@@ -577,6 +577,9 @@ class AppConfig(BaseModel):
     contexts: Dict[str, Any] = Field(default_factory=dict)
     # Tool calling configuration (v4.1)
     tools: Dict[str, Any] = Field(default_factory=dict)
+    # In-call HTTP tool definitions (Milestone 24)
+    # Admin UI stores AI-invokable HTTP tool configs under `in_call_tools:`.
+    in_call_tools: Dict[str, Any] = Field(default_factory=dict)
     # MCP tool configuration (experimental)
     mcp: Optional[MCPConfig] = None
     # Farewell hangup delay - seconds to wait after farewell audio completes before hangup
@@ -648,7 +651,22 @@ def load_config(path: str = "config/ai-agent.yaml") -> AppConfig:
     # Phase 1: Load YAML file with environment variable expansion
     path = resolve_config_path(path)
     config_data = load_yaml_with_env_expansion(path)
-    
+
+    # Backward compatibility: older docs/configs used `in_call_http_tools` at the top-level.
+    # Canonical key is now `in_call_tools` (dict of tool_name -> config).
+    try:
+        if (
+            isinstance(config_data, dict)
+            and isinstance(config_data.get("in_call_http_tools"), dict)
+            and not isinstance(config_data.get("in_call_tools"), dict)
+        ):
+            logger.warning(
+                "Config uses deprecated top-level `in_call_http_tools`; migrating to `in_call_tools`",
+            )
+            config_data["in_call_tools"] = config_data.pop("in_call_http_tools")
+    except Exception:
+        logger.debug("Failed normalizing in-call tool key alias", exc_info=True)
+
     # Phase 2: Security - Inject credentials from environment variables only
     inject_asterisk_credentials(config_data)
     inject_llm_config(config_data)

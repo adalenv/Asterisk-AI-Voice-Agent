@@ -50,7 +50,7 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
         updateConfig(phase, newTools);
     };
 
-    const handleGlobalToolDisable = (phase: 'disable_global_pre_call_tools' | 'disable_global_post_call_tools' | 'disable_global_in_call_http_tools', toolName: string) => {
+    const handleGlobalToolDisable = (phase: 'disable_global_pre_call_tools' | 'disable_global_post_call_tools' | 'disable_global_in_call_tools', toolName: string) => {
         const currentDisabled = config[phase] || [];
         const newDisabled = currentDisabled.includes(toolName)
             ? currentDisabled.filter((t: string) => t !== toolName)
@@ -61,7 +61,7 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
     const isGlobalToolDisabled = (phase: 'pre_call' | 'post_call' | 'in_call', toolName: string) => {
         const key = phase === 'pre_call' ? 'disable_global_pre_call_tools' 
             : phase === 'post_call' ? 'disable_global_post_call_tools'
-            : 'disable_global_in_call_http_tools';
+            : 'disable_global_in_call_tools';
         return (config[key] || []).includes(toolName);
     };
 
@@ -320,7 +320,7 @@ const ContextForm = ({ config, providers, pipelines, availableTools, toolEnabled
                                                 type="button"
                                                 onClick={(e) => {
                                                     e.preventDefault();
-                                                    handleGlobalToolDisable('disable_global_in_call_http_tools', tool.name);
+                                                    handleGlobalToolDisable('disable_global_in_call_tools', tool.name);
                                                 }}
                                                 className={`text-xs px-2 py-0.5 rounded ${
                                                     isGlobalToolDisabled('in_call', tool.name)

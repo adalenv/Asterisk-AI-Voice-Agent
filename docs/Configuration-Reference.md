@@ -275,6 +275,7 @@ Requirements:
 ### Deepgram Voice Agent
 
 - providers.deepgram.api_key, model, tts_model.
+- `providers.deepgram.agent_language`: Language for Deepgram Voice Agent mode (default: `en`).
 - providers.deepgram.greeting: Agent greeting. Leave empty to inherit `llm.initial_greeting`.
 - providers.deepgram.instructions: Persona override for the “think” stage; leave empty to inherit `llm.prompt`.
 - providers.deepgram.input_encoding/input_sample_rate_hz: Keep `input_encoding=ulaw` at 8 kHz when AudioSocket runs μ-law transport.
@@ -377,8 +378,24 @@ Each context supports the following fields:
 - `greeting`: Initial greeting spoken when call connects.
 - `profile`: Audio profile name to use for this context.
 - `provider`: Provider override for this context.
-- `tools`: List of tool names to enable for this context.
+- `tools`: List of **in-call** tool names to enable for this context.
+- `pre_call_tools`: List of pre-call tool names to run after answer, before the AI speaks (HTTP lookups/enrichment).
+- `in_call_http_tools`: List of in-call HTTP tool names to allowlist for this context (defined under `in_call_tools:`).
+- `post_call_tools`: List of post-call tool names to run after the call ends (webhooks/automation).
+- `disable_global_pre_call_tools`: Disable specific global pre-call tools for this context.
+- `disable_global_in_call_tools`: Disable specific global in-call tools for this context.
+- `disable_global_post_call_tools`: Disable specific global post-call tools for this context.
 - `background_music`: Music On Hold class name for ambient music during calls (see below).
+
+### HTTP Tools (Phase Tools)
+
+HTTP tools are configured in YAML and/or via the Admin UI:
+
+- **Pre-call HTTP lookups**: live under `tools:<name>` with `kind: generic_http_lookup` and `phase: pre_call`.
+- **Post-call webhooks**: live under `tools:<name>` with `kind: generic_webhook` and `phase: post_call`.
+- **In-call HTTP tools**: live under `in_call_tools:<name>` with `kind: in_call_http_lookup` (AI-invoked during conversation).
+
+See `docs/TOOL_CALLING_GUIDE.md` for full examples and variable substitution details.
 
 ### Background Music
 
@@ -424,6 +441,16 @@ providers:
 Other provider configs should use environment variables directly via Python's `os.getenv()` in their implementation, or reference env vars in `.env` which are loaded at startup.
 
 **Note**: Future versions may extend env var resolution to all provider configurations.
+
+## Admin UI HTTP Tool Testing (Security)
+
+The Admin UI includes an HTTP tool **Test** feature that makes real outbound HTTP requests.
+
+By default, the Admin UI blocks test requests to localhost/private targets to reduce SSRF risk if the UI is exposed beyond a trusted network.
+
+- `AAVA_HTTP_TOOL_TEST_ALLOW_PRIVATE=1`: allow private/localhost targets (trusted network only).
+- `AAVA_HTTP_TOOL_TEST_ALLOW_HOSTS=host1,host2`: allow specific hostnames.
+- `AAVA_HTTP_TOOL_TEST_FOLLOW_REDIRECTS=1`: allow redirects (default is disabled).
 
 
 ## Tips

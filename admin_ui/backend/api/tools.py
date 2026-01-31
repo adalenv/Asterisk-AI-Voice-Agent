@@ -9,6 +9,9 @@ import re
 import os
 import logging
 import time
+import ipaddress
+import socket
+from urllib.parse import urlparse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -102,6 +105,123 @@ def _extract_json_paths(obj: Any, prefix: str = "") -> List[Dict[str, str]]:
     return paths
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _env_csv_set(name: str) -> set[str]:
+    raw = os.environ.get(name, "")
+    items = []
+    for part in raw.split(","):
+        s = part.strip()
+        if s:
+            items.append(s)
+    return set(items)
+
+
+def _is_private_or_sensitive_ip(ip: ipaddress._BaseAddress) -> bool:
+    return bool(
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _validate_http_tool_test_target(resolved_url: str) -> None:
+    """
+    Prevent SSRF-style abuse of the HTTP tool test endpoint.
+
+    Defaults:
+    - Allow only http/https
+    - Block localhost and private network targets (incl. link-local, loopback, RFC1918, etc.)
+    - Do not allow basic-auth credentials embedded in URLs
+
+    Overrides:
+    - Set `AAVA_HTTP_TOOL_TEST_ALLOW_PRIVATE=1` to allow private targets (trusted-network only)
+    - Or allow specific hosts via `AAVA_HTTP_TOOL_TEST_ALLOW_HOSTS=host1,host2`
+    """
+    parsed = urlparse(resolved_url)
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="Only http/https URLs are supported")
+
+    if parsed.username or parsed.password:
+        raise HTTPException(
+            status_code=400,
+            detail="URLs with embedded credentials are not allowed; use headers/env vars instead",
+        )
+
+    hostname = (parsed.hostname or "").strip()
+    if not hostname:
+        raise HTTPException(status_code=400, detail="Invalid URL: missing hostname")
+
+    # Fast-path deny common localhost hostnames.
+    if hostname.lower() in ("localhost", "localhost.localdomain"):
+        hostname = hostname.lower()
+
+    allow_private = _env_bool("AAVA_HTTP_TOOL_TEST_ALLOW_PRIVATE", default=False)
+    allow_hosts = {h.strip().lower() for h in _env_csv_set("AAVA_HTTP_TOOL_TEST_ALLOW_HOSTS")}
+    host_allowed = hostname.lower() in allow_hosts
+
+    # If hostname is a literal IP, validate it directly.
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if _is_private_or_sensitive_ip(ip) and not (allow_private or host_allowed):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Blocked HTTP test request to a private/localhost target. "
+                    "Run Admin UI only on a trusted network. "
+                    "To override, set AAVA_HTTP_TOOL_TEST_ALLOW_PRIVATE=1 "
+                    "or allow a specific hostname via AAVA_HTTP_TOOL_TEST_ALLOW_HOSTS."
+                ),
+            )
+        return
+    except ValueError:
+        pass
+
+    # Resolve hostname and block private targets unless explicitly allowed.
+    port = parsed.port or (443 if scheme == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to resolve hostname: {e}")
+
+    ips: set[str] = set()
+    for _, _, _, _, sockaddr in infos:
+        ip_str = sockaddr[0]
+        if ip_str:
+            ips.add(ip_str)
+
+    if not ips:
+        raise HTTPException(status_code=400, detail="Failed to resolve hostname to an IP address")
+
+    if allow_private or host_allowed:
+        return
+
+    for ip_str in ips:
+        try:
+            ip = ipaddress.ip_address(ip_str)
+            if _is_private_or_sensitive_ip(ip):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Blocked HTTP test request to a private/localhost target. "
+                        "Run Admin UI only on a trusted network. "
+                        "To override, set AAVA_HTTP_TOOL_TEST_ALLOW_PRIVATE=1 "
+                        "or allow a specific hostname via AAVA_HTTP_TOOL_TEST_ALLOW_HOSTS."
+                    ),
+                )
+        except ValueError:
+            continue
+
+
 @router.post("/test-http", response_model=TestHTTPResponse)
 async def test_http_tool(request: TestHTTPRequest):
     """
@@ -117,6 +237,7 @@ async def test_http_tool(request: TestHTTPRequest):
     
     # Resolve URL with variable substitution
     resolved_url = _substitute_variables(request.url, test_values)
+    _validate_http_tool_test_target(resolved_url)
     
     # Build query parameters
     resolved_params = {}
@@ -141,22 +262,27 @@ async def test_http_tool(request: TestHTTPRequest):
         resolved_body=resolved_body
     )
     
+    method = (request.method or "GET").strip().upper()
+    if method not in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"):
+        raise HTTPException(status_code=400, detail=f"Unsupported HTTP method: {method}")
+
     # Make the HTTP request
     start_time = time.time()
     timeout_seconds = request.timeout_ms / 1000.0
     
     try:
-        async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=True) as client:
+        follow_redirects = _env_bool("AAVA_HTTP_TOOL_TEST_FOLLOW_REDIRECTS", default=False)
+        async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=follow_redirects) as client:
             # Prepare request kwargs
             kwargs: Dict[str, Any] = {
-                "method": request.method.upper(),
+                "method": method,
                 "url": resolved_url,
                 "headers": resolved_headers,
                 "params": resolved_params if resolved_params else None,
             }
             
             # Add body for POST/PUT/PATCH
-            if request.method.upper() in ("POST", "PUT", "PATCH") and resolved_body:
+            if method in ("POST", "PUT", "PATCH") and resolved_body:
                 # Check if Content-Type is JSON
                 content_type = resolved_headers.get("Content-Type", resolved_headers.get("content-type", ""))
                 if "application/json" in content_type.lower():

@@ -2,6 +2,7 @@ package troubleshoot
 
 import (
 	"encoding/json"
+	"bytes"
 	"regexp"
 	"strings"
 )
@@ -37,9 +38,14 @@ func parseLogLine(line string) (level string, event string, fields map[string]st
 
 	// JSON path
 	var entry map[string]any
-	if json.Unmarshal([]byte(line), &entry) == nil {
+	dec := json.NewDecoder(bytes.NewReader([]byte(line)))
+	dec.UseNumber()
+	if dec.Decode(&entry) == nil {
 		if v, ok := entry["level"].(string); ok {
 			level = strings.ToLower(strings.TrimSpace(v))
+			if level == "warn" {
+				level = "warning"
+			}
 		}
 		if v, ok := entry["event"].(string); ok {
 			event = v
@@ -52,9 +58,8 @@ func parseLogLine(line string) (level string, event string, fields map[string]st
 			switch t := v.(type) {
 			case string:
 				fields[k] = t
-			case float64:
-				// Keep as JSON-ish number string without trimming significant zeros (e.g., 1000 -> "1").
-				num := strings.TrimSpace(jsonNumberString(t))
+			case json.Number:
+				num := strings.TrimSpace(t.String())
 				if strings.Contains(num, ".") && !strings.ContainsAny(num, "eE") {
 					num = strings.TrimRight(num, "0")
 					num = strings.TrimRight(num, ".")

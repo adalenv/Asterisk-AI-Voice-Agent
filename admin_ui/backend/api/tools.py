@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
 import httpx
+import json
 import re
 import os
 import logging
@@ -124,7 +125,7 @@ def _env_csv_set(name: str) -> set[str]:
     return set(items)
 
 
-def _is_private_or_sensitive_ip(ip: ipaddress._BaseAddress) -> bool:
+def _is_private_or_sensitive_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return bool(
         ip.is_private
         or ip.is_loopback
@@ -290,7 +291,6 @@ async def test_http_tool(request: TestHTTPRequest):
                 if "application/json" in content_type.lower():
                     # Parse and send as JSON to ensure proper encoding
                     try:
-                        import json
                         json_data = json.loads(resolved_body)
                         kwargs["json"] = json_data
                     except json.JSONDecodeError:
@@ -347,10 +347,10 @@ async def test_http_tool(request: TestHTTPRequest):
         response_data.error = f"Request timed out after {request.timeout_ms}ms"
     except httpx.ConnectError as e:
         response_data.response_time_ms = (time.time() - start_time) * 1000
-        response_data.error = f"Connection failed: {str(e)}"
+        response_data.error = f"Connection failed: {e!s}"
     except Exception as e:
         response_data.response_time_ms = (time.time() - start_time) * 1000
-        response_data.error = f"Request failed: {str(e)}"
+        response_data.error = f"Request failed: {e!s}"
         logger.exception("HTTP tool test failed")
     
     return response_data

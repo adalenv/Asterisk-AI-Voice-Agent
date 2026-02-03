@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Activity, Phone, Cpu, Server, Mic, MessageSquare, Volume2, Zap, Radio, CheckCircle2, XCircle, Layers } from 'lucide-react';
+import { Phone, Cpu, Server, Mic, MessageSquare, Volume2, Zap, Radio, CheckCircle2, XCircle, Layers } from 'lucide-react';
 import axios from 'axios';
 import yaml from 'js-yaml';
 
@@ -41,13 +41,21 @@ interface TopologyState {
   activeCalls: Map<string, CallState>;
 }
 
+// Full agent providers (not modular pipeline components)
+// These handle STT+LLM+TTS internally as complete agents
+const FULL_AGENT_PROVIDERS = new Set([
+  'deepgram',
+  'openai_realtime', 
+  'google_live',
+  'elevenlabs_agent',
+]);
+
 // Provider display name mapping
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   'openai_realtime': 'OpenAI',
   'google_live': 'Google',
   'deepgram': 'Deepgram',
   'elevenlabs_agent': 'ElevenLabs',
-  'local': 'Local',
 };
 
 export const SystemTopology = () => {
@@ -98,14 +106,17 @@ export const SystemTopology = () => {
         const res = await axios.get('/api/config/yaml');
         const parsed = yaml.load(res.data.content) as any;
         
-        // Extract configured providers only
+        // Extract only full agent providers (not modular pipeline components)
         const providers: ProviderConfig[] = [];
         if (parsed?.providers && typeof parsed.providers === 'object') {
           for (const [name] of Object.entries(parsed.providers)) {
-            providers.push({
-              name,
-              displayName: PROVIDER_DISPLAY_NAMES[name] || name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-            });
+            // Only include full agent providers, skip modular components like local_stt, groq_llm, etc.
+            if (FULL_AGENT_PROVIDERS.has(name)) {
+              providers.push({
+                name,
+                displayName: PROVIDER_DISPLAY_NAMES[name] || name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+              });
+            }
           }
         }
 
@@ -277,51 +288,48 @@ export const SystemTopology = () => {
       </div>
 
       <div className="p-4">
-        {/* Main Grid Layout */}
-        <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-4 items-start">
-          
-          {/* Column 1: Asterisk PBX */}
-          <div className="flex flex-col items-center">
-            <div className={`relative w-full max-w-[140px] p-4 rounded-lg border-2 transition-all duration-300 ${
-              hasActiveCalls 
-                ? 'border-green-500 bg-green-500/10 shadow-lg shadow-green-500/20' 
-                : 'border-border bg-card'
-            }`}>
-              {hasActiveCalls && (
-                <div className="absolute inset-0 rounded-lg border-2 border-green-500 animate-ping opacity-20" />
-              )}
-              <div className="flex flex-col items-center gap-2">
-                <Phone className={`w-8 h-8 ${hasActiveCalls ? 'text-green-500' : 'text-muted-foreground'}`} />
-                <div className="text-center">
-                  <div className={`font-semibold ${hasActiveCalls ? 'text-green-500' : 'text-foreground'}`}>Asterisk</div>
-                  <div className="text-xs text-muted-foreground">PBX</div>
-                </div>
-                <div className="w-full pt-2 mt-2 border-t border-border/50 space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">ARI</span>
-                    {state.ariConnected ? (
-                      <span className="flex items-center gap-1 text-green-500">
-                        <CheckCircle2 className="w-3 h-3" /> Connected
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-red-500">
-                        <XCircle className="w-3 h-3" /> Disconnected
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Calls</span>
-                    <span className={`font-medium ${hasActiveCalls ? 'text-green-500' : 'text-foreground'}`}>
-                      {totalActiveCalls}
+        {/* Top Row: Asterisk → AI Engine → Providers */}
+        <div className="flex items-start justify-center gap-3">
+          {/* Asterisk PBX */}
+          <div className={`relative w-[140px] p-4 rounded-lg border-2 transition-all duration-300 ${
+            hasActiveCalls 
+              ? 'border-green-500 bg-green-500/10 shadow-lg shadow-green-500/20' 
+              : 'border-border bg-card'
+          }`}>
+            {hasActiveCalls && (
+              <div className="absolute inset-0 rounded-lg border-2 border-green-500 animate-ping opacity-20" />
+            )}
+            <div className="flex flex-col items-center gap-2">
+              <Phone className={`w-8 h-8 ${hasActiveCalls ? 'text-green-500' : 'text-muted-foreground'}`} />
+              <div className="text-center">
+                <div className={`font-semibold ${hasActiveCalls ? 'text-green-500' : 'text-foreground'}`}>Asterisk</div>
+                <div className="text-xs text-muted-foreground">PBX</div>
+              </div>
+              <div className="w-full pt-2 mt-2 border-t border-border/50 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">ARI</span>
+                  {state.ariConnected ? (
+                    <span className="flex items-center gap-1 text-green-500">
+                      <CheckCircle2 className="w-3 h-3" /> Connected
                     </span>
-                  </div>
+                  ) : (
+                    <span className="flex items-center gap-1 text-red-500">
+                      <XCircle className="w-3 h-3" /> Disconnected
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Calls</span>
+                  <span className={`font-medium ${hasActiveCalls ? 'text-green-500' : 'text-foreground'}`}>
+                    {totalActiveCalls}
+                  </span>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Arrow 1 */}
-          <div className="flex items-center h-full pt-12">
+          <div className="flex items-center self-center mt-8">
             <div className={`w-8 h-0.5 ${hasActiveCalls ? 'bg-green-500' : 'bg-border'} relative overflow-hidden`}>
               {hasActiveCalls && (
                 <div className="absolute inset-y-0 w-4 bg-green-300 animate-flow" />
@@ -332,47 +340,45 @@ export const SystemTopology = () => {
             } border-t-transparent border-b-transparent`} />
           </div>
 
-          {/* Column 2: AI Engine Core */}
-          <div className="flex flex-col items-center">
-            <div className={`relative w-full max-w-[140px] p-4 rounded-lg border-2 transition-all duration-300 ${
-              state.aiEngineStatus === 'error'
-                ? 'border-red-500 bg-red-500/10'
-                : hasActiveCalls 
-                  ? 'border-green-500 bg-green-500/10 shadow-lg shadow-green-500/20' 
-                  : 'border-border bg-card'
-            }`}>
-              {hasActiveCalls && state.aiEngineStatus === 'connected' && (
-                <div className="absolute inset-0 rounded-lg border-2 border-green-500 animate-ping opacity-20" />
-              )}
-              <div className="flex flex-col items-center gap-2">
-                <Cpu className={`w-8 h-8 ${
-                  state.aiEngineStatus === 'error' ? 'text-red-500' : hasActiveCalls ? 'text-green-500' : 'text-muted-foreground'
-                }`} />
-                <div className="text-center">
-                  <div className={`font-semibold ${
-                    state.aiEngineStatus === 'error' ? 'text-red-500' : hasActiveCalls ? 'text-green-500' : 'text-foreground'
-                  }`}>AI Engine</div>
-                  <div className="text-xs text-muted-foreground">Core</div>
-                </div>
-                <div className="w-full pt-2 mt-2 border-t border-border/50">
-                  <div className="flex items-center justify-center text-xs">
-                    {state.aiEngineStatus === 'connected' ? (
-                      <span className="flex items-center gap-1 text-green-500">
-                        <CheckCircle2 className="w-3 h-3" /> Healthy
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-red-500">
-                        <XCircle className="w-3 h-3" /> Error
-                      </span>
-                    )}
-                  </div>
+          {/* AI Engine Core */}
+          <div className={`relative w-[140px] p-4 rounded-lg border-2 transition-all duration-300 ${
+            state.aiEngineStatus === 'error'
+              ? 'border-red-500 bg-red-500/10'
+              : hasActiveCalls 
+                ? 'border-green-500 bg-green-500/10 shadow-lg shadow-green-500/20' 
+                : 'border-border bg-card'
+          }`}>
+            {hasActiveCalls && state.aiEngineStatus === 'connected' && (
+              <div className="absolute inset-0 rounded-lg border-2 border-green-500 animate-ping opacity-20" />
+            )}
+            <div className="flex flex-col items-center gap-2">
+              <Cpu className={`w-8 h-8 ${
+                state.aiEngineStatus === 'error' ? 'text-red-500' : hasActiveCalls ? 'text-green-500' : 'text-muted-foreground'
+              }`} />
+              <div className="text-center">
+                <div className={`font-semibold ${
+                  state.aiEngineStatus === 'error' ? 'text-red-500' : hasActiveCalls ? 'text-green-500' : 'text-foreground'
+                }`}>AI Engine</div>
+                <div className="text-xs text-muted-foreground">Core</div>
+              </div>
+              <div className="w-full pt-2 mt-2 border-t border-border/50">
+                <div className="flex items-center justify-center text-xs">
+                  {state.aiEngineStatus === 'connected' ? (
+                    <span className="flex items-center gap-1 text-green-500">
+                      <CheckCircle2 className="w-3 h-3" /> Healthy
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-red-500">
+                      <XCircle className="w-3 h-3" /> Error
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
           </div>
 
           {/* Arrow 2 */}
-          <div className="flex items-center h-full pt-12">
+          <div className="flex items-center self-center mt-8">
             <div className={`w-8 h-0.5 ${hasActiveCalls ? 'bg-green-500' : 'bg-border'} relative overflow-hidden`}>
               {hasActiveCalls && (
                 <div className="absolute inset-y-0 w-4 bg-green-300 animate-flow" />
@@ -383,13 +389,13 @@ export const SystemTopology = () => {
             } border-t-transparent border-b-transparent`} />
           </div>
 
-          {/* Column 3: Providers */}
-          <div className="flex flex-col">
+          {/* Providers (Full Agents Only) */}
+          <div className="w-[140px]">
             <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2 text-center">Providers</div>
             <div className="flex flex-col gap-2">
               {state.configuredProviders.length === 0 ? (
                 <div className="p-3 rounded-lg border border-dashed border-border text-xs text-muted-foreground text-center">
-                  No providers configured
+                  No agents
                 </div>
               ) : (
                 state.configuredProviders.map(provider => {
@@ -409,13 +415,13 @@ export const SystemTopology = () => {
                       {isActive && (
                         <div className="absolute inset-0 rounded-lg border border-green-500 animate-ping opacity-20" />
                       )}
-                      <Zap className={`w-4 h-4 ${isActive ? 'text-green-500' : 'text-muted-foreground'}`} />
-                      <span className={`text-sm font-medium ${isActive ? 'text-green-500' : 'text-foreground'}`}>
+                      <Zap className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-green-500' : 'text-muted-foreground'}`} />
+                      <span className={`text-xs font-medium truncate ${isActive ? 'text-green-500' : 'text-foreground'}`}>
                         {provider.displayName}
                       </span>
-                      {isDefault && <span className="text-yellow-500 text-xs ml-auto">⭐</span>}
+                      {isDefault && <span className="text-yellow-500 text-[10px] ml-auto flex-shrink-0">⭐</span>}
                       {isActive && (
-                        <span className="ml-auto px-1.5 py-0.5 rounded-full bg-green-500 text-white text-[10px] font-bold">
+                        <span className="ml-auto px-1.5 py-0.5 rounded-full bg-green-500 text-white text-[10px] font-bold flex-shrink-0">
                           {activeCount}
                         </span>
                       )}
@@ -427,18 +433,17 @@ export const SystemTopology = () => {
           </div>
         </div>
 
-        {/* Bottom Row: Pipelines → Local AI Server → STT/LLM/TTS */}
-        <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-4 items-start mt-6 pt-6 border-t border-border">
-          
-          {/* Pipelines (below Asterisk) */}
-          <div className="flex flex-col items-center">
-            <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Pipelines</div>
+        {/* Bottom Row: Pipelines → Local AI Server → Models */}
+        <div className="flex items-start justify-center gap-3 mt-6 pt-6 border-t border-border">
+          {/* Pipelines */}
+          <div className="w-[140px]">
+            <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2 text-center">Pipelines</div>
             {state.configuredPipelines.length === 0 ? (
-              <div className="w-full max-w-[140px] p-3 rounded-lg border border-dashed border-border text-xs text-muted-foreground text-center">
+              <div className="p-3 rounded-lg border border-dashed border-border text-xs text-muted-foreground text-center">
                 No pipelines
               </div>
             ) : (
-              <div className="flex flex-col gap-2 w-full max-w-[140px]">
+              <div className="flex flex-col gap-2">
                 {state.configuredPipelines.map(pipeline => {
                   const activeCount = activePipelines.get(pipeline.name) || 0;
                   const isActive = activeCount > 0;
@@ -453,11 +458,11 @@ export const SystemTopology = () => {
                           : 'border-border bg-card'
                       }`}
                     >
-                      <Layers className={`w-4 h-4 ${isActive ? 'text-green-500' : 'text-muted-foreground'}`} />
+                      <Layers className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-green-500' : 'text-muted-foreground'}`} />
                       <span className={`text-xs font-medium truncate ${isActive ? 'text-green-500' : 'text-foreground'}`}>
                         {pipeline.name.replace(/_/g, ' ')}
                       </span>
-                      {isDefault && <span className="text-yellow-500 text-[10px] ml-auto">⭐</span>}
+                      {isDefault && <span className="text-yellow-500 text-[10px] ml-auto flex-shrink-0">⭐</span>}
                     </div>
                   );
                 })}
@@ -466,15 +471,15 @@ export const SystemTopology = () => {
           </div>
 
           {/* Arrow to Local AI */}
-          <div className="flex items-center h-full pt-8">
+          <div className="flex items-center self-center mt-6">
             <div className="w-8 h-0.5 bg-border" />
             <div className="w-0 h-0 border-t-[6px] border-b-[6px] border-l-[8px] border-l-border border-t-transparent border-b-transparent" />
           </div>
 
           {/* Local AI Server (same size as AI Engine) */}
-          <div className="flex flex-col items-center">
-            <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Local AI Server</div>
-            <div className={`relative w-full max-w-[140px] p-4 rounded-lg border-2 transition-all duration-300 ${
+          <div className="w-[140px]">
+            <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2 text-center">Local AI Server</div>
+            <div className={`relative p-4 rounded-lg border-2 transition-all duration-300 ${
               state.localAIStatus === 'error'
                 ? 'border-red-500 bg-red-500/10'
                 : 'border-border bg-card'

@@ -252,7 +252,7 @@ export const SystemTopology = () => {
 
       <div className="p-4">
         {/* Grid Layout for proper alignment */}
-        <div className="grid grid-cols-[140px_48px_140px_48px_160px] gap-y-4 justify-center items-start">
+        <div className="relative grid grid-cols-[140px_48px_140px_48px_160px] gap-y-4 justify-center items-start">
           
           {/* === ROW 1: Asterisk → AI Engine → Providers === */}
           
@@ -405,35 +405,33 @@ export const SystemTopology = () => {
             </div>
           </div>
 
-          {/* === ROW 2: Clean div-based arrows from AI Engine === */}
+          {/* === ROW 2: Branching arrows using col-span with proper alignment === */}
           
-          {/* Column 1: Vertical arrow down to Pipelines */}
-          <div className="flex flex-col items-center h-14">
-            <div className={`w-0.5 flex-1 ${activePipelines.size > 0 ? 'bg-green-500' : 'bg-border'}`} />
-            <div className={`w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] ${
-              activePipelines.size > 0 ? 'border-t-green-500' : 'border-t-border'
-            } border-l-transparent border-r-transparent`} />
-          </div>
-          
-          {/* Column 2: Horizontal connector (left part of T) */}
-          <div className="flex items-start h-14 pt-1">
-            <div className={`w-full h-0.5 ${activePipelines.size > 0 ? 'bg-green-500' : 'bg-border'}`} />
-          </div>
-          
-          {/* Column 3: T-junction center - vertical down to Local AI */}
-          <div className="flex flex-col items-center h-14">
-            {/* Top connector to horizontal bar */}
-            <div className={`w-0.5 h-1 ${hasActiveCalls ? 'bg-green-500' : 'bg-border'}`} />
-            {/* Horizontal bar spanning left */}
-            <div className="relative w-full">
-              <div className={`absolute right-1/2 w-1/2 h-0.5 ${activePipelines.size > 0 ? 'bg-green-500' : 'bg-border'}`} style={{ transform: 'translateX(-24px)' }} />
+          {/* Spans columns 1-3 for the branching arrow structure */}
+          <div className="col-span-3 flex justify-center h-14">
+            <div className="flex">
+              {/* Left branch to Pipelines - positioned over column 1 center */}
+              <div className="flex flex-col items-center" style={{ width: '140px' }}>
+                <div className={`w-0.5 flex-1 ${activePipelines.size > 0 ? 'bg-green-500' : 'bg-border'}`} />
+                <div className={`w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] ${
+                  activePipelines.size > 0 ? 'border-t-green-500' : 'border-t-border'
+                } border-l-transparent border-r-transparent`} />
+              </div>
+              
+              {/* Horizontal connector bar (column 2 width) */}
+              <div className="flex items-start" style={{ width: '48px' }}>
+                <div className={`w-full h-0.5 mt-0 ${activePipelines.size > 0 ? 'bg-green-500' : 'bg-border'}`} />
+              </div>
+              
+              {/* Center T-junction over AI Engine (column 3) */}
+              <div className="flex flex-col items-center" style={{ width: '140px' }}>
+                {/* Vertical line down to Local AI */}
+                <div className={`w-0.5 flex-1 ${hasActiveCalls ? 'bg-green-500' : 'bg-border'}`} />
+                <div className={`w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] ${
+                  hasActiveCalls ? 'border-t-green-500' : 'border-t-border'
+                } border-l-transparent border-r-transparent`} />
+              </div>
             </div>
-            {/* Vertical line down */}
-            <div className={`w-0.5 flex-1 ${hasActiveCalls ? 'bg-green-500' : 'bg-border'}`} />
-            {/* Arrowhead */}
-            <div className={`w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] ${
-              hasActiveCalls ? 'border-t-green-500' : 'border-t-border'
-            } border-l-transparent border-r-transparent`} />
           </div>
           
           {/* Column 4: Empty */}

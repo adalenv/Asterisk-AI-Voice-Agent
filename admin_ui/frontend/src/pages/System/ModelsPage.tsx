@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { HardDrive, Download, Trash2, RefreshCw, CheckCircle2, XCircle, Loader2, Mic, Volume2, Brain, AlertTriangle } from 'lucide-react';
+import { HardDrive, Download, Trash2, RefreshCw, CheckCircle2, XCircle, Loader2, Mic, Volume2, Brain, AlertTriangle, Server } from 'lucide-react';
 import { ConfigSection } from '../../components/ui/ConfigSection';
 import { ConfigCard } from '../../components/ui/ConfigCard';
 import axios from 'axios';
@@ -45,6 +45,18 @@ interface DownloadProgress {
     current_file: string;
 }
 
+interface ActiveModels {
+    stt: { backend: string; path: string; loaded: boolean };
+    tts: { backend: string; path: string; loaded: boolean };
+    llm: { path: string; loaded: boolean };
+}
+
+interface AvailableModels {
+    stt: Record<string, { name: string; path: string }[]>;
+    tts: Record<string, { name: string; path: string }[]>;
+    llm: { name: string; path: string }[];
+}
+
 const ModelsPage = () => {
     const [catalog, setCatalog] = useState<{ stt: ModelInfo[]; tts: ModelInfo[]; llm: ModelInfo[] }>({ stt: [], tts: [], llm: [] });
     const [installedModels, setInstalledModels] = useState<InstalledModel[]>([]);
@@ -57,6 +69,13 @@ const ModelsPage = () => {
     const [selectedTab, setSelectedTab] = useState<'installed' | 'stt' | 'tts' | 'llm'>('installed');
     const [selectedRegion, setSelectedRegion] = useState<string>('all');
     const [toasts, setToasts] = useState<Toast[]>([]);
+    
+    // Active models state (from Local AI Server)
+    const [activeModels, setActiveModels] = useState<ActiveModels | null>(null);
+    const [availableModels, setAvailableModels] = useState<AvailableModels | null>(null);
+    const [serverStatus, setServerStatus] = useState<'connected' | 'error' | 'loading'>('loading');
+    const [restarting, setRestarting] = useState(false);
+    const [pendingChanges, setPendingChanges] = useState<{ stt?: string; tts?: string; llm?: string }>({});
 
     const showToast = (message: string, type: 'success' | 'error' | 'warning') => {
         const id = Date.now();
@@ -138,7 +157,73 @@ const ModelsPage = () => {
 
     useEffect(() => {
         fetchModels();
+        fetchActiveModels();
     }, []);
+
+    // Fetch active models from Local AI Server health
+    const fetchActiveModels = async () => {
+        try {
+            const healthRes = await axios.get('/api/system/health');
+            const localAI = healthRes.data?.local_ai_server;
+            if (localAI?.status === 'connected') {
+                setServerStatus('connected');
+                setActiveModels({
+                    stt: {
+                        backend: localAI.details?.models?.stt?.backend || 'unknown',
+                        path: localAI.details?.models?.stt?.path || '',
+                        loaded: localAI.details?.models?.stt?.loaded || false
+                    },
+                    tts: {
+                        backend: localAI.details?.models?.tts?.backend || 'unknown',
+                        path: localAI.details?.models?.tts?.path || '',
+                        loaded: localAI.details?.models?.tts?.loaded || false
+                    },
+                    llm: {
+                        path: localAI.details?.models?.llm?.path || '',
+                        loaded: localAI.details?.models?.llm?.loaded || false
+                    }
+                });
+            } else {
+                setServerStatus('error');
+            }
+            
+            // Also fetch available models for switching
+            const modelsRes = await axios.get('/api/local-ai/models');
+            if (modelsRes.data) {
+                setAvailableModels(modelsRes.data);
+            }
+        } catch (err) {
+            setServerStatus('error');
+        }
+    };
+
+    // Handle model switch
+    const handleModelSwitch = async (modelType: 'stt' | 'tts' | 'llm', backend: string, modelPath: string) => {
+        setRestarting(true);
+        try {
+            await axios.post('/api/local-ai/switch', {
+                model_type: modelType,
+                backend: backend,
+                model_path: modelPath
+            });
+            showToast(`Switching ${modelType.toUpperCase()} model... Server will restart.`, 'success');
+            // Wait for restart then refresh
+            setTimeout(() => {
+                fetchActiveModels();
+                setRestarting(false);
+            }, 15000);
+        } catch (err: any) {
+            showToast(`Failed to switch model: ${err.response?.data?.detail || err.message}`, 'error');
+            setRestarting(false);
+        }
+    };
+
+    // Get model name from path
+    const getModelName = (path: string) => {
+        if (!path) return 'None';
+        const parts = path.split('/');
+        return parts[parts.length - 1] || path;
+    };
 
     const handleDownload = async (model: ModelInfo, type: 'stt' | 'tts' | 'llm') => {
         if (!model.download_url) {
@@ -289,10 +374,185 @@ const ModelsPage = () => {
                 ))}
             </div>
 
+            {/* Active Models Section */}
+            <ConfigCard className="mb-6">
+                <div className="flex justify-between items-center mb-4">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-green-500/10 rounded-lg">
+                            <Server className="w-5 h-5 text-green-500" />
+                        </div>
+                        <div>
+                            <h3 className="font-semibold">Active Models</h3>
+                            <p className="text-xs text-muted-foreground">Currently loaded in Local AI Server</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            serverStatus === 'connected' ? 'bg-green-500/10 text-green-500' : 
+                            serverStatus === 'error' ? 'bg-red-500/10 text-red-500' : 'bg-yellow-500/10 text-yellow-500'
+                        }`}>
+                            {serverStatus === 'connected' ? 'Connected' : serverStatus === 'error' ? 'Disconnected' : 'Loading...'}
+                        </span>
+                        <button
+                            onClick={fetchActiveModels}
+                            disabled={restarting}
+                            className="p-2 hover:bg-accent rounded-md text-muted-foreground hover:text-foreground transition-colors"
+                            title="Refresh"
+                        >
+                            <RefreshCw className={`w-4 h-4 ${restarting ? 'animate-spin' : ''}`} />
+                        </button>
+                    </div>
+                </div>
+
+                {serverStatus === 'connected' && activeModels && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* STT Model */}
+                        <div className="p-4 rounded-lg border border-border bg-muted/30">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Mic className="w-4 h-4 text-blue-500" />
+                                <span className="text-sm font-medium">STT</span>
+                                <span className={`ml-auto px-2 py-0.5 rounded text-xs ${
+                                    activeModels.stt.loaded ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'
+                                }`}>
+                                    {activeModels.stt.loaded ? 'Loaded' : 'Not Loaded'}
+                                </span>
+                            </div>
+                            <select 
+                                className="w-full text-xs p-2 rounded border border-border bg-background"
+                                value={pendingChanges.stt || `${activeModels.stt.backend}:${activeModels.stt.path}`}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    setPendingChanges(prev => ({ ...prev, stt: val }));
+                                }}
+                                disabled={restarting}
+                            >
+                                {availableModels?.stt && Object.entries(availableModels.stt).map(([backend, models]) => (
+                                    <optgroup key={backend} label={backend.charAt(0).toUpperCase() + backend.slice(1)}>
+                                        {models.map((m: any) => (
+                                            <option key={m.path} value={`${backend}:${m.path}`}>{m.name}</option>
+                                        ))}
+                                    </optgroup>
+                                ))}
+                            </select>
+                            <div className="mt-2 text-xs text-muted-foreground truncate" title={activeModels.stt.path}>
+                                {getModelName(activeModels.stt.path)}
+                            </div>
+                        </div>
+
+                        {/* LLM Model */}
+                        <div className="p-4 rounded-lg border border-border bg-muted/30">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Brain className="w-4 h-4 text-purple-500" />
+                                <span className="text-sm font-medium">LLM</span>
+                                <span className={`ml-auto px-2 py-0.5 rounded text-xs ${
+                                    activeModels.llm.loaded ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'
+                                }`}>
+                                    {activeModels.llm.loaded ? 'Loaded' : 'Not Loaded'}
+                                </span>
+                            </div>
+                            <select 
+                                className="w-full text-xs p-2 rounded border border-border bg-background"
+                                value={pendingChanges.llm || activeModels.llm.path}
+                                onChange={(e) => {
+                                    setPendingChanges(prev => ({ ...prev, llm: e.target.value }));
+                                }}
+                                disabled={restarting}
+                            >
+                                {availableModels?.llm?.map((m: any) => (
+                                    <option key={m.path} value={m.path}>{m.name}</option>
+                                ))}
+                            </select>
+                            <div className="mt-2 text-xs text-muted-foreground truncate" title={activeModels.llm.path}>
+                                {getModelName(activeModels.llm.path)}
+                            </div>
+                        </div>
+
+                        {/* TTS Model */}
+                        <div className="p-4 rounded-lg border border-border bg-muted/30">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Volume2 className="w-4 h-4 text-green-500" />
+                                <span className="text-sm font-medium">TTS</span>
+                                <span className={`ml-auto px-2 py-0.5 rounded text-xs ${
+                                    activeModels.tts.loaded ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'
+                                }`}>
+                                    {activeModels.tts.loaded ? 'Loaded' : 'Not Loaded'}
+                                </span>
+                            </div>
+                            <select 
+                                className="w-full text-xs p-2 rounded border border-border bg-background"
+                                value={pendingChanges.tts || `${activeModels.tts.backend}:${activeModels.tts.path}`}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    setPendingChanges(prev => ({ ...prev, tts: val }));
+                                }}
+                                disabled={restarting}
+                            >
+                                {availableModels?.tts && Object.entries(availableModels.tts).map(([backend, models]) => (
+                                    <optgroup key={backend} label={backend.charAt(0).toUpperCase() + backend.slice(1)}>
+                                        {models.map((m: any) => (
+                                            <option key={m.path} value={`${backend}:${m.path}`}>{m.name}</option>
+                                        ))}
+                                    </optgroup>
+                                ))}
+                            </select>
+                            <div className="mt-2 text-xs text-muted-foreground truncate" title={activeModels.tts.path}>
+                                {getModelName(activeModels.tts.path)}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {serverStatus === 'error' && (
+                    <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-600 dark:text-red-400">
+                        Local AI Server is not connected. Start the server to manage models.
+                    </div>
+                )}
+
+                {/* Apply Changes Button */}
+                {Object.keys(pendingChanges).length > 0 && (
+                    <div className="mt-4 flex gap-2">
+                        <button
+                            onClick={() => {
+                                // Apply each pending change
+                                Object.entries(pendingChanges).forEach(([type, value]) => {
+                                    if (type === 'llm') {
+                                        handleModelSwitch('llm', '', value);
+                                    } else {
+                                        const [backend, ...pathParts] = value.split(':');
+                                        handleModelSwitch(type as 'stt' | 'tts', backend, pathParts.join(':'));
+                                    }
+                                });
+                                setPendingChanges({});
+                            }}
+                            disabled={restarting}
+                            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+                        >
+                            {restarting ? (
+                                <>
+                                    <RefreshCw className="w-4 h-4 animate-spin" />
+                                    Restarting...
+                                </>
+                            ) : (
+                                <>
+                                    <CheckCircle2 className="w-4 h-4" />
+                                    Apply Changes & Restart
+                                </>
+                            )}
+                        </button>
+                        <button
+                            onClick={() => setPendingChanges({})}
+                            disabled={restarting}
+                            className="px-4 py-2 bg-muted text-muted-foreground rounded-md hover:bg-muted/80 transition-colors"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                )}
+            </ConfigCard>
+
             <ConfigSection
-                title="Models"
-                description="Download and manage STT, TTS, and LLM models for the Local AI Server"
-                icon={<HardDrive className="w-5 h-5" />}
+                title="Model Library"
+                description="Download and manage STT, TTS, and LLM models"
             >
                 {/* Header with tabs and refresh */}
                 <div className="flex justify-between items-center mb-6">

@@ -13,7 +13,7 @@ def strip_ansi(text: str) -> str:
 
 
 _TS_LEVEL_RE = re.compile(
-    r"^\s*(?P<ts>\d{4}-\d\d-\d\dT[0-9:.]+Z)\s*\[\s*(?P<level>[a-zA-Z]+)\s*\]\s*(?P<rest>.*)$"
+    r"^\s*(?P<ts>\d{4}-\d\d-\d\dT[0-9:.]+(?:Z|[+-]\d{2}:\d{2}))\s*\[\s*(?P<level>[a-zA-Z]+)\s*\]\s*(?P<rest>.*)$"
 )
 
 _LOGGER_RE = re.compile(r"^(?P<msg>.*?)\s*\[(?P<logger>[^\]]+)\]\s*(?P<kv>.*)$")

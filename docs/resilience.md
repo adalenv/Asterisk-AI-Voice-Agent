@@ -93,3 +93,34 @@ The `ai_engine` service exposes health endpoints on port 15000 (binds to `0.0.0.
 - **Graceful Shutdown**: Ensure per‑call resources are cleaned up when the channel ends.
 
 Note: In the current release, downstream audio is **streaming-first** where enabled, with automatic **fallback to file playback** for robustness. Many pipeline deployments still prefer `downstream_mode: file` as the most validated/robust option.
+
+## 6. OpenAI Realtime GA Migration Regression (Feb 2026)
+
+### Context
+
+Migrated OpenAI Realtime provider from Beta API to GA API. The GA API introduced breaking schema changes that required iterative fixes validated through production calls.
+
+### Errors Encountered and Fixes
+
+| Error | Root Cause | Fix |
+| ----- | ---------- | --- |
+| `Unknown parameter: session.modalities` | GA uses `output_modalities` | Renamed field conditionally |
+| `Unknown parameter: session.turn_detection` | GA nests under `audio.input.turn_detection` | Moved field |
+| `Unknown parameter: session.input_audio_format` | GA uses `audio.input.format.type` | Restructured to nested object |
+| `Unknown parameter: session.input_audio_transcription` | GA uses `audio.input.transcription` | Moved and renamed |
+| `Invalid modalities: ['audio','text']` | GA `response.create` only accepts single modality | Use `["audio"]` only; omit from GA `response.create` |
+| `Missing required parameter: session.audio.input.format.rate` | GA input format requires `rate` | Added `rate: 24000` |
+| `Unknown parameter: session.audio.output.format.rate` | GA output format rejects `rate` in initial session.update | Removed from initial; kept in partial updates |
+| `integer_below_min_value` (rate 16000) | GA enforces minimum 24000 Hz | Set `provider_input_sample_rate_hz: 24000` in YAML |
+| `model_not_found: gpt-realtime` | Model not available to all accounts | Use `gpt-4o-realtime-preview-2024-12-17` as fallback |
+| `Invalid value: 'pcm16'` | GA uses MIME types not token strings | Map to `audio/pcm`, `audio/pcmu`, `audio/pcma` |
+| `receive loop error` (AttributeError) | GA `response.output_audio.delta` sends `delta` as base64 string, not dict | Added `isinstance(delta, str)` check |
+| Garbled audio | Requested `audio/pcmu` output but OpenAI silently defaulted to PCM16 | Always request `audio/pcm` @ 24kHz; engine transcodes downstream |
+
+### Validated Configuration (Feb 5, 2026)
+
+- **Model**: `gpt-4o-realtime-preview-2024-12-17` with `api_version: ga`
+- **Input**: `audio/pcm` @ 24000 Hz (PCM16 LE)
+- **Output**: `audio/pcm` @ 24000 Hz (engine transcodes to mulaw @ 8kHz)
+- **Transport**: AudioSocket
+- **Result**: Clean two-way audio, greeting plays, VAD works, tools execute

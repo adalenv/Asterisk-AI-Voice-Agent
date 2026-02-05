@@ -53,7 +53,7 @@ providers:
     # API Version: "ga" (recommended) or "beta" (legacy, uses OpenAI-Beta header)
     api_version: ga
     # Model Configuration
-    model: gpt-realtime  # GA: gpt-realtime / gpt-realtime-mini | Beta: gpt-4o-realtime-preview-*
+    model: gpt-4o-realtime-preview-2024-12-17  # Works with GA API; gpt-realtime may not be available to all accounts
     temperature: 0.6                          # Creativity (0.0-1.0)
     max_response_output_tokens: 4096          # Max output length
     
@@ -64,12 +64,12 @@ providers:
     # Inbound from Asterisk/transport (telephony defaults)
     input_encoding: ulaw
     input_sample_rate_hz: 8000
-    # Format sent to OpenAI (PCM16)
+    # Format sent to OpenAI (PCM16 @ 24kHz — GA minimum)
     provider_input_encoding: linear16
-    provider_input_sample_rate_hz: 16000
-    # Provider output + downstream target (telephony)
+    provider_input_sample_rate_hz: 24000      # GA requires >= 24000 Hz
+    # Provider output (PCM16 @ 24kHz from OpenAI, engine transcodes downstream)
     output_encoding: mulaw
-    output_sample_rate_hz: 8000
+    output_sample_rate_hz: 24000              # GA outputs at 24kHz; engine transcodes to 8kHz mulaw
     target_encoding: mulaw
     target_sample_rate_hz: 8000
     
@@ -86,10 +86,11 @@ providers:
 ```
 
 **Key Settings**:
-- `api_version`: `ga` (default, recommended) or `beta` (legacy). GA removes the `OpenAI-Beta` header and uses GA model names
-- `model`: defaults to `gpt-realtime` (GA) or `gpt-4o-realtime-preview-2024-12-17` (Beta)
-- `response_modalities`: include both `audio` and `text` for speech-to-speech + transcripts
-- `turn_detection.type`: use `server_vad` for turn-taking in streaming mode
+- `api_version`: `ga` (default, recommended) or `beta` (legacy). GA removes the `OpenAI-Beta` header and uses nested audio schema
+- `model`: `gpt-4o-realtime-preview-2024-12-17` works with GA API; `gpt-realtime` may not be available to all accounts
+- `provider_input_sample_rate_hz`: must be `24000` for GA (minimum enforced by API)
+- `output_sample_rate_hz`: `24000` — OpenAI outputs PCM16 @ 24kHz; engine transcodes to mulaw @ 8kHz downstream
+- `turn_detection.type`: use `server_vad` for turn-taking (nested under `audio.input` in GA)
 
 ### 4. Critical Turn Detection Configuration ⚠️
 

@@ -43,44 +43,81 @@ Add first-class support for OpenAI’s Realtime voice agents so users can swap b
 - Ensure regression evidence is recorded in `docs/resilience.md` (and keep the long-form walkthrough in `archived/regressions/openai-call-framework.md` if needed).
 - Update `docs/ROADMAP.md` and `docs/contributing/architecture-deep-dive.md` to reflect OpenAI support.
 
-### 6.5 OpenAI Realtime Schema Alignment (Important)
+### 6.5 OpenAI Realtime GA Schema Alignment (Production-Validated Feb 2026)
 
-- Use the nested session schema per the latest guide:
+The GA API schema differs significantly from Beta. Key rules discovered during production validation:
+
+#### GA `session.update` — Verified Working Schema
 
 ```json
 {
   "type": "session.update",
   "session": {
     "type": "realtime",
-    "model": "gpt-realtime",
     "output_modalities": ["audio"],
     "audio": {
       "input": {
-        "format": {"type": "audio/pcm", "rate": 16000},
-        "turn_detection": {"type": "server_vad"}
+        "format": {"type": "audio/pcm", "rate": 24000},
+        "transcription": {"model": "whisper-1"},
+        "turn_detection": {
+          "type": "server_vad",
+          "threshold": 0.5,
+          "prefix_padding_ms": 300,
+          "silence_duration_ms": 1000,
+          "create_response": true,
+          "interrupt_response": true
+        }
       },
       "output": {
-        "format": {"type": "audio/pcm"},
+        "format": {"type": "audio/pcm", "rate": 24000},
         "voice": "alloy"
       }
     },
-    "instructions": "Speak clearly and briefly."
+    "instructions": "...",
+    "tools": [...]
   }
 }
 ```
 
-- Issue a greeting with `response.create` (no `response.audio` object):
+#### GA `response.create` — Minimal Payload
 
 ```json
 {
   "type": "response.create",
   "response": {
-    "output_modalities": ["audio"],
-    "instructions": "Please greet the user with the following: Hello, how can I help you today?",
-    "input": []
+    "instructions": "Please greet the user with the following: Hello!"
   }
 }
 ```
+
+GA `response.create` should NOT include `output_modalities` or `input` — modalities are set via `session.update`.
+
+#### GA vs Beta Schema Differences
+
+| Field | Beta | GA |
+|-------|------|----|
+| Header | `OpenAI-Beta: realtime=v1` | None (remove header) |
+| Session type | Not required | `"type": "realtime"` required |
+| Modalities | `session.modalities` | `session.output_modalities` |
+| Audio format | `input_audio_format: "pcm16"` | `audio.input.format: {"type": "audio/pcm", "rate": 24000}` |
+| Output format | `output_audio_format: "pcm16"` | `audio.output.format: {"type": "audio/pcm", "rate": 24000}` |
+| Format strings | `pcm16`, `g711_ulaw`, `g711_alaw` | `audio/pcm`, `audio/pcmu`, `audio/pcma` |
+| Voice | `session.voice` | `audio.output.voice` |
+| Turn detection | `session.turn_detection` | `audio.input.turn_detection` |
+| Transcription | `session.input_audio_transcription` | `audio.input.transcription` |
+| Response modalities | `response.modalities` | Not needed in `response.create` |
+| Audio delta event | `response.audio.delta` (string) | `response.output_audio.delta` (string in `delta` field) |
+
+#### Critical GA Rules (Discovered During Production)
+
+1. **`audio.input.format`** requires both `type` and `rate`
+2. **`audio.output.format`** requires `rate` when format is explicitly set in a partial update, but may be optional in the initial full session.update
+3. **Always use `audio/pcm` @ 24kHz for output** — `audio/pcmu` may be silently ignored by some models
+4. **`turn_detection` goes under `audio.input`** — rejected at session level in GA
+5. **`input_audio_transcription` is rejected** — use `audio.input.transcription` instead
+6. **`response.output_audio.delta`** sends audio as a base64 **string** in `event["delta"]`, not a dict — code must check `isinstance(delta, str)` before calling `.get()`
+7. **Rate is tied to format**: `audio/pcm` = 24000 Hz, `audio/pcmu` = 8000 Hz, `audio/pcma` = 8000 Hz
+8. **Model name**: `gpt-realtime` is GA default but may not be available to all accounts — `gpt-4o-realtime-preview-2024-12-17` works with GA API as fallback
 
 - When VAD is enabled (default), stream with `input_audio_buffer.append` only. Do not send `input_audio_buffer.commit`.
 - Handle server events: `response.output_audio.delta`/`done`, `response.done`, transcript variants `response.output_audio_transcript.*`.

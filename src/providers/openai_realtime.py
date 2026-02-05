@@ -869,7 +869,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
                 "audio": {
                     "input": audio_input,
                     "output": {
-                        "format": {"type": out_fmt, "rate": out_rate},
+                        "format": {"type": out_fmt},
                         "voice": self.config.voice,
                     },
                 },
@@ -2634,7 +2634,7 @@ class OpenAIRealtimeProvider(AIProviderInterface):
         except Exception:
             pass
         if self._is_ga:
-            pcm_session = {"audio": {"output": {"format": {"type": "audio/pcm", "rate": 24000}}}}
+            pcm_session = {"audio": {"output": {"format": {"type": "audio/pcm"}}}}
         else:
             pcm_session = {"output_audio_format": "pcm16"}
         payload: Dict[str, Any] = {

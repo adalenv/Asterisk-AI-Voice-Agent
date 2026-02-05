@@ -340,14 +340,13 @@ const EnvPage = () => {
         'CALL_HISTORY_ENABLED', 'CALL_HISTORY_RETENTION_DAYS', 'CALL_HISTORY_DB_PATH',
         // System - Outbound Campaign
         'AAVA_OUTBOUND_EXTENSION_IDENTITY', 'AAVA_OUTBOUND_AMD_CONTEXT', 'AAVA_MEDIA_DIR', 'AAVA_VM_UPLOAD_MAX_BYTES',
-        // Hidden/Internal (added to suppress from Other)
-        'COMPOSE_PROJECT_NAME', 'GREETING', 'AI_GREETING', 'AI_NAME', 'AI_ROLE', 'HOST_PROJECT_ROOT', 'PROJECT_ROOT', 'GPU_AVAILABLE',
-        // Deprecated
-        'CARTESIA_API_KEY',
-        // Build-time only (docker build --build-arg, not runtime)
+        // System - Docker Build Settings (build-time ARGs, require rebuild)
         'INCLUDE_VOSK', 'INCLUDE_SHERPA', 'INCLUDE_FASTER_WHISPER', 'INCLUDE_WHISPER_CPP',
         'INCLUDE_PIPER', 'INCLUDE_KOKORO', 'INCLUDE_MELOTTS', 'INCLUDE_LLAMA', 'INCLUDE_KROKO_EMBEDDED',
-        'LOCAL_FASTER_WHISPER_COMPUTE' // typo/legacy, use FASTER_WHISPER_COMPUTE_TYPE
+        // Hidden/Internal (added to suppress from Other)
+        'COMPOSE_PROJECT_NAME', 'GREETING', 'AI_GREETING', 'AI_NAME', 'AI_ROLE', 'HOST_PROJECT_ROOT', 'PROJECT_ROOT', 'GPU_AVAILABLE',
+        // Deprecated/Legacy
+        'CARTESIA_API_KEY', 'LOCAL_FASTER_WHISPER_COMPUTE'
     ];
 
     const otherSettings = Object.keys(env).filter(k => !knownKeys.includes(k));
@@ -1450,6 +1449,100 @@ const EnvPage = () => {
                                     onChange={(e) => updateEnv('DOCKER_GID', e.target.value)}
                                     tooltip="Docker socket group ID (detect with: stat -c '%g' /var/run/docker.sock)"
                                 />
+                            </div>
+                        </ConfigCard>
+                    </ConfigSection>
+
+                    {/* Docker Build Settings */}
+                    <ConfigSection title="Docker Build Settings" description="Control which ML backends are included in the Local AI Server image.">
+                        <ConfigCard>
+                            <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3 mb-4">
+                                <div className="flex items-start gap-2">
+                                    <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
+                                    <div className="text-sm">
+                                        <p className="font-medium text-amber-600 dark:text-amber-400">Build-time settings — require rebuild</p>
+                                        <p className="text-muted-foreground mt-1">
+                                            These settings control which packages are installed during <code className="px-1 py-0.5 bg-muted rounded text-xs">docker compose build</code>. 
+                                            After changing, run: <code className="px-1 py-0.5 bg-muted rounded text-xs">docker compose build --no-cache local_ai_server</code>
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="space-y-4">
+                                <h4 className="text-sm font-medium text-muted-foreground">STT Backends</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <FormSwitch
+                                        id="include-vosk"
+                                        label="Vosk"
+                                        description="Lightweight offline STT (default, ~50MB)"
+                                        checked={isTrue(env['INCLUDE_VOSK'] || 'true')}
+                                        onChange={(e) => updateEnv('INCLUDE_VOSK', e.target.checked ? 'true' : 'false')}
+                                    />
+                                    <FormSwitch
+                                        id="include-sherpa"
+                                        label="Sherpa-ONNX"
+                                        description="Fast streaming STT with ONNX runtime"
+                                        checked={isTrue(env['INCLUDE_SHERPA'] || 'true')}
+                                        onChange={(e) => updateEnv('INCLUDE_SHERPA', e.target.checked ? 'true' : 'false')}
+                                    />
+                                    <FormSwitch
+                                        id="include-faster-whisper"
+                                        label="Faster Whisper"
+                                        description="High-accuracy Whisper (larger, GPU recommended)"
+                                        checked={isTrue(env['INCLUDE_FASTER_WHISPER'])}
+                                        onChange={(e) => updateEnv('INCLUDE_FASTER_WHISPER', e.target.checked ? 'true' : 'false')}
+                                    />
+                                    <FormSwitch
+                                        id="include-whisper-cpp"
+                                        label="Whisper.cpp"
+                                        description="C++ Whisper port (experimental)"
+                                        checked={isTrue(env['INCLUDE_WHISPER_CPP'])}
+                                        onChange={(e) => updateEnv('INCLUDE_WHISPER_CPP', e.target.checked ? 'true' : 'false')}
+                                    />
+                                </div>
+                                
+                                <h4 className="text-sm font-medium text-muted-foreground pt-4">TTS Backends</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <FormSwitch
+                                        id="include-piper"
+                                        label="Piper"
+                                        description="Fast local TTS (default, ~20MB)"
+                                        checked={isTrue(env['INCLUDE_PIPER'] || 'true')}
+                                        onChange={(e) => updateEnv('INCLUDE_PIPER', e.target.checked ? 'true' : 'false')}
+                                    />
+                                    <FormSwitch
+                                        id="include-kokoro"
+                                        label="Kokoro"
+                                        description="Premium quality voices (~200MB)"
+                                        checked={isTrue(env['INCLUDE_KOKORO'] || 'true')}
+                                        onChange={(e) => updateEnv('INCLUDE_KOKORO', e.target.checked ? 'true' : 'false')}
+                                    />
+                                    <FormSwitch
+                                        id="include-melotts"
+                                        label="MeloTTS"
+                                        description="CPU-optimized multilingual TTS (~500MB)"
+                                        checked={isTrue(env['INCLUDE_MELOTTS'])}
+                                        onChange={(e) => updateEnv('INCLUDE_MELOTTS', e.target.checked ? 'true' : 'false')}
+                                    />
+                                </div>
+                                
+                                <h4 className="text-sm font-medium text-muted-foreground pt-4">LLM & Other</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <FormSwitch
+                                        id="include-llama"
+                                        label="llama.cpp"
+                                        description="Local LLM inference (default)"
+                                        checked={isTrue(env['INCLUDE_LLAMA'] || 'true')}
+                                        onChange={(e) => updateEnv('INCLUDE_LLAMA', e.target.checked ? 'true' : 'false')}
+                                    />
+                                    <FormSwitch
+                                        id="include-kroko"
+                                        label="Kroko Embedded"
+                                        description="Embedded Kroko ONNX server binary"
+                                        checked={isTrue(env['INCLUDE_KROKO_EMBEDDED'])}
+                                        onChange={(e) => updateEnv('INCLUDE_KROKO_EMBEDDED', e.target.checked ? 'true' : 'false')}
+                                    />
+                                </div>
                             </div>
                         </ConfigCard>
                     </ConfigSection>

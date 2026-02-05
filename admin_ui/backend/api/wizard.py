@@ -697,6 +697,7 @@ async def start_engine(action: str = "start"):
     Returns detailed progress and error information.
     """
     import subprocess
+    import shutil
     from settings import PROJECT_ROOT
     
     print(f"DEBUG: AI Engine action={action} from PROJECT_ROOT={PROJECT_ROOT}")
@@ -712,9 +713,20 @@ async def start_engine(action: str = "start"):
     
     try:
         # Step 1: Check Docker availability
+        docker_bin = shutil.which("docker")
+        if not docker_bin:
+            add_step("check_docker", "error", "docker binary not found in PATH")
+            return {
+                "success": False,
+                "action": "error",
+                "message": "docker binary not found in PATH",
+                "steps": steps,
+                "media_setup": media_setup,
+            }
+
         add_step("check_docker", "running", "Checking Docker availability...")
         result = subprocess.run(
-            ["docker", "compose", "version"],
+            [docker_bin, "compose", "version"],
             capture_output=True, text=True, timeout=10
         )
         if result.returncode != 0:
@@ -745,7 +757,7 @@ async def start_engine(action: str = "start"):
         if action == "rebuild":
             add_step("rebuild", "running", "Rebuilding AI Engine image...")
             result = subprocess.run(
-                ["docker", "compose", "-p", "asterisk-ai-voice-agent", "build", "--no-cache", "ai_engine"],
+                [docker_bin, "compose", "-p", "asterisk-ai-voice-agent", "build", "--no-cache", "ai_engine"],
                 cwd=PROJECT_ROOT,
                 capture_output=True, text=True, timeout=300
             )
@@ -764,7 +776,7 @@ async def start_engine(action: str = "start"):
         if not container_exists:
             add_step("build", "running", "Building AI Engine image (this may take 1-2 minutes)...")
             build_result = subprocess.run(
-                ["docker", "compose", "-p", "asterisk-ai-voice-agent", "build", "ai_engine"],
+                [docker_bin, "compose", "-p", "asterisk-ai-voice-agent", "build", "ai_engine"],
                 cwd=PROJECT_ROOT,
                 capture_output=True, text=True, timeout=300  # 5 min timeout for build
             )
@@ -789,14 +801,14 @@ async def start_engine(action: str = "start"):
         if action == "restart" and container_running:
             add_step("restart", "running", "Restarting AI Engine...")
             result = subprocess.run(
-                ["docker", "compose", "-p", "asterisk-ai-voice-agent", "up", "-d", "--force-recreate", "--no-build", "ai_engine"],
+                [docker_bin, "compose", "-p", "asterisk-ai-voice-agent", "up", "-d", "--force-recreate", "--no-build", "ai_engine"],
                 cwd=PROJECT_ROOT,
                 capture_output=True, text=True, timeout=60
             )
         else:
             add_step("start", "running", "Starting AI Engine container...")
             # Use up -d with --force-recreate if container exists
-            cmd = ["docker", "compose", "-p", "asterisk-ai-voice-agent", "up", "-d"]
+            cmd = [docker_bin, "compose", "-p", "asterisk-ai-voice-agent", "up", "-d"]
             if container_exists:
                 cmd.append("--force-recreate")
             cmd.append("ai_engine")

@@ -19,7 +19,7 @@ interface EmailTemplateModalProps {
     defaultsStatusText: string;
     onReloadDefaults: () => Promise<void>;
     // Persist changes into parent config
-    onSave: (nextTemplate: string | null) => void;
+    onSave: (nextTemplate: string | null) => Promise<void> | void;
 }
 
 export const EmailTemplateModal = ({
@@ -43,6 +43,7 @@ export const EmailTemplateModal = ({
     const [previewing, setPreviewing] = useState(false);
     const [previewHtml, setPreviewHtml] = useState('');
     const [previewError, setPreviewError] = useState<string | null>(null);
+    const [saving, setSaving] = useState(false);
 
     const [activeTab, setActiveTab] = useState<'template' | 'preview'>('template');
 
@@ -110,23 +111,32 @@ export const EmailTemplateModal = ({
         }
     };
 
-    const handleSave = () => {
-        if (!customize) {
-            onSave(null);
-            toast.success('Using default template');
+    const handleSave = async () => {
+        setSaving(true);
+        try {
+            if (!customize) {
+                await onSave(null);
+                toast.success('Using default template');
+                onClose();
+                return;
+            }
+            const next = (draft || '').trim();
+            if (!next) {
+                await onSave(null);
+                toast.success('Using default template');
+                onClose();
+                return;
+            }
+            await onSave(draft);
+            toast.success('Template saved. Restart AI Engine to apply.');
             onClose();
-            return;
+        } catch (e: any) {
+            toast.error('Failed to save template', {
+                description: e?.response?.data?.detail || e?.message || 'Unknown error',
+            });
+        } finally {
+            setSaving(false);
         }
-        const next = (draft || '').trim();
-        if (!next) {
-            onSave(null);
-            toast.success('Using default template');
-            onClose();
-            return;
-        }
-        onSave(draft);
-        toast.success('Template saved');
-        onClose();
     };
 
     const editorValue = customize ? draft : effectiveDefault;
@@ -161,9 +171,10 @@ export const EmailTemplateModal = ({
                         <button
                             type="button"
                             onClick={handleSave}
+                            disabled={saving}
                             className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90"
                         >
-                            Save
+                            {saving ? 'Saving…' : 'Save'}
                         </button>
                     </div>
                 </div>
@@ -312,4 +323,3 @@ export const EmailTemplateModal = ({
         </Modal>
     );
 };
-

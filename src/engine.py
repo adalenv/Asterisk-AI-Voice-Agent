@@ -4352,6 +4352,14 @@ class Engine:
             except Exception:
                 pass
 
+            # Persist call_outcome onto the session BEFORE running any end-of-call tools,
+            # so email_summary/request_transcript templates can reliably reference it.
+            try:
+                session.call_outcome = call_outcome
+                await self.session_store.upsert_call(session)
+            except Exception:
+                logger.debug("Failed to persist call_outcome onto session", call_id=call_id, exc_info=True)
+
             # Stop any active streaming playback.
             try:
                 await self.streaming_playback_manager.stop_streaming_playback(call_id)

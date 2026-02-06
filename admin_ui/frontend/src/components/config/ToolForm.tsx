@@ -10,6 +10,7 @@ interface ToolFormProps {
     config: any;
     contexts?: Record<string, any>;
     onChange: (newConfig: any) => void;
+    onSaveNow?: (newConfig: any) => Promise<void>;
 }
 
 const DEFAULT_ATTENDED_ANNOUNCEMENT_TEMPLATE =
@@ -22,7 +23,7 @@ const DEFAULT_ATTENDED_CALLER_DECLINED_PROMPT =
 // Note: Hangup guardrails (markers, policy modes) removed in v5.0
 // Call ending behavior is now controlled via context prompts
 
-const ToolForm = ({ config, contexts, onChange }: ToolFormProps) => {
+const ToolForm = ({ config, contexts, onChange, onSaveNow }: ToolFormProps) => {
 	    const [editingDestination, setEditingDestination] = useState<string | null>(null);
 	    const [destinationForm, setDestinationForm] = useState<any>({});
         const [emailDefaults, setEmailDefaults] = useState<any>(null);
@@ -1119,12 +1120,37 @@ const ToolForm = ({ config, contexts, onChange }: ToolFormProps) => {
                     if (ok) toast.success('Loaded default templates');
                     else toast.error('Failed to load defaults');
                 }}
-                onSave={(nextTemplate) => {
-                    if (!nextTemplate) {
-                        unsetNestedConfig(templateModalTool, 'html_template');
-                        return;
+                onSave={async (nextTemplate) => {
+                    const prevConfig = config;
+                    const nextConfig = (() => {
+                        if (!nextTemplate) {
+                            const next = { ...config };
+                            const current = next[templateModalTool];
+                            if (!current || typeof current !== 'object') return next;
+                            const copy = { ...current };
+                            delete copy.html_template;
+                            next[templateModalTool] = copy;
+                            return next;
+                        }
+                        return {
+                            ...config,
+                            [templateModalTool]: {
+                                ...config[templateModalTool],
+                                html_template: nextTemplate
+                            }
+                        };
+                    })();
+
+                    onChange(nextConfig);
+                    if (onSaveNow) {
+                        try {
+                            await onSaveNow(nextConfig);
+                        } catch (e) {
+                            // Revert local state so UI reflects the persisted config.
+                            onChange(prevConfig);
+                            throw e;
+                        }
                     }
-                    updateNestedConfig(templateModalTool, 'html_template', nextTemplate);
                 }}
             />
         </div>

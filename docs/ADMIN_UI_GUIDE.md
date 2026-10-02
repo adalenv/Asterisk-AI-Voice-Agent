@@ -70,6 +70,8 @@ Per-call debugging and analytics:
 - Tool call history with parameters and results
 - Opt-in call metadata with pre-call/updated-during-call provenance badges
 - Exact call metadata field/value filtering and CSV/JSON export
+- Multi-outcome filter with **Only** / **Hide** modes (for example, hide abandoned calls), plus tool usage and duration range filters
+- Summary statistics, the list and CSV/JSON exports all follow the same active filters; the panel reads **Call Statistics (filtered)** while any filter is set
 - Call quality metrics
 - A distinct **No input timeout** outcome for calls ended by the inactivity policy
 
